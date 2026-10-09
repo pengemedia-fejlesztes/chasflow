@@ -12,12 +12,11 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
-# D1 adatbázis. A database_id-t az első `wrangler d1 create cashflow` után
-# kell ide beírni (lásd README).
+# D1 adatbázis (Cloudflare: pengemedia fiók)
 [[d1_databases]]
 binding = "DB"
 database_name = "cashflow"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "b39b7832-12e5-4905-b4a8-896b0985eaa2"
 migrations_dir = "migrations"
 
 # Óránkénti automatikus szinkron (Billingo + bankok)
