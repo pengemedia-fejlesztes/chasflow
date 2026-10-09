@@ -4,6 +4,7 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { PartnersView } from './PartnersView';
 import { PlanActualView } from './PlanActualView';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
@@ -19,7 +20,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
-type Tab = 'home' | 'alerts' | 'pva' | 'cat' | 'income' | 'bank' | 'more';
+type Tab = 'home' | 'alerts' | 'pva' | 'partners' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
@@ -31,6 +32,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const { ix, data, filters, commit, toast, canEdit, run } = st;
   const [tab, setTab] = useState<Tab>('home');
   const flags = useFlags();
+  const [partnerLeaf, setPartnerLeaf] = useState<string | null>(null);
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
   const m = months.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
@@ -223,27 +225,32 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               </button>
             </div>
             {flags.length > 0 && <FlagBanner mobile n={flags.length} kinds={flags.map((f) => f.kind)} onClick={() => setTab('alerts')} />}
-            <button
-              onClick={() => setTab('pva')}
-              style={{
-                margin: '14px 16px 0',
-                width: 'calc(100% - 32px)',
-                border: `1px solid ${C.line2}`,
-                background: '#fff',
-                borderRadius: 14,
-                padding: '13px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <b style={{ font: `700 14px ${FONT}`, color: C.navy }}>Terv vs. tény havonta</b>
-                <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>bevétel, kiadás, profit – terv, tény, eltérés</span>
-              </span>
-              <span style={{ font: `600 13px ${FONT}`, color: C.blueDark }}>Megnézem →</span>
-            </button>
+            <div style={{ margin: '14px 16px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {(
+                [
+                  ['pva', 'Terv vs. tény', 'havonta: bevétel, kiadás, profit'],
+                  ['partners', 'Partnerek', 'statisztika, fizetési előzmények'],
+                ] as [Tab, string, string][]
+              ).map(([t, title, sub]) => (
+                <button
+                  key={t}
+                  onClick={() => (t === 'partners' && setPartnerLeaf(null), setTab(t))}
+                  style={{
+                    border: `1px solid ${C.line2}`,
+                    background: '#fff',
+                    borderRadius: 14,
+                    padding: '12px 14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3,
+                    textAlign: 'left',
+                  }}
+                >
+                  <b style={{ font: `700 14px ${FONT}`, color: C.navy }}>{title} ›</b>
+                  <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{sub}</span>
+                </button>
+              ))}
+            </div>
             {newTx > 0 && (
               <button
                 onClick={() => setTab('bank')}
@@ -523,6 +530,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
+        {tab === 'partners' && (
+          <>
+            <MobileHeader title="Partnerek" sub="Statisztika" onBack={() => setTab('home')} />
+            <PartnersView key={partnerLeaf || 'list'} mobile initialLeaf={partnerLeaf} onBack={() => setPartnerLeaf(null)} />
+          </>
+        )}
         {tab === 'pva' && (
           <>
             <MobileHeader title="Terv vs. tény" sub="Havi összesítő" onBack={() => setTab('home')} />
@@ -647,7 +660,14 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         </div>
       </div>
 
-      {sheet && <SheetView sheet={sheet} setSheet={setSheet} onSaved={(ym) => setM(ym)} />}
+      {sheet && (
+        <SheetView
+          sheet={sheet}
+          setSheet={setSheet}
+          onSaved={(ym) => setM(ym)}
+          onPartner={(leaf) => (setSheet(null), setPartnerLeaf(leaf), setTab('partners'))}
+        />
+      )}
       {toast && <ToastView {...toast} mobile />}
     </div>
   );
@@ -710,7 +730,17 @@ function MobileHeader({ title, sub, onBack }: { title: string; sub: string; onBa
   );
 }
 
-function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: Sheet | null) => void; onSaved: (ym: string) => void }) {
+function SheetView({
+  sheet,
+  setSheet,
+  onSaved,
+  onPartner,
+}: {
+  sheet: Sheet;
+  setSheet: (s: Sheet | null) => void;
+  onSaved: (ym: string) => void;
+  onPartner: (leaf: string) => void;
+}) {
   const { ix, data, commit } = useStore();
   const close = () => setSheet(null);
   let body: React.ReactNode = null;
@@ -1135,6 +1165,12 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
               {ix.sectionOf(base.leaf_id) === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(ix.groupById[ix.leafById[base.leaf_id]?.group_id]?.label || '')} ·{' '}
               {ix.leafById[base.leaf_id]?.label}
             </span>
+            <button
+              onClick={() => onPartner(base.leaf_id)}
+              style={{ alignSelf: 'flex-start', border: 0, background: 'transparent', padding: '4px 0 0', color: C.blueDark, font: `600 13.5px ${FONT}` }}
+            >
+              {ix.leafById[base.leaf_id]?.label} – partner statisztika ›
+            </button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–')}
