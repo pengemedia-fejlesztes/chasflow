@@ -104,6 +104,7 @@ export interface Settings {
   billingo_last_sync?: string;
   billingo_leaf_default?: string;
   bank_last_sync?: string;
+  flags_ack?: string; // „rendben” jelölt riasztások (JSON lista)
 }
 
 export interface DataBundle {

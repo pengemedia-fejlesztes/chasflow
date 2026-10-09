@@ -255,6 +255,23 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     return json({ ok: true });
   }
 
+  if (path === '/api/flags/ack' && req.method === 'POST') {
+    // riasztás „rendben” jelölése (közös minden felhasználónak) – vagy visszavonása
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ ids: string[]; undo?: boolean }>(req);
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map((x) => String(x).slice(0, 120)).slice(0, 200);
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'flags_ack'").first<{ value: string }>();
+    let cur: string[] = [];
+    try {
+      cur = JSON.parse(row?.value || '[]');
+    } catch {}
+    const set = new Set(cur);
+    ids.forEach((id) => (b.undo ? set.delete(id) : set.add(id)));
+    await setSetting(env, 'flags_ack', JSON.stringify([...set].slice(-2000)));
+    await audit(env, u.id, b.undo ? 'flags.unack' : 'flags.ack', { ids });
+    return json({ ok: true });
+  }
+
   if (path === '/api/import' && req.method === 'POST') {
     requireRole(u, 'admin');
     const b = await readJson<{ kind: 'actual' | 'plan'; rows: ImportRow[]; replacePlans?: boolean }>(req, 20_000_000);

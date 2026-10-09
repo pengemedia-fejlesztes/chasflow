@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
+import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
@@ -14,7 +15,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
-type Tab = 'home' | 'cat' | 'income' | 'bank' | 'more';
+type Tab = 'home' | 'alerts' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'item'; id: string; amount: string; day: number; all: boolean }
@@ -24,6 +25,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, commit, toast, canEdit } = st;
   const [tab, setTab] = useState<Tab>('home');
+  const flags = useFlags();
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
   const m = months.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
@@ -194,6 +196,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 {filters.includeOffers ? ' · ajánlatok' : ''} ▾
               </button>
             </div>
+            {flags.length > 0 && <FlagBanner mobile n={flags.length} kinds={flags.map((f) => f.kind)} onClick={() => setTab('alerts')} />}
             {newTx > 0 && (
               <button
                 onClick={() => setTab('bank')}
@@ -560,6 +563,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
+        {tab === 'alerts' && (
+          <>
+            <MobileHeader title="Riasztások" sub="Eltérések a havi tervtől" onBack={() => setTab('home')} />
+            <AlertsView mobile />
+          </>
+        )}
         {tab === 'income' && (
           <>
             <MobileHeader title="Tervezett bevétel" sub="Billingo számlák" onBack={() => setTab('home')} />

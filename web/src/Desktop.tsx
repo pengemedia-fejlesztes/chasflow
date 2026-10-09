@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, type Matrix } from '../../shared/model';
+import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { api } from './api';
 import { BankView } from './BankView';
 import { CategoryView } from './CategoryView';
@@ -14,7 +15,7 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
-export type View = 'overview' | 'cat' | 'income' | 'bank' | 'settings';
+export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'settings';
 
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
@@ -36,6 +37,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     return () => window.removeEventListener('keydown', k);
   }, [modal, canEdit]);
 
+  const flags = useFlags();
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   const groupRows = matrix.rows.filter((r) => r.type === 'group');
@@ -45,6 +47,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   };
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
+    ['alerts', 'Riasztások', flags.length],
     ['income', 'Tervezett bevétel', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['settings', 'Beállítások', 0],
@@ -119,7 +122,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
                   style={{
                     minWidth: 22,
                     textAlign: 'center',
-                    background: C.blue2,
+                    background: v === 'alerts' ? C.negLight : C.blue2,
                     color: C.navy,
                     borderRadius: 999,
                     padding: '1px 7px',
@@ -217,7 +220,16 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
       </aside>
 
       <main style={{ overflow: 'auto', position: 'relative' }}>
-        {view === 'overview' && <Overview matrix={matrix} goBank={() => setView('bank')} goGroup={goGroup} openNew={(leaf) => setModal({ leaf })} />}
+        {view === 'overview' && (
+          <Overview
+            matrix={matrix}
+            goBank={() => setView('bank')}
+            goAlerts={() => setView('alerts')}
+            goGroup={goGroup}
+            openNew={(leaf) => setModal({ leaf })}
+          />
+        )}
+        {view === 'alerts' && <AlertsView />}
         {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
         {view === 'income' && <IncomeView />}
@@ -262,11 +274,13 @@ function Kpi(p: { label: string; value: string; sub: string; dark?: boolean; col
 function Overview({
   matrix,
   goBank,
+  goAlerts,
   goGroup,
   openNew,
 }: {
   matrix: Matrix;
   goBank: () => void;
+  goAlerts: () => void;
   goGroup: (id: string) => void;
   openNew: (leaf: string) => void;
 }) {
@@ -276,6 +290,7 @@ function Overview({
   const [editing, setEditing] = useState<{ leaf: string; col: number } | null>(null);
   const [dense, setDense] = useState(true);
   const ol = useMemo(() => outlook(ix, filters), [ix, filters]);
+  const flags = useFlags();
   const cols = matrix.columns;
   const rowH = dense ? 36 : 44;
   const curOl = ol.months[0];
@@ -338,6 +353,8 @@ function Overview({
           </Pill>
         </div>
       </div>
+
+      {flags.length > 0 && <FlagBanner n={flags.length} kinds={flags.map((f) => f.kind)} onClick={goAlerts} />}
 
       <FilterBar />
 
