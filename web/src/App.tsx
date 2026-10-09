@@ -19,7 +19,15 @@ function useIsMobile() {
   return m;
 }
 
-type Phase = { k: 'loading' } | { k: 'login'; setup: boolean } | { k: 'changePw'; me: Me } | { k: 'app'; data: DataBundle } | { k: 'error'; msg: string };
+let mailOn = false;
+
+type Phase =
+  | { k: 'loading' }
+  | { k: 'login'; setup: boolean }
+  | { k: 'reset'; token: string }
+  | { k: 'changePw'; me: Me }
+  | { k: 'app'; data: DataBundle }
+  | { k: 'error'; msg: string };
 
 export function App() {
   const [phase, setPhase] = useState<Phase>({ k: 'loading' });
@@ -27,7 +35,14 @@ export function App() {
 
   const boot = useCallback(async () => {
     try {
-      const s = await api<{ hasUsers: boolean; setupAvailable: boolean; me: Me | null }>('/api/auth/status');
+      const resetToken = new URLSearchParams(location.search).get('reset');
+      if (resetToken) {
+        // a token ne maradjon a címsorban / előzményekben
+        history.replaceState(null, '', location.pathname);
+        return setPhase({ k: 'reset', token: resetToken });
+      }
+      const s = await api<{ hasUsers: boolean; setupAvailable: boolean; mailEnabled: boolean; me: Me | null }>('/api/auth/status');
+      mailOn = s.mailEnabled;
       if (!s.me) return setPhase({ k: 'login', setup: !s.hasUsers && s.setupAvailable });
       if (s.me.must_change_pw) return setPhase({ k: 'changePw', me: s.me });
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
@@ -61,6 +76,7 @@ export function App() {
       </Splash>
     );
   if (phase.k === 'login') return <Login setup={phase.setup} onDone={boot} />;
+  if (phase.k === 'reset') return <ResetPw token={phase.token} onDone={() => setPhase({ k: 'login', setup: false })} />;
   if (phase.k === 'changePw') return <ChangePw me={phase.me} onDone={boot} onLogout={doLogout} />;
   return <StoreProvider initial={phase.data}>{mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}</StoreProvider>;
 }
@@ -98,7 +114,7 @@ function Splash({ children }: { children: React.ReactNode }) {
 function Shell({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
   return (
     <div style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', background: C.navy, padding: '24px 16px' }}>
-      <div style={{ width: 400, maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <div style={{ width: 'min(400px, 100%)', display: 'flex', flexDirection: 'column', gap: 22 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, color: '#fff' }}>
           <div style={{ width: 40, height: 40, borderRadius: 999, background: C.blue, display: 'grid', placeItems: 'center', font: `800 12px ${FONT_H}` }}>
             CF
@@ -128,6 +144,8 @@ const big: React.CSSProperties = { ...inputStyle, height: 48, fontSize: 16, bord
 function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
   const [f, setF] = useState({ email: '', password: '', totp: '', token: '', name: '' });
   const [needTotp, setNeedTotp] = useState(false);
+  const [forgot, setForgot] = useState(false);
+  const [info, setInfo] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async (e: React.FormEvent) => {
@@ -135,7 +153,10 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
     setErr('');
     setBusy(true);
     try {
-      if (setup) {
+      if (forgot) {
+        const r = await api<{ message: string }>('/api/auth/forgot', { body: { email: f.email } });
+        setInfo(r.message);
+      } else if (setup) {
         await api('/api/auth/setup', { body: { token: f.token, email: f.email, name: f.name, password: f.password } });
         onDone();
       } else {
@@ -151,8 +172,14 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
   };
   return (
     <Shell
-      title={setup ? 'Első adminisztrátor létrehozása' : 'Bejelentkezés'}
-      sub={setup ? 'Add meg a telepítéskor beállított beállító kódot (SETUP_TOKEN).' : undefined}
+      title={setup ? 'Első adminisztrátor létrehozása' : forgot ? 'Elfelejtett jelszó' : 'Bejelentkezés'}
+      sub={
+        setup
+          ? 'Add meg a telepítéskor beállított beállító kódot (SETUP_TOKEN).'
+          : forgot
+            ? 'Add meg az e-mail címed, és küldünk egy linket, amellyel új jelszót állíthatsz be (30 percig érvényes).'
+            : undefined
+      }
     >
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {setup && (
@@ -171,15 +198,17 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
               autoComplete="username"
               autoCapitalize="none"
             />
-            <input
-              required
-              type="password"
-              placeholder={setup ? 'Jelszó (min. 12 karakter)' : 'Jelszó'}
-              value={f.password}
-              onChange={(e) => setF({ ...f, password: e.target.value })}
-              style={big}
-              autoComplete={setup ? 'new-password' : 'current-password'}
-            />
+            {!forgot && (
+              <input
+                required
+                type="password"
+                placeholder={setup ? 'Jelszó (min. 12 karakter)' : 'Jelszó'}
+                value={f.password}
+                onChange={(e) => setF({ ...f, password: e.target.value })}
+                style={big}
+                autoComplete={setup ? 'new-password' : 'current-password'}
+              />
+            )}
           </>
         )}
         {needTotp && (
@@ -195,9 +224,25 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
           />
         )}
         {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
-        <button type="submit" disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>
-          {busy ? '…' : setup ? 'Létrehozás' : needTotp ? 'Ellenőrzés' : 'Belépés'}
-        </button>
+        {info && <span style={{ font: `500 13.5px/1.5 ${FONT}`, color: C.blueDark }}>{info}</span>}
+        {!info && (
+          <button type="submit" disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>
+            {busy ? '…' : setup ? 'Létrehozás' : forgot ? 'Link küldése' : needTotp ? 'Ellenőrzés' : 'Belépés'}
+          </button>
+        )}
+        {!setup && !needTotp && (
+          <button
+            type="button"
+            onClick={() => {
+              setForgot(!forgot);
+              setErr('');
+              setInfo('');
+            }}
+            style={{ border: 0, background: 'transparent', color: C.blueDark, font: `600 13.5px ${FONT}`, cursor: 'pointer', padding: 6 }}
+          >
+            {forgot ? '← Vissza a belépéshez' : mailOn ? 'Elfelejtett jelszó?' : 'Elfelejtett jelszó? Kérd az adminisztrátort.'}
+          </button>
+        )}
       </form>
     </Shell>
   );
@@ -253,6 +298,83 @@ function ChangePw({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogo
         </button>
         <button type="button" onClick={onLogout} style={{ ...btn, background: 'transparent', color: C.blueDark }}>
           Kilépés
+        </button>
+      </form>
+    </Shell>
+  );
+}
+
+function ResetPw({ token, onDone }: { token: string; onDone: () => void }) {
+  const [state, setState] = useState<{ valid: boolean; needTotp?: boolean; email?: string } | null>(null);
+  const [f, setF] = useState({ next: '', next2: '', totp: '' });
+  const [err, setErr] = useState('');
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    api<{ valid: boolean; needTotp?: boolean; email?: string }>('/api/auth/reset-info', { body: { token } }).then(setState, () => setState({ valid: false }));
+  }, [token]);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr('');
+    if (f.next !== f.next2) return setErr('A két jelszó nem egyezik.');
+    try {
+      await api('/api/auth/reset', { body: { token, password: f.next, totp: f.totp } });
+      setDone(true);
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+  if (!state) return <Splash>Ellenőrzés…</Splash>;
+  if (!state.valid || done)
+    return (
+      <Shell
+        title={done ? 'Jelszó megváltoztatva ✓' : 'A link lejárt'}
+        sub={
+          done
+            ? 'Most már beléphetsz az új jelszavaddal. Biztonsági okból minden eszközön kiléptettünk.'
+            : 'A visszaállító link 30 percig érvényes és csak egyszer használható. Kérj újat a belépő oldalon.'
+        }
+      >
+        <button onClick={onDone} style={btn}>
+          Tovább a belépéshez
+        </button>
+      </Shell>
+    );
+  return (
+    <Shell title="Új jelszó beállítása" sub="Legalább 12 karakter. Használj jelszókezelőt (pl. iCloud Kulcskarika).">
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <input type="email" value={state.email || ''} readOnly autoComplete="username" style={{ ...big, background: C.bg }} />
+        <input
+          required
+          type="password"
+          placeholder="Új jelszó"
+          value={f.next}
+          onChange={(e) => setF({ ...f, next: e.target.value })}
+          style={big}
+          autoComplete="new-password"
+        />
+        <input
+          required
+          type="password"
+          placeholder="Új jelszó újra"
+          value={f.next2}
+          onChange={(e) => setF({ ...f, next2: e.target.value })}
+          style={big}
+          autoComplete="new-password"
+        />
+        {state.needTotp && (
+          <input
+            required
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="6 jegyű kód a hitelesítő alkalmazásból"
+            value={f.totp}
+            onChange={(e) => setF({ ...f, totp: e.target.value })}
+            style={big}
+          />
+        )}
+        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        <button type="submit" style={btn}>
+          Jelszó mentése
         </button>
       </form>
     </Shell>

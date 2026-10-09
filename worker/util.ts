@@ -6,6 +6,9 @@ export interface Env {
   BILLINGO_API_URL?: string; // csak teszteléshez (mock szerver)
   EB_APP_ID?: string;
   EB_PRIVATE_KEY?: string;
+  BREVO_API_KEY?: string;
+  RESEND_API_KEY?: string;
+  MAIL_FROM?: string; // pl. "Cashflow <laszlo.nagy@360-marketing.eu>"
 }
 
 export class HttpError extends Error {

@@ -57,6 +57,25 @@ Szükséges: egy ingyenes [Cloudflare](https://dash.cloudflare.com) fiók és No
    - *Beállítások → Fiókom:* kapcsold be a 2FA-t.
    - *Beállítások → Felhasználók:* hívd meg a kollégákat.
 
+## Elfelejtett jelszó – e-mail küldés
+
+A belépő oldalon az „Elfelejtett jelszó?” egy 30 percig érvényes, egyszer használható linket küld e-mailben. Magát a jelszót nem lehet elküldeni, mert a rendszer csak a hash-ét tárolja. Ha a felhasználónak be van kapcsolva a 2FA, a visszaállításhoz a kód is kell. Sikeres csere után minden eszközről kilépteti, és értesítő levelet küld.
+
+Beállítás a **Brevo**-val (ingyenes, napi 300 levél):
+
+1. Regisztrálj: <https://www.brevo.com>.
+2. *Senders, Domains & Dedicated IPs → Senders → Add a sender*: add meg a feladó címet (pl. `laszlo.nagy@360-marketing.eu`), és igazold a kapott levéllel. A jobb kézbesítéshez ajánlott a domain hitelesítése is (DKIM/DMARC DNS rekordok).
+3. *SMTP & API → API keys → Generate a new API key*.
+4. Állítsd be a titkokat:
+   ```bash
+   npx wrangler secret put BREVO_API_KEY
+   npx wrangler secret put MAIL_FROM     # pl.: Cashflow <laszlo.nagy@360-marketing.eu>
+   ```
+
+A Brevo helyett **Resend** is használható: `RESEND_API_KEY`, ehhez a domaint DNS-ben igazolni kell.
+
+E-mail küldés beállítása nélkül az admin a *Beállítások → Felhasználók → Jelszó reset* gombbal adhat ideiglenes jelszót.
+
 ## Bankkapcsolat (BiNX, Magnet) – Enable Banking
 
 A bankok PSD2-n keresztül csak engedélyezett számlainformációs szolgáltatónak adnak hozzáférést. Erre az Enable Banking szolgál, amely saját számlák összekapcsolására ingyenesen használható.

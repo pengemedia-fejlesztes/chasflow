@@ -1,5 +1,6 @@
 // Hitelesítés: jelszó (PBKDF2), munkamenet süti, opcionális TOTP 2FA, brute-force védelem.
 import type { Me, Role } from '../shared/types';
+import { changedMail, mailEnabled, resetMail, sendMail } from './mail';
 import { Env, HttpError, audit, b64decode, b64url, clientIp, json, now, randomBytes, readJson, safeEqual, sha256 } from './util';
 
 const COOKIE = '__Host-cf_session';
@@ -145,12 +146,21 @@ export function requireRole(u: User, ...roles: Role[]) {
   if (!roles.includes(u.role)) throw new HttpError(403, 'Nincs jogosultságod ehhez a művelethez.');
 }
 
+async function validResetToken(env: Env, token: string): Promise<{ user: User } | null> {
+  if (!token || token.length > 100) return null;
+  const row = await env.DB.prepare('SELECT r.expires_at, r.used_at, u.* FROM password_resets r JOIN users u ON u.id = r.user_id WHERE r.token_hash = ?')
+    .bind(await sha256(token))
+    .first<User & { expires_at: number; used_at: number | null }>();
+  if (!row || row.used_at || row.expires_at < now() || row.disabled) return null;
+  return { user: row };
+}
+
 // ---------- végpontok ----------
 export async function handleAuth(env: Env, req: Request, path: string): Promise<Response | null> {
   if (path === '/api/auth/status' && req.method === 'GET') {
     const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>();
     const u = await currentUser(env, req);
-    return json({ hasUsers: (c?.n || 0) > 0, setupAvailable: !c?.n && !!env.SETUP_TOKEN, me: u ? publicUser(u) : null });
+    return json({ hasUsers: (c?.n || 0) > 0, setupAvailable: !c?.n && !!env.SETUP_TOKEN, mailEnabled: mailEnabled(env), me: u ? publicUser(u) : null });
   }
 
   if (path === '/api/auth/setup' && req.method === 'POST') {
@@ -217,6 +227,81 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
     await audit(env, u.id, 'login', { ip, ua: (req.headers.get('User-Agent') || '').slice(0, 120) });
     const token = await createSession(env, req, u.id);
     return json({ ok: true, me: publicUser(u) }, 200, { 'Set-Cookie': sessionCookie(token, SESSION_TTL / 1000) });
+  }
+
+  // ---------- elfelejtett jelszó ----------
+  if (path === '/api/auth/forgot' && req.method === 'POST') {
+    const ip = clientIp(req);
+    const t = now();
+    await env.DB.prepare('DELETE FROM reset_requests WHERE ts < ?')
+      .bind(t - 86400_000)
+      .run();
+    const cnt = await env.DB.prepare('SELECT COUNT(*) AS n FROM reset_requests WHERE ip = ? AND ts > ?')
+      .bind(ip, t - 3600_000)
+      .first<{ n: number }>();
+    if ((cnt?.n || 0) >= 5) throw new HttpError(429, 'Túl sok kérés. Próbáld újra egy óra múlva.');
+    await env.DB.prepare('INSERT INTO reset_requests (ip, ts) VALUES (?, ?)').bind(ip, t).run();
+    if (!mailEnabled(env)) throw new HttpError(503, 'Az e-mail küldés nincs beállítva. Kérd az adminisztrátort, hogy állítsa vissza a jelszavad.');
+    const body = await readJson(req);
+    const email = String(body.email || '')
+      .trim()
+      .toLowerCase();
+    const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<User>();
+    // Mindig ugyanaz a válasz, hogy ne lehessen kideríteni, mely e-mail címek léteznek.
+    const generic = json({
+      ok: true,
+      message: 'Ha ezzel az e-mail címmel van fiók, elküldtük a jelszó-visszaállító linket. Nézd meg a beérkező leveleidet (és a spam mappát).',
+    });
+    if (!u || u.disabled) return generic;
+    const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM password_resets WHERE user_id = ? AND created_at > ?')
+      .bind(u.id, t - 3600_000)
+      .first<{ n: number }>();
+    if ((recent?.n || 0) >= 3) return generic;
+    const token = b64url(randomBytes(32));
+    await env.DB.prepare('INSERT INTO password_resets (token_hash, user_id, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?)')
+      .bind(await sha256(token), u.id, t, t + 30 * 60_000, ip)
+      .run();
+    const link = `${new URL(req.url).origin}/?reset=${token}`;
+    try {
+      await sendMail(env, { to: u.email, ...resetMail(u.name, link) });
+      await audit(env, u.id, 'password_reset_requested', { ip });
+    } catch (e: any) {
+      console.error('reset mail failed', e?.message);
+      await audit(env, u.id, 'password_reset_mail_failed', { error: String(e?.message).slice(0, 200) });
+    }
+    return generic;
+  }
+
+  if (path === '/api/auth/reset-info' && req.method === 'POST') {
+    const body = await readJson(req);
+    const r = await validResetToken(env, String(body.token || ''));
+    if (!r) return json({ valid: false });
+    return json({ valid: true, needTotp: !!r.user.totp_enabled, email: r.user.email });
+  }
+
+  if (path === '/api/auth/reset' && req.method === 'POST') {
+    const body = await readJson(req);
+    const r = await validResetToken(env, String(body.token || ''));
+    if (!r) throw new HttpError(400, 'A link lejárt vagy már felhasználták. Kérj újat.');
+    // a jelszó-visszaállítás nem kerülheti meg a kétlépcsős azonosítást
+    if (r.user.totp_enabled && !(await verifyTotp(r.user.totp_secret || '', String(body.totp || '')))) throw new HttpError(400, 'Hibás kétlépcsős kód.');
+    const pw = await newPasswordFields(String(body.password || ''));
+    const t = now();
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iter = ?, must_change_pw = 0, failed_logins = 0, locked_until = 0 WHERE id = ?').bind(
+        pw.pw_hash,
+        pw.pw_salt,
+        pw.pw_iter,
+        r.user.id,
+      ),
+      env.DB.prepare('UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL').bind(t, r.user.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(r.user.id),
+    ]);
+    await audit(env, r.user.id, 'password_reset_done', { ip: clientIp(req) });
+    try {
+      await sendMail(env, { to: r.user.email, ...changedMail(r.user.name) });
+    } catch {}
+    return json({ ok: true });
   }
 
   if (path === '/api/auth/logout' && req.method === 'POST') {
