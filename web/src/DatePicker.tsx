@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { MSL } from '../../shared/model';
 import { addDays, isWorkday, lastWorkday, mondayAfter } from '../../shared/workdays';
+import { useBack } from './back';
 import { C, FONT, FONT_H } from './ui';
 
 const WD = ['H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
@@ -65,6 +66,7 @@ function CalendarSheet({ value, min, onPick, onClose }: { value: string; min?: s
   const [vm, setVm] = useState(Number(value.slice(5, 7)));
   const mobile = typeof window !== 'undefined' && window.innerWidth < 700;
   const today = todayIso();
+  useBack(true, onClose);
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', k);

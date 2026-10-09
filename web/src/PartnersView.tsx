@@ -6,6 +6,7 @@ import { fmt, fmtM } from '../../shared/model';
 import { partnerStats, type Component, type PartnerStat } from '../../shared/partners';
 import type { Entry, Section } from '../../shared/types';
 import { api } from './api';
+import { useBack } from './back';
 import { DivergingBars } from './Bars';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
@@ -37,6 +38,7 @@ export function PartnersView({ mobile, initialKey, onBack }: { mobile?: boolean;
   const [sort, setSort] = useState<'last12' | 'total'>('last12');
   const [q, setQ] = useState('');
   const cur = sel ? stats.find((p) => p.key === sel) : null;
+  useBack(!!cur, () => (initialKey && onBack ? onBack() : setSel(null)));
   if (cur) return <PartnerDetail p={cur} mobile={mobile} onBack={() => (initialKey && onBack ? onBack() : setSel(null))} />;
 
   const nq = normalizeText(q);

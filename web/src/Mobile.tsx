@@ -4,6 +4,7 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { useBack } from './back';
 import { StatsView, type StatsTab } from './StatsView';
 import { partnerIdOf } from '../../shared/partners';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
@@ -24,7 +25,7 @@ type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
-  | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean }
+  | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean; back?: Sheet }
   | { kind: 'filters' };
 
 export function Mobile({ onLogout }: { onLogout: () => void }) {
@@ -42,6 +43,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const [selMode, setSelMode] = useState(false);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  // visszalépés (jobbra húzás / böngésző vissza): lap → előző lap, kijelölés → ki, fül → Áttekintés
+  useBack(tab !== 'home', () => (setPartnerKey(null), setTab('home')));
+  useBack(selMode, () => (setSelMode(false), setSel({})));
+  useBack(!!sheet, () => setSheet(sheet && sheet.kind === 'item' && sheet.back ? sheet.back : null));
   const isPast = m < ix.cur;
 
   // egyenlegek hónaponként
@@ -1207,6 +1212,7 @@ function SheetView({
               <button
                 onClick={() =>
                   setSheet({
+                    back: sheet,
                     kind: 'item',
                     id: plan.id,
                     amount: String(Math.abs(plan.amount)),
@@ -1246,7 +1252,28 @@ function SheetView({
           overflow: 'auto',
         }}
       >
-        <i style={{ alignSelf: 'center', width: 40, height: 5, borderRadius: 999, background: C.line2 }} />
+        <i style={{ alignSelf: 'center', width: 40, height: 5, borderRadius: 999, background: C.line2, marginBottom: -8 }} />
+        <div style={{ display: 'flex', alignItems: 'center', minHeight: 30 }}>
+          <span style={{ flex: 1 }}>
+            {sheet.kind === 'item' && sheet.back ? (
+              <button
+                onClick={() => setSheet(sheet.back!)}
+                style={{ border: 0, background: 'transparent', padding: 0, color: C.blueDark, font: `600 14.5px ${FONT}` }}
+              >
+                ‹ Vissza az adatlapra
+              </button>
+            ) : null}
+          </span>
+          <span style={{ flex: 'none', display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={close}
+              aria-label="Bezárás"
+              style={{ width: 32, height: 32, borderRadius: 999, border: 0, background: C.bg, color: C.muted, font: `600 15px ${FONT}` }}
+            >
+              ✕
+            </button>
+          </span>
+        </div>
         {body}
       </div>
     </div>

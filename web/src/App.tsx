@@ -1,5 +1,6 @@
 // Belépési folyamat (első admin, bejelentkezés, 2FA, kötelező jelszócsere) és a reszponzív elrendezés választása.
 import { useCallback, useEffect, useState } from 'react';
+import { installBackHandling } from './back';
 import type { DataBundle, Me } from '../../shared/types';
 import { api } from './api';
 import { Desktop, logout } from './Desktop';
@@ -79,7 +80,12 @@ export function App() {
   if (phase.k === 'login') return <Login setup={phase.setup} onDone={boot} />;
   if (phase.k === 'reset') return <ResetPw token={phase.token} onDone={() => setPhase({ k: 'login', setup: false })} />;
   if (phase.k === 'changePw') return <ChangePw me={phase.me} onDone={boot} onLogout={doLogout} />;
-  return <StoreProvider initial={phase.data}>{mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}</StoreProvider>;
+  return (
+    <StoreProvider initial={phase.data}>
+      <BackHandling />
+      {mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}
+    </StoreProvider>
+  );
 }
 
 const btn: React.CSSProperties = {
@@ -385,4 +391,9 @@ function ResetPw({ token, onDone }: { token: string; onDone: () => void }) {
       </form>
     </Shell>
   );
+}
+
+function BackHandling() {
+  useEffect(() => installBackHandling(), []);
+  return null;
 }
