@@ -7,18 +7,19 @@ import { payDate, payRuleLabel } from '../../shared/workdays';
 import { ruleOf } from './logic';
 import { api } from './api';
 import { RulesTab } from './RulesTab';
+import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime } from './ui';
 
-type Tab = 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules';
+type Tab = 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules' | 'trash';
 
 export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobile?: boolean }) {
   const { isAdmin } = useStore();
   const [tab, setTab] = useState<Tab>('account');
   const tabs: [Tab, string][] = [['account', 'Fiókom']];
   if (isAdmin) tabs.push(['users', 'Felhasználók'], ['integrations', 'Bekötések'], ['data', 'Adatok']);
-  tabs.push(['rules', 'Párosítások'], ['categories', 'Kategóriák']);
+  tabs.push(['rules', 'Párosítások'], ['categories', 'Kategóriák'], ['trash', 'Törölt tételek']);
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {!mobile && <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beállítások</h1>}
@@ -34,6 +35,7 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
       {tab === 'data' && isAdmin && <DataTab />}
       {tab === 'rules' && <RulesTab />}
       {tab === 'categories' && <Categories />}
+      {tab === 'trash' && <TrashTab />}
     </div>
   );
 }

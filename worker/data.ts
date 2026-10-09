@@ -69,6 +69,8 @@ function cleanEntry(e: Entry): Entry {
   };
 }
 
+const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by';
+
 export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
   const stmts: D1PreparedStatement[] = [];
@@ -108,7 +110,17 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
         );
     }
   }
-  for (const id of b.delete || []) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
+  for (const id of b.delete || []) {
+    // törlés előtt a kukába (visszakereshető, visszaállítható)
+    stmts.push(
+      env.DB.prepare(`INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries WHERE id = ?`).bind(
+        t,
+        userId,
+        String(id),
+      ),
+    );
+    stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
+  }
   for (const id of b.deleteSeries || []) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ?').bind(String(id)));
   if (stmts.length > 2000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
@@ -252,6 +264,46 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const allowed = ['opening_balance', 'billingo_leaf_default'];
     for (const k of allowed) if (k in b) await setSetting(env, k, b[k] == null ? null : String(b[k]).slice(0, 200));
     await audit(env, u.id, 'settings', b);
+    return json({ ok: true });
+  }
+
+  if (path === '/api/trash' && req.method === 'GET') {
+    // törölt tételek keresése (név, kategória, összeg, ki törölte)
+    const url = new URL(req.url);
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase().slice(0, 100);
+    const offers = url.searchParams.get('offers') === '1';
+    const like = '%' + q.replace(/[%_]/g, '') + '%';
+    const digits = q.replace(/\D/g, '');
+    const r = await env.DB.prepare(
+      `SELECT d.rowid AS rid, d.*, l.label AS leaf_label, u.name AS deleted_by_name
+       FROM deleted_entries d LEFT JOIN leaves l ON l.id = d.leaf_id LEFT JOIN users u ON u.id = d.deleted_by
+       WHERE (? = '' OR lower(d.name) LIKE ? OR lower(COALESCE(d.note, '')) LIKE ? OR lower(COALESCE(l.label, '')) LIKE ?
+              OR (? <> '' AND CAST(abs(d.amount) AS TEXT) LIKE ?))
+         AND (? = 0 OR d.tentative = 1)
+         AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
+       ORDER BY d.deleted_at DESC, d.date LIMIT 2000`,
+    )
+      .bind(q, like, like, like, digits, '%' + digits + '%', offers ? 1 : 0)
+      .all();
+    return json({ items: r.results });
+  }
+
+  if (path === '/api/trash/restore' && req.method === 'POST') {
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ rids: number[] }>(req);
+    const rids = (Array.isArray(b.rids) ? b.rids : []).map(Number).filter(Number.isFinite).slice(0, 500);
+    const stmts: D1PreparedStatement[] = [];
+    for (const rid of rids) {
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO entries (${ENTRY_COLS}) SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, ?, ?
+           FROM deleted_entries WHERE rowid = ? AND leaf_id IN (SELECT id FROM leaves) ON CONFLICT(id) DO NOTHING`,
+        ).bind(now(), u.id, rid),
+      );
+      stmts.push(env.DB.prepare('DELETE FROM deleted_entries WHERE rowid = ? AND id IN (SELECT id FROM entries)').bind(rid));
+    }
+    for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+    await audit(env, u.id, 'trash.restore', { rids });
     return json({ ok: true });
   }
 
