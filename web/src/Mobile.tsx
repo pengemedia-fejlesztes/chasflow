@@ -8,8 +8,8 @@ import { api } from './api';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
-import { REP, ruleDateFor, ruleOf, dateIn, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
-import { payRuleLabel } from '../../shared/workdays';
+import { REP, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
+import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
@@ -19,7 +19,7 @@ import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 type Tab = 'home' | 'alerts' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
-  | { kind: 'item'; id: string; amount: string; day: number; all: boolean }
+  | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean }
   | { kind: 'filters' };
 
 export function Mobile({ onLogout }: { onLogout: () => void }) {
@@ -442,7 +442,17 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                         if (e.done || isAct) return;
                         setSel((x) => ({ ...x, [e.id]: !x[e.id] }));
                       } else if (!isAct)
-                        setSheet({ kind: 'item', id: e.id, amount: String(Math.abs(e.amount)), day: Number(e.date.slice(8)), all: !!e.series_id });
+                        setSheet({
+                          kind: 'item',
+                          id: e.id,
+                          amount: String(Math.abs(e.amount)),
+                          date: e.date,
+                          name: e.name,
+                          leaf: e.leaf_id,
+                          section: ix.sectionOf(e.leaf_id),
+                          pick: false,
+                          all: false,
+                        });
                     }}
                     style={{
                       width: '100%',
@@ -968,41 +978,166 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
   if (sheet.kind === 'item') {
     const e = data.entries.find((x) => x.id === sheet.id);
     if (e) {
-      const sign = ix.sectionOf(e.leaf_id) === 'in' ? 1 : -1;
+      const sign = sheet.section === 'in' ? 1 : -1;
       const later = data.entries.filter((x) => e.series_id && x.series_id === e.series_id && x.date >= e.date && !x.done).map((x) => x.id);
       const ids = sheet.all && later.length ? later : [e.id];
       const set = (p: Partial<typeof sheet>) => setSheet({ ...sheet, ...p });
       const series = data.series.find((s) => s.id === e.series_id);
+      // a gyorsgombok az eredeti dátumhoz (lejártnál a mai naphoz) képest számolnak
+      const base = e.date > data.today ? e.date : data.today;
+      const quick: [string, string][] = [
+        ['Jövő hétfő', mondayAfter(base, 1)],
+        ['+2 hét', mondayAfter(base, 2)],
+        ['+1 hónap', mondayOnOrAfter(addMonthsDate(base, 1))],
+      ];
+      const leafLabel = ix.leafById[sheet.leaf]?.label || '';
+      const groupLabel = displayGroup(ix.groupById[ix.leafById[sheet.leaf]?.group_id]?.label || '');
+      const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
+      const save = () => {
+        const v = parseInt(sheet.amount) || 0;
+        const shift = dayDiff(e.date, sheet.date);
+        commit(
+          {
+            upsert: data.entries
+              .filter((x) => ids.includes(x.id))
+              .map((x) => ({
+                ...x,
+                amount: v * sign,
+                leaf_id: sheet.leaf,
+                name: sheet.name.trim().slice(0, 200),
+                date: x.id === e.id ? sheet.date : addDays(x.date, shift),
+              })),
+          },
+          `${ids.length > 1 ? ids.length + ' tétel' : sheet.name || 'Tétel'} mentve · ${fmt(v)} Ft`,
+        );
+        close();
+      };
       body = (
         <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
-              {monthLong(ymOf(e.date))} {Number(e.date.slice(8))}. · {series ? REP[series.rep] : e.source === 'billingo' ? 'Billingo számla' : 'Terv'}
-            </span>
-            <span style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>{e.name || ix.leafById[e.leaf_id]?.label}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', border: `1.5px solid ${C.blue}`, background: C.bg2, borderRadius: 14, padding: '0 16px' }}>
+          <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
+            {series ? REP[series.rep] : e.source === 'billingo' ? 'Billingo számla' : e.tentative ? 'Ajánlat' : 'Terv'}
+          </span>
+          <input
+            value={sheet.name}
+            onChange={(ev) => set({ name: ev.target.value })}
+            placeholder={leafLabel || 'Megnevezés'}
+            style={{
+              flex: 'none',
+              height: 48,
+              border: `1.5px solid ${C.line2}`,
+              borderRadius: 12,
+              padding: '0 14px',
+              font: `700 17px ${FONT_H}`,
+              color: C.navy,
+              outline: 0,
+            }}
+          />
+          <div
+            style={{
+              flex: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              border: `1.5px solid ${C.blue}`,
+              background: C.bg2,
+              borderRadius: 14,
+              padding: '0 16px',
+            }}
+          >
             <input
-              value={sheet.amount}
-              onChange={(ev) => set({ amount: ev.target.value.replace(/\D/g, '') })}
+              value={sheet.amount ? fmt(parseInt(sheet.amount)) : ''}
+              onChange={(ev) => set({ amount: ev.target.value.replace(/\D/g, '').slice(0, 11) })}
               inputMode="numeric"
+              placeholder="0"
               style={{ flex: 1, minWidth: 0, height: 58, border: 0, outline: 0, background: 'transparent', font: `800 26px ${FONT_H}`, color: C.navy }}
             />
-            <span style={{ font: `600 15px ${FONT}`, color: C.blueDark }}>Ft</span>
+            <span style={{ font: `700 18px ${FONT_H}`, color: C.blueDark }}>Ft</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted }}>Fizetési nap</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button onClick={() => set({ day: Math.max(1, sheet.day - 1) })} style={sqBtn}>
-                −
-              </button>
-              <span style={{ minWidth: 84, textAlign: 'center', font: `700 16px ${FONT_H}`, color: C.navy }}>
-                {monthLabel(ymOf(e.date))} {sheet.day}.
-              </span>
-              <button onClick={() => set({ day: Math.min(31, sheet.day + 1) })} style={sqBtn}>
-                +
-              </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={lbl}>Dátum</span>
+            <DateField big value={sheet.date} onChange={(v) => set({ date: v })} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
+              {quick.map(([label, d]) => (
+                <button
+                  key={label}
+                  onClick={() => set({ date: d })}
+                  style={{
+                    height: 52,
+                    border: sheet.date === d ? `1.5px solid ${C.blue}` : 0,
+                    borderRadius: 12,
+                    background: sheet.date === d ? '#fff' : C.bg2,
+                    color: C.blueDark,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    lineHeight: 1.15,
+                  }}
+                >
+                  <span style={{ font: `600 14px ${FONT}` }}>{label}</span>
+                  <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>hétfő, {d.slice(5).replace('-', '.')}.</span>
+                </button>
+              ))}
             </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={lbl}>Kategória</span>
+            <button
+              onClick={() => set({ pick: !sheet.pick })}
+              style={{
+                minHeight: 50,
+                border: `1.5px solid ${sheet.pick ? C.blue : C.line2}`,
+                borderRadius: 12,
+                background: '#fff',
+                padding: '8px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{leafLabel}</b>
+                <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+                  {sheet.section === 'in' ? 'Bevétel' : 'Kiadás'} · {groupLabel}
+                </span>
+              </span>
+              <span style={{ font: `600 13px ${FONT}`, color: C.blueDark }}>{sheet.pick ? 'Bezár' : 'Áthelyezés ›'}</span>
+            </button>
+            {sheet.pick && (
+              <>
+                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+                  {(
+                    [
+                      ['in', 'Bevétel'],
+                      ['out', 'Kiadás'],
+                    ] as [Section, string][]
+                  ).map(([v, l]) => (
+                    <button
+                      key={v}
+                      onClick={() => set({ section: v })}
+                      style={{
+                        flex: 1,
+                        height: 38,
+                        border: 0,
+                        borderRadius: 10,
+                        background: sheet.section === v ? C.navy : 'transparent',
+                        color: sheet.section === v ? '#fff' : C.navy,
+                        font: `600 14px ${FONT}`,
+                      }}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <LeafPicker
+                  key={sheet.section}
+                  big
+                  section={sheet.section}
+                  value={ix.sectionOf(sheet.leaf) === sheet.section ? sheet.leaf : null}
+                  onChange={(id) => set({ leaf: id, pick: false })}
+                />
+              </>
+            )}
           </div>
           {later.length > 1 && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, font: `500 14px ${FONT}`, color: C.ink }}>
@@ -1010,31 +1145,6 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
               sorozat összes későbbi tételére is ({later.length})
             </label>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted }}>Átütemezés</span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6 }}>
-              {[-1, 1, 2, 3].map((n) => (
-                <button
-                  key={n}
-                  onClick={() => {
-                    commit(shiftEntries(data, ids, n), `${ids.length} tétel → ${n > 0 ? '+' : ''}${n} hónap`);
-                    close();
-                  }}
-                  style={{
-                    height: 46,
-                    border: n < 0 ? `1.5px solid ${C.line2}` : 0,
-                    borderRadius: 12,
-                    background: n < 0 ? '#fff' : C.bg2,
-                    font: `600 14px ${FONT}`,
-                    color: n < 0 ? C.navy : C.blueDark,
-                  }}
-                >
-                  {n > 0 ? '+' : '−'}
-                  {Math.abs(n)} hó
-                </button>
-              ))}
-            </div>
-          </div>
           <button
             onClick={() => {
               commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓');
@@ -1063,17 +1173,19 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
               Törlés
             </button>
             <button
-              onClick={() => {
-                const v = parseInt(sheet.amount) || 0;
-                commit(
-                  { upsert: data.entries.filter((x) => ids.includes(x.id)).map((x) => ({ ...x, amount: v * sign, date: dateIn(ymOf(x.date), sheet.day) })) },
-                  `${ids.length} tétel → ${fmt(v)} Ft`,
-                );
-                close();
+              onClick={save}
+              disabled={ix.sectionOf(sheet.leaf) !== sheet.section}
+              style={{
+                height: 50,
+                border: 0,
+                borderRadius: 999,
+                background: C.navy,
+                font: `600 15px ${FONT}`,
+                color: '#fff',
+                opacity: ix.sectionOf(sheet.leaf) !== sheet.section ? 0.5 : 1,
               }}
-              style={{ height: 50, border: 0, borderRadius: 999, background: C.navy, font: `600 15px ${FONT}`, color: '#fff' }}
             >
-              Mentés
+              {ix.sectionOf(sheet.leaf) !== sheet.section ? 'Válassz kategóriát' : 'Mentés'}
             </button>
           </div>
         </>
@@ -1103,13 +1215,3 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
     </div>
   );
 }
-
-const sqBtn: React.CSSProperties = {
-  width: 44,
-  height: 44,
-  border: `1.5px solid ${C.line2}`,
-  borderRadius: 12,
-  background: '#fff',
-  font: `600 20px ${FONT}`,
-  color: C.navy,
-};

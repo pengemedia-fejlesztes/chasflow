@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstWorkday, holidays, isWorkday, lastWorkday, payDate } from '../shared/workdays';
+import { addMonthsDate, firstWorkday, holidays, isWorkday, lastWorkday, mondayAfter, mondayOnOrAfter, payDate } from '../shared/workdays';
 
 describe('munkanapok', () => {
   it('ünnepek 2026', () => {
@@ -19,5 +19,17 @@ describe('munkanapok', () => {
     expect(payDate('2026-10', 'day:10', 1)).toBe('2026-10-09'); // okt. 10. szombat
     expect(payDate('2026-11', 'day:10', 1)).toBe('2026-11-10');
     expect(payDate('2026-11', null, 15)).toBe('2026-11-15');
+  });
+});
+
+describe('gyors átütemezés hétfőre', () => {
+  it('jövő hét hétfő / +2 hét / +1 hónap', () => {
+    expect(mondayAfter('2026-10-09', 1)).toBe('2026-10-12'); // péntek → jövő hétfő
+    expect(mondayAfter('2026-10-11', 1)).toBe('2026-10-12'); // vasárnap → másnap hétfő
+    expect(mondayAfter('2026-10-12', 1)).toBe('2026-10-19'); // hétfő → egy héttel később
+    expect(mondayAfter('2026-10-09', 2)).toBe('2026-10-19');
+    expect(mondayOnOrAfter(addMonthsDate('2026-10-09', 1))).toBe('2026-11-09');
+    expect(mondayOnOrAfter(addMonthsDate('2026-10-25', 1))).toBe('2026-11-30');
+    expect(addMonthsDate('2027-01-31', 1)).toBe('2027-02-28');
   });
 });
