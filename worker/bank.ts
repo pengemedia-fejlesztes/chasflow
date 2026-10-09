@@ -247,7 +247,14 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(mid, leafId, tx.id));
       continue;
     }
-    const planId = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
+    let planId: string | null = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
+    if (planId && !('plan_id' in it)) {
+      // nem kifejezetten választott (javasolt / automatikus) terv csak azonos kategóriában és hasonló összegnél zárható le
+      const p = await env.DB.prepare('SELECT leaf_id, amount, done FROM entries WHERE id = ?')
+        .bind(planId)
+        .first<{ leaf_id: string; amount: number; done: number }>();
+      if (!p || p.done || p.leaf_id !== leafId || Math.abs(tx.amount) < Math.abs(p.amount) * 0.3) planId = null;
+    }
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
     const rep = it.rep === 'monthly' || it.rep === 'quarterly' ? it.rep : null;

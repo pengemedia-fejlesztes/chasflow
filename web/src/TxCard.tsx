@@ -40,7 +40,17 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
   const section = t.amount >= 0 ? 'in' : 'out';
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const [leaf, setLeaf] = useState<string | null>(t.leaf_id || (section === 'out' ? unforeseen : null));
-  const [plan, setPlan] = useState<string | null>(t.plan_id);
+  // csak az azonos kategóriájú javasolt terv legyen előre kiválasztva
+  const [plan, setPlan] = useState<string | null>(() => {
+    const p = t.plan_id ? data.entries.find((e) => e.id === t.plan_id) : null;
+    return p && (!t.leaf_id || p.leaf_id === t.leaf_id) ? p.id : null;
+  });
+  /** kategória váltáskor a másik kategóriához tartozó terv kikerül a kijelölésből */
+  const pickLeaf = (id: string) => {
+    setLeaf(id);
+    const p = plan ? data.entries.find((e) => e.id === plan) : null;
+    if (p && p.leaf_id !== id) setPlan(null);
+  };
   const [name, setName] = useState(t.partner || t.memo || '');
   const [rep, setRep] = useState<Rep>('once');
   const [count, setCount] = useState(12);
@@ -90,7 +100,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
     try {
       const r = await api<{ id: string }>('/api/leaves', { body: { group_id: groupId, label: catQ.trim() } });
       await run(async () => {});
-      setLeaf(r.id);
+      pickLeaf(r.id);
       setCatQ('');
       setNewGroupFor(null);
     } catch (e: any) {
@@ -144,7 +154,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                   key={l.id}
                   type="button"
                   title={displayGroup(ix.groupById[l.group_id]?.label || '')}
-                  onClick={() => setLeaf(l.id)}
+                  onClick={() => pickLeaf(l.id)}
                   style={chip(leaf === l.id)}
                 >
                   {leaf === l.id ? '✓ ' : ''}
