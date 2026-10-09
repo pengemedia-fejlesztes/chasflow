@@ -385,7 +385,7 @@ function Integrations() {
     <>
       <Section
         title="Billingo"
-        sub="A kiállított számlák (Billingo v3 API) óránként szinkronizálódnak: a nyitott számlák tervezett bevételként jelennek meg a fizetési határidőn. Az API kulcsot titokként kell beállítani (BILLINGO_API_KEY) – lásd README."
+        sub="A kiállított számlák (Billingo v3 API) naponta 5, 9, 13, 17 és 21 órakor szinkronizálódnak: a nyitott számlák tervezett bevételként jelennek meg a fizetési határidőn. Az API kulcsot titokként kell beállítani (BILLINGO_API_KEY) – lásd README."
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ font: `600 14px ${FONT}`, color: data.integrations.billingo ? C.blueDark : C.neg }}>

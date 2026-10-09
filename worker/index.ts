@@ -42,6 +42,9 @@ async function route(req: Request, env: Env): Promise<Response> {
   throw new HttpError(404, 'Nincs ilyen végpont.');
 }
 
+/** Szinkron órák (Budapest) */
+const SYNC_HOURS = [5, 9, 13, 17, 21];
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     try {
@@ -53,7 +56,10 @@ export default {
     }
   },
 
-  async scheduled(_ev: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)));
+    if (!SYNC_HOURS.includes(hour)) return;
     ctx.waitUntil(
       syncAll(env).then(
         (r) => console.log('sync', JSON.stringify(r)),

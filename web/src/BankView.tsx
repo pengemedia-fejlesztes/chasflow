@@ -122,7 +122,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
           <div style={{ display: 'flex', flexDirection: 'column', marginLeft: 'auto' }}>
             <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {relTime(lastSync)}</span>
             <span style={{ font: `800 20px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ix.bankBalance != null ? fmt(ix.bankBalance) + ' Ft' : '—'}</span>
-            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan óránként</span>
+            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan: 5, 9, 13, 17, 21 órakor</span>
           </div>
         )}
       </div>

@@ -19,9 +19,11 @@ database_name = "cashflow"
 database_id = "b39b7832-12e5-4905-b4a8-896b0985eaa2"
 migrations_dir = "migrations"
 
-# Óránkénti automatikus szinkron (Billingo + bankok)
+# Automatikus szinkron (Billingo + bankok + automatikus párosítások) naponta 5, 9, 13, 17, 21 órakor
+# budapesti idő szerint. A cron UTC-ben fut: mindkét (nyári/téli) eltolásra beállítva,
+# a Worker csak a megfelelő budapesti órában dolgozik (lásd worker/index.ts).
 [triggers]
-crons = ["17 * * * *"]
+crons = ["2 3,4,7,8,11,12,15,16,19,20 * * *"]
 
 [observability]
 enabled = true

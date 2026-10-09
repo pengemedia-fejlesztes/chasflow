@@ -7,7 +7,7 @@ Böngészőben és iPhone-on is használható, több felhasználós cashflow szo
 - **Korábbi adatok:** a TÉNYEK xls teljes egészében (2022 decemberétől) importálható, bármelyik év és hónap visszanézhető.
 - **Becslés:** a tervek után az elmúlt 12 hónap rendszeres tételeinek átlagával számol előre. A becsült értékek dőlt betűvel, „≈” jellel jelennek meg, és ki is kapcsolhatók.
 - **Billingo:** a kiállított, még ki nem fizetett számlák automatikusan a *Tervezett bevétel* fülre kerülnek, a fizetési határidőre. Ha a tervben már szerepel ugyanaz a bevétel (pl. havi díj), a számla azt a tervet állítja „kiszámlázottra”, így nincs dupla bevétel.
-- **Bank (BiNX, Magnet):** PSD2 kapcsolaton keresztül (Enable Banking) óránként frissül az egyenleg és a tételek. Ahol ez nem érhető el, a netbankból letöltött CSV vagy Excel kivonat is feltölthető. A beérkezett tételekhez a rendszer kategóriát javasol, és párosítja őket a tervvel vagy a Billingo-számlával. Egy kattintásos jóváhagyás után a terv lezárul, és tényként kerül be.
+- **Bank (BiNX, Magnet):** PSD2 kapcsolaton keresztül (Enable Banking) naponta ötször (5, 9, 13, 17, 21 órakor) frissül az egyenleg és a tételek. Ahol ez nem érhető el, a netbankból letöltött CSV vagy Excel kivonat is feltölthető. A beérkezett tételekhez a rendszer kategóriát javasol, és párosítja őket a tervvel vagy a Billingo-számlával. Egy kattintásos jóváhagyás után a terv lezárul, és tényként kerül be.
 - **Mobil:** iPhone-on a Safariban *Megosztás → Főképernyőhöz adás*, és utána alkalmazásként fut.
 
 ## Biztonság
@@ -109,7 +109,7 @@ npm test                                       # unit tesztek
 | Mappa | Tartalom |
 |---|---|
 | `web/` | React felület (Vite), asztali és mobil nézet a feltöltött design alapján |
-| `worker/` | Cloudflare Worker API: hitelesítés, adatok, Billingo, bank, óránkénti szinkron |
+| `worker/` | Cloudflare Worker API: hitelesítés, adatok, Billingo, bank, napi szinkron (5, 9, 13, 17, 21 óra) |
 | `shared/` | Közös logika: kategóriák, xls-értelmezés, cashflow-számítás, banki párosítás |
 | `migrations/` | D1 (SQLite) adatbázis séma |
 | `tests/` | Unit tesztek (`vitest`) |
