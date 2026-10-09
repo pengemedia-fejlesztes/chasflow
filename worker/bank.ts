@@ -42,12 +42,13 @@ function insertTxStmt(
   ctx: Ctx,
   accountId: string,
   tx: { ext: string; date: string; amount: number; currency: string; partner: string; memo: string },
+  status: 'new' | 'ignored' = 'new',
 ) {
   const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf);
   const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs);
   return env.DB.prepare(
     `INSERT INTO bank_tx (id, account_id, ext_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?) ON CONFLICT(account_id, ext_id) DO NOTHING`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, ext_id) DO NOTHING`,
   ).bind(
     randomId('t'),
     accountId,
@@ -57,6 +58,7 @@ function insertTxStmt(
     tx.currency,
     tx.partner.slice(0, 200),
     tx.memo.slice(0, 500),
+    status,
     leaf ?? (plan ? plan.leaf_id : null),
     plan?.id ?? null,
     now(),
@@ -245,6 +247,16 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
             .run();
         }
       }
+      await env.DB.prepare("UPDATE bank_accounts SET active = 0 WHERE provider = 'manual' AND lower(bank_name) LIKE ?")
+        .bind(
+          '%' +
+            String(st.bank_name)
+              .toLowerCase()
+              .replace(/\s*bank$/, '')
+              .slice(0, 6) +
+            '%',
+        )
+        .run();
       await audit(env, u.id, 'bank_connected', { bank: st.bank_name, accounts: s.accounts.length });
       await syncBanks(env);
       return Response.redirect(`${url.origin}/?bank=ok`, 302);
@@ -306,7 +318,7 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
       bank_name: string;
       label: string;
       balance?: string;
-      rows: { date: unknown; amount: unknown; partner?: string; memo?: string }[];
+      rows: { date: unknown; amount: unknown; partner?: string; memo?: string; ext?: string }[];
     }>(req, 10_000_000);
     const bank = String(b.bank_name || '')
       .trim()
@@ -321,26 +333,58 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
       await env.DB.prepare("INSERT INTO bank_accounts (id, provider, bank_name, label) VALUES (?, 'manual', ?, ?)").bind(acc.id, bank, label).run();
     }
     const ctx = await matchingContext(env);
+    // A TÉNYEK importban már szereplő időszak tételei csak archívumba kerülnek (duplikáció-szűréshez).
+    // Kivétel: az utolsó 45 nap olyan banki tételei, amelyeknek nincs párja a tények között (pl. még nem rögzített
+    // befizetések) – ezek jóváhagyásra mennek, és párosulnak a nyitott tervekkel.
+    const cut = await env.DB.prepare("SELECT MAX(date) AS d FROM entries WHERE kind = 'actual' AND source = 'import'").first<{ d: string | null }>();
+    const cutoff = cut?.d || '';
+    const recentFrom = cutoff ? new Date(Date.parse(cutoff) - 45 * 86400_000).toISOString().slice(0, 10) : '';
+    const facts = cutoff
+      ? (
+          await env.DB.prepare("SELECT date, amount FROM entries WHERE kind = 'actual' AND date >= ?")
+            .bind(new Date(Date.parse(recentFrom) - 8 * 86400_000).toISOString().slice(0, 10))
+            .all<{ date: string; amount: number }>()
+        ).results.map((f) => ({ ...f, used: false }))
+      : [];
+    const statusFor = (date: string, amount: number): 'new' | 'ignored' => {
+      if (!cutoff || date > cutoff) return 'new';
+      if (date < recentFrom) return 'ignored';
+      const f = facts.find((x) => !x.used && x.amount === amount && Math.abs(Date.parse(x.date) - Date.parse(date)) <= 7 * 86400_000);
+      if (f) {
+        f.used = true;
+        return 'ignored';
+      }
+      return 'new';
+    };
+    const count = () =>
+      env.DB.prepare('SELECT status, COUNT(*) AS n FROM bank_tx WHERE account_id = ? GROUP BY status').bind(acc!.id).all<{ status: string; n: number }>();
+    const before = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
     const stmts: D1PreparedStatement[] = [];
     const seen: Record<string, number> = {};
     let n = 0;
-    for (const r of (b.rows || []).slice(0, 20000)) {
+    for (const r of (b.rows || []).slice(0, 30000)) {
       const date = parseDate(r.date);
       const amount = parseAmount(r.amount);
       if (!date || !amount) continue;
       const partner = String(r.partner || '').trim();
       const memo = String(r.memo || '').trim();
-      const base = `${date}|${amount}|${partner}|${memo}`;
-      seen[base] = (seen[base] || 0) + 1;
-      stmts.push(insertTxStmt(env, ctx, acc.id, { ext: base + '|' + seen[base], date, amount, currency: 'HUF', partner, memo }));
+      let ext = r.ext ? String(r.ext).slice(0, 200) : '';
+      if (!ext) {
+        const base = `${date}|${amount}|${partner}|${memo}`;
+        seen[base] = (seen[base] || 0) + 1;
+        ext = base + '|' + seen[base];
+      }
+      stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
       n++;
     }
-    if (b.balance !== undefined && String(b.balance).trim() !== '')
+    if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
       stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));
     stmts.push(env.DB.prepare('UPDATE bank_accounts SET last_sync = ? WHERE id = ?').bind(now(), acc.id));
     for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
-    await audit(env, u.id, 'bank_csv_import', { bank, rows: n });
-    return json({ ok: true, rows: n });
+    const after = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
+    const added = { inbox: (after.new || 0) - (before.new || 0), archived: (after.ignored || 0) - (before.ignored || 0) };
+    await audit(env, u.id, 'bank_csv_import', { bank, rows: n, ...added });
+    return json({ ok: true, rows: n, ...added, duplicates: n - added.inbox - added.archived, cutoff });
   }
   return null;
 }

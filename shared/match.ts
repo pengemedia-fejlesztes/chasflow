@@ -20,11 +20,30 @@ export interface TxLike {
   memo: string;
 }
 
-/** Kategória javaslat: 1) tanult szabály, 2) kategória név szerepel a partner/közlemény szövegben. */
+/** Beépített kulcsszavak (normalizált szöveg) → alkategória név (normalizált), ha az létezik. */
+const KEYWORDS: [RegExp, string[]][] = [
+  [/tranzakcios dij|bankkartya dij|kartyadij|koltsegelszamolas|szamlavezetesi|banki dij|havi dij terheles/, ['bank koltseg', 'bankkoltseg']],
+  [/kisvallalati ado|\bkiva\b/, ['kiva']],
+  [/tb jarulek|szocialis hozzajarulas|levont szja|szja eloleg|egyes meghat|nav jarulek/, ['jarulekok']],
+  [/\bafa\b|altalanos forgalmi ado/, ['afa']],
+  [/iparuzesi ado|\bipa\b|helyi ado/, ['iparuzesi ado']],
+  [/yettel|telenor|netfone/, ['yettel']],
+  [/telekom/, ['telekom']],
+  [/rackforest|tarhely|domain/, ['domain tarhely']],
+  [/anthropic|claude|openai|chatgpt|google workspace|ahrefs|cookieyes|typesafe|openrouter|rankmath|adobe|canva|figma/, ['szoftver beszerzes']],
+];
+
+/** Kategória javaslat: 1) tanult szabály, 2) beépített kulcsszavak, 3) kategória név szerepel a partner/közlemény szövegben. */
 export function suggestLeaf(tx: TxLike, rules: RuleMap, leaves: Leaf[], leafSection: (id: string) => 'in' | 'out'): string | null {
   const key = partnerKey(tx.partner);
   const wantSection = tx.amount >= 0 ? 'in' : 'out';
   if (key && rules[key] && leafSection(rules[key]) === wantSection) return rules[key];
+  const text = normalizeText(tx.partner + ' ' + tx.memo);
+  for (const [re, labels] of KEYWORDS) {
+    if (!re.test(text)) continue;
+    const l = leaves.find((l) => !l.archived && leafSection(l.id) === wantSection && labels.includes(normalizeText(l.label)));
+    if (l) return l.id;
+  }
   const hay = ' ' + normalizeText(tx.partner + ' ' + tx.memo) + ' ';
   let best: { id: string; len: number } | null = null;
   for (const l of leaves) {

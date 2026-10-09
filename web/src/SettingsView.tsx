@@ -1,6 +1,7 @@
 // Beállítások: saját fiók (jelszó, 2FA), felhasználók, integrációk (Billingo, bankok), adatok (import, nyitó egyenleg), kategóriák.
 import { useEffect, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
+import { parseBankRows } from '../../shared/bankfile';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
@@ -300,7 +301,7 @@ function Integrations() {
   const [aspsps, setAspsps] = useState<{ name: string; psu_types?: string[] }[] | null>(null);
   const [bank, setBank] = useState('');
   const [psu, setPsu] = useState<'business' | 'personal'>('business');
-  const [csv, setCsv] = useState({ bank: 'BiNX', label: 'Üzleti számla', balance: '' });
+  const [csv, setCsv] = useState({ bank: 'BiNX', label: 'Üzleti számla', balance: '' }); // a bank a fájlból felismerve felülíródik
 
   useEffect(() => {
     const p = new URLSearchParams(location.search);
@@ -341,33 +342,35 @@ function Integrations() {
       wb = XLSX.read(text, { type: 'string', FS, raw: true });
     } else wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false, raw: false });
     const rows: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-    const hi = rows.findIndex((r) => r.some((c) => /d[aá]tum|date|könyvel/i.test(String(c))) && r.some((c) => /összeg|amount|terhel|jóváír/i.test(String(c))));
-    if (hi < 0) return showToast({ msg: 'Nem találom a fejlécet (Dátum, Összeg …) a fájlban.', error: true });
-    const head = rows[hi].map((c) => String(c).toLowerCase());
-    const col = (re: RegExp) => head.findIndex((h) => re.test(h));
-    const cDate = col(/könyvel|d[aá]tum|date/);
-    const cAmt = col(/^összeg|amount|összeg/);
-    const cDebit = col(/terhel/);
-    const cCredit = col(/jóváír/);
-    const cPartner = col(/partner|kedvezményezett|ellenoldal|név|name|beneficiary|counterparty/);
-    const cMemo = col(/közlemény|megjegyzés|memo|description|leírás|remittance/);
-    const out = rows
-      .slice(hi + 1)
-      .map((r) => {
-        let amount: unknown = cAmt >= 0 ? r[cAmt] : '';
-        if ((amount === '' || amount == null) && (cDebit >= 0 || cCredit >= 0)) {
-          const deb = String(r[cDebit] ?? '').trim(),
-            cre = String(r[cCredit] ?? '').trim();
-          amount = cre && cre !== '0' ? cre : deb ? '-' + deb.replace(/^-/, '') : '';
-        }
-        return { date: r[cDate], amount, partner: cPartner >= 0 ? r[cPartner] : '', memo: cMemo >= 0 ? r[cMemo] : '' };
-      })
-      .filter((r) => r.date && r.amount !== '');
-    if (!out.length) return showToast({ msg: 'Nem találtam tételeket.', error: true });
-    run(
-      () => api('/api/bank/import', { body: { bank_name: csv.bank, label: csv.label, balance: csv.balance, rows: out } }),
-      `${out.length} banki tétel beolvasva → Bankszinkron`,
-    );
+    let parsed;
+    try {
+      parsed = parseBankRows(rows, file.name);
+    } catch (e: any) {
+      return showToast({ msg: e.message, error: true });
+    }
+    if (!parsed.rows.length) return showToast({ msg: 'Nem találtam tételeket.', error: true });
+    const bankName = parsed.bank || csv.bank;
+    const label = csv.label || 'Üzleti számla';
+    let balance: string | null = csv.balance.trim() || null;
+    const summary = `${bankName} · ${label}\n${parsed.rows.length} tétel (${parsed.from} – ${parsed.to})${parsed.skipped ? `, ${parsed.skipped} kihagyva (nem teljesült / üres)` : ''}\nA tételek összege: ${fmt(parsed.sum)} Ft`;
+    if (!confirm(summary + '\n\nBeolvassam? A korábbi (a TÉNYEK-ben már szereplő) időszak tételei csak archívumba kerülnek, jóváhagyásra csak az újak jönnek.'))
+      return;
+    if (
+      !balance &&
+      confirm(
+        `Ha ez a kivonat a számla NYITÁSÁTÓL indul, akkor a mai egyenleg ${fmt(parsed.sum)} Ft.\n\nBeállítsam ezt a számla egyenlegének? (Mégse = később kézzel adod meg)`,
+      )
+    )
+      balance = String(parsed.sum);
+    const out = parsed.rows;
+    let res: any = null;
+    await run(async () => {
+      res = await api('/api/bank/import', { body: { bank_name: bankName, label, balance, rows: out } });
+    });
+    if (res)
+      showToast(
+        `${bankName}: ${res.inbox} új tétel jóváhagyásra, ${res.archived} archívumba (≤ ${res.cutoff || '—'}), ${res.duplicates} már korábban beolvasva.`,
+      );
   };
 
   return (
