@@ -5,6 +5,7 @@ import { parseBankRows } from '../../shared/bankfile';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { RulesTab } from './RulesTab';
+import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime } from './ui';
 
@@ -19,6 +20,9 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {!mobile && <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beállítások</h1>}
+      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+        Verzió: <b style={{ color: C.navy }}>{APP_VERSION}</b> · élesítve: {APP_BUILD} · {APP_COMMIT}
+      </span>
       <div style={{ overflowX: 'auto' }}>
         <Seg value={tab} onChange={setTab} options={tabs} />
       </div>

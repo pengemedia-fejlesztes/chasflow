@@ -5,6 +5,7 @@ import { api } from './api';
 import { Desktop, logout } from './Desktop';
 import { Mobile } from './Mobile';
 import { StoreProvider } from './store';
+import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, inputStyle } from './ui';
 
 function useIsMobile() {
@@ -123,7 +124,12 @@ function Shell({ title, sub, children }: { title: string; sub?: string; children
             <span style={{ font: `700 19px ${FONT_H}` }}>
               Cashflow <b style={{ color: C.blue2 }}>tervező</b>
             </span>
-            <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>360 Marketing</span>
+            <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>
+              360 Marketing ·{' '}
+              <span title={VERSION_LABEL} style={{ textTransform: 'none', letterSpacing: '.04em', color: C.blue2 }}>
+                {APP_VERSION}
+              </span>
+            </span>
           </div>
         </div>
         <div style={{ background: '#fff', borderRadius: 20, padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>

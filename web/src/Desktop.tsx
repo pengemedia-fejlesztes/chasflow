@@ -11,6 +11,7 @@ import { IncomeView } from './IncomeView';
 import { setCellValue } from './logic';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
+import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
 export type View = 'overview' | 'cat' | 'income' | 'bank' | 'settings';
@@ -60,7 +61,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             <span style={{ font: `700 16px ${FONT_H}`, letterSpacing: '-.01em' }}>
               Cashflow <b style={{ color: C.blue2 }}>tervező</b>
             </span>
-            <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>360 Marketing</span>
+            <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>
+              360 Marketing ·{' '}
+              <span title={VERSION_LABEL} style={{ textTransform: 'none', letterSpacing: '.04em', color: C.blue2 }}>
+                {APP_VERSION}
+              </span>
+            </span>
           </div>
         </div>
         {canEdit && (

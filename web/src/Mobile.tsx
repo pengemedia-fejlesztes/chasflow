@@ -8,6 +8,7 @@ import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
 import { REP, dateIn, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { LeafPicker } from './LeafPicker';
+import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
@@ -95,7 +96,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
             <div style={{ background: C.navy, color: '#fff', padding: '10px 20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                 <span style={{ font: `700 17px ${FONT_H}` }}>
-                  Cashflow <b style={{ color: C.blue2 }}>tervező</b>
+                  Cashflow <b style={{ color: C.blue2 }}>tervező</b>{' '}
+                  <small style={{ font: `600 11px ${FONT}`, color: C.muted2, letterSpacing: '.02em' }}>{APP_VERSION}</small>
                 </span>
                 <button
                   onClick={() => setTab('bank')}
