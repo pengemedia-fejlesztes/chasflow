@@ -2,14 +2,15 @@
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, endOfMonth, fmt, monthLabel, monthRange, ymOf } from '../../shared/model';
-import type { Entry, Rep } from '../../shared/types';
+import type { DeletedEntry, Entry, Rep } from '../../shared/types';
+import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { REP, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
 
 export function CategoryView({ groupId, openModal }: { groupId: string; openModal: (leaf: string | null, edit?: EditTarget) => void }) {
-  const { ix, data, filters, commit, canEdit } = useStore();
+  const { ix, data, filters, commit, canEdit, run } = useStore();
   const G = ix.groupById[groupId];
   const leafIds = useMemo(() => new Set(ix.leaves.filter((l) => l.group_id === groupId).map((l) => l.id)), [ix, groupId]);
   const section = G?.section || 'out';
@@ -32,8 +33,20 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     if (!rowsMap.has(k)) rowsMap.set(k, []);
     rowsMap.get(k)!.push(e);
   }
+  // törölt tervek (kuka): áthúzva látszanak a havi rácsban, egy kattintással visszaállíthatók
+  const delMap = new Map<string, DeletedEntry[]>();
+  for (const d of data.deleted || []) {
+    if (!leafIds.has(d.leaf_id) || !visibleSet.has(ymOf(d.date))) continue;
+    const k = rowKey(d);
+    if (!delMap.has(k)) delMap.set(k, []);
+    delMap.get(k)!.push(d);
+    if (!rowsMap.has(k)) rowsMap.set(k, []);
+  }
+  const restore = (ds: DeletedEntry[]) =>
+    run(() => api('/api/trash/restore', { body: { rids: ds.map((d) => d.rid) } }), `${ds[0].name || 'Tétel'} visszaállítva`);
+  const actualById = new Map(data.entries.filter((e) => e.kind === 'actual').map((e) => [e.id, e]));
   const rows = [...rowsMap.entries()]
-    .filter(([, es]) => es.some((e) => visibleSet.has(ymOf(e.date))))
+    .filter(([k, es]) => es.some((e) => visibleSet.has(ymOf(e.date))) || delMap.has(k))
     .filter(([, es]) => !filters.search || es.some((e) => (e.name + ' ' + ix.leafById[e.leaf_id]?.label).toLowerCase().includes(filters.search.toLowerCase())))
     .sort(
       (a, b) =>
@@ -186,6 +199,64 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               <div style={{ padding: 24, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Ebben az időszakban nincs tervezett tétel.</div>
             )}
             {rows.map(([key, es]) => {
+              const des = delMap.get(key) || [];
+              const head = es[0] || des[0];
+              if (!es.length)
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: gridCols,
+                      minWidth: minW,
+                      alignItems: 'center',
+                      borderTop: `1px solid ${C.line}`,
+                      background: C.bg3,
+                    }}
+                  >
+                    <div />
+                    <div style={{ padding: '10px 8px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span
+                        style={{
+                          font: `600 14px ${FONT}`,
+                          color: C.faint,
+                          textDecoration: 'line-through',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {head.name || ix.leafById[head.leaf_id]?.label}
+                      </span>
+                      <span style={{ font: `400 12px ${FONT}`, color: C.faint }}>{ix.leafById[head.leaf_id]?.label} · törölve</span>
+                    </div>
+                    <div style={{ padding: '0 8px' }}>
+                      {canEdit && (
+                        <button
+                          onClick={() => restore(des)}
+                          title="Az összes törölt hónap visszaállítása"
+                          style={{
+                            border: `1px solid ${C.line2}`,
+                            background: '#fff',
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            font: `600 11.5px ${FONT}`,
+                            color: C.blueDark,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ↺ Mind vissza
+                        </button>
+                      )}
+                    </div>
+                    {months.map((m) => (
+                      <div key={m} style={{ padding: '6px 4px' }}>
+                        <DeletedCell ds={des.filter((d) => ymOf(d.date) === m)} sign={sign} canEdit={canEdit} onRestore={restore} />
+                      </div>
+                    ))}
+                    <div />
+                  </div>
+                );
               const s = data.series.find((x) => x.id === es[0].series_id);
               const openEs = es.filter((e) => !e.done && visibleSet.has(ymOf(e.date)));
               const allSel = openEs.length > 0 && openEs.every((e) => sel[e.id]);
@@ -255,6 +326,13 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                   </div>
                   {months.map((m) => {
                     const list = es.filter((e) => ymOf(e.date) === m);
+                    const dl = des.filter((d) => ymOf(d.date) === m);
+                    if (!list.length && dl.length)
+                      return (
+                        <div key={m} style={{ padding: '6px 4px' }}>
+                          <DeletedCell ds={dl} sign={sign} canEdit={canEdit} onRestore={restore} />
+                        </div>
+                      );
                     if (!list.length)
                       return (
                         <div key={m} style={{ padding: '6px 4px' }}>
@@ -298,6 +376,11 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     const isSel = list.some((e) => sel[e.id]);
                     const d = list[0].date.slice(8).replace(/^0/, '') + '.';
                     const overdue = !done && list[0].date < data.today;
+                    // teljesült terv: a hozzá kötött tény összege – ha eltér (≥ 1 000 Ft és 1%), piros
+                    const acts = list.map((e) => (e.done && e.link_id ? actualById.get(e.link_id) : undefined));
+                    const actAmt = acts.every(Boolean) ? acts.reduce((a, x) => a + x!.amount * sign, 0) : null;
+                    const dev = done && actAmt !== null && Math.abs(actAmt - amt) >= Math.max(1000, Math.abs(amt) * 0.01) ? actAmt - amt : 0;
+                    const red = overdue || dev !== 0;
                     return (
                       <div key={m} style={{ padding: '6px 4px' }}>
                         <div
@@ -305,8 +388,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                             width: '100%',
                             height: 30,
                             borderRadius: 8,
-                            border: `1px solid ${done ? C.blue : isSel ? C.blue : overdue ? C.neg : C.line2}`,
-                            background: done ? '#fff' : isSel ? C.blue : C.bg2,
+                            border: `1px solid ${isSel ? C.blue : red ? C.neg : done ? C.blue : C.line2}`,
+                            background: isSel ? C.blue : red ? C.negBg : done ? '#fff' : C.bg2,
                             display: 'flex',
                             alignItems: 'center',
                             gap: 2,
@@ -354,14 +437,22 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                 return n;
                               })
                             }
-                            title={done ? 'Teljesült' : overdue ? 'Lejárt, még nyitott' : 'Kattints a kijelöléshez'}
+                            title={
+                              dev
+                                ? `Eltérés: terv ${fmt(amt)} → tény ${fmt(actAmt || 0)} Ft (${dev > 0 ? '+' : '−'}${fmt(Math.abs(dev))})`
+                                : done
+                                  ? 'Teljesült'
+                                  : overdue
+                                    ? 'Lejárt, még nyitott – nem érkezett banki tény'
+                                    : 'Kattints a kijelöléshez'
+                            }
                             style={{
                               flex: 1,
                               minWidth: 0,
                               height: '100%',
                               border: 0,
                               background: 'transparent',
-                              color: done ? C.blueDark : isSel ? '#fff' : C.navy,
+                              color: isSel ? '#fff' : red ? C.neg : done ? C.blueDark : C.navy,
                               font: `600 12.5px ${FONT}`,
                               fontVariantNumeric: 'tabular-nums',
                               cursor: 'pointer',
@@ -373,7 +464,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                             }}
                           >
                             <span style={{ font: `500 10.5px ${FONT}`, opacity: 0.7 }}>{d}</span>
-                            <span>{fmt(amt)}</span>
+                            <span>{fmt(dev ? actAmt || 0 : amt)}</span>
                           </button>
                         </div>
                       </div>
@@ -594,5 +685,37 @@ function Legend({ bg, border, text }: { bg: string; border?: string; text: strin
       <i style={{ width: 12, height: 12, borderRadius: 4, background: bg, border }} />
       {text}
     </span>
+  );
+}
+
+/** Törölt terv a havi cellában: áthúzva, ↺ visszaállítással. */
+function DeletedCell({ ds, sign, canEdit, onRestore }: { ds: DeletedEntry[]; sign: number; canEdit: boolean; onRestore: (ds: DeletedEntry[]) => void }) {
+  if (!ds.length) return <div style={{ height: 30 }} />;
+  const amt = ds.reduce((a, d) => a + d.amount * sign, 0);
+  return (
+    <button
+      disabled={!canEdit}
+      onClick={() => onRestore(ds)}
+      title={`Törölve ${new Date(ds[0].deleted_at).toLocaleString('hu-HU', { dateStyle: 'short', timeStyle: 'short' })} – kattints a visszaállításhoz`}
+      style={{
+        width: '100%',
+        height: 30,
+        borderRadius: 8,
+        border: `1px dashed ${C.line2}`,
+        background: 'transparent',
+        color: C.faint,
+        font: `600 12.5px ${FONT}`,
+        fontVariantNumeric: 'tabular-nums',
+        cursor: canEdit ? 'pointer' : 'default',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 6px',
+        gap: 4,
+      }}
+    >
+      <span style={{ font: `700 12px ${FONT}`, color: C.blueDark }}>{canEdit ? '↺' : ''}</span>
+      <span style={{ textDecoration: 'line-through' }}>{fmt(amt)}</span>
+    </button>
   );
 }

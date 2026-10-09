@@ -4,6 +4,7 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { api } from './api';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
@@ -23,7 +24,7 @@ type Sheet =
 
 export function Mobile({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
-  const { ix, data, filters, commit, toast, canEdit } = st;
+  const { ix, data, filters, commit, toast, canEdit, run } = st;
   const [tab, setTab] = useState<Tab>('home');
   const flags = useFlags();
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
@@ -84,6 +85,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const gIds = new Set(ix.leaves.filter((l) => l.group_id === catId).map((l) => l.id));
   const catItems = data.entries.filter((e) => inM(e) && gIds.has(e.leaf_id) && visibleEntry(e)).sort((a, b) => a.done - b.done || a.date.localeCompare(b.date));
   const gSign = G?.section === 'in' ? 1 : -1;
+  const catDeleted = (data.deleted || []).filter((d) => inM(d) && gIds.has(d.leaf_id));
+  const actualById = new Map(data.entries.filter((e) => e.kind === 'actual').map((e) => [e.id, e]));
   const selIds = Object.keys(sel).filter((k) => sel[k]);
 
   const openNew = () =>
@@ -415,7 +418,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               {catItems.map((e) => {
                 const s = !!sel[e.id];
                 const isAct = e.kind === 'actual';
-                const late = !isAct && !e.done && e.date < data.today;
+                const linked = !isAct && e.done && e.link_id ? actualById.get(e.link_id) : undefined;
+                const dev = linked && Math.abs(linked.amount - e.amount) >= Math.max(1000, Math.abs(e.amount) * 0.01) ? (linked.amount - e.amount) * gSign : 0;
+                const late = (!isAct && !e.done && e.date < data.today) || dev !== 0;
                 const series = data.series.find((x) => x.id === e.series_id);
                 const rep = isAct
                   ? 'Tény'
@@ -479,11 +484,11 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                         lineHeight: 1.05,
                         padding: '6px 0',
                         borderRadius: 10,
-                        background: e.done || isAct ? C.bg2 : late ? C.negBg : C.bg,
+                        background: late ? C.negBg : e.done || isAct ? C.bg2 : C.bg,
                       }}
                     >
-                      <b style={{ font: `800 19px ${FONT_H}`, color: e.done || isAct ? C.blueDark : late ? C.neg : C.navy }}>{Number(e.date.slice(8))}</b>
-                      <span style={{ font: `600 10.5px ${FONT}`, color: e.done || isAct ? C.blueDark : late ? C.neg : C.navy, textTransform: 'uppercase' }}>
+                      <b style={{ font: `800 19px ${FONT_H}`, color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy }}>{Number(e.date.slice(8))}</b>
+                      <span style={{ font: `600 10.5px ${FONT}`, color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy, textTransform: 'uppercase' }}>
                         {monthLabel(m).replace('.', '')}
                       </span>
                     </span>
@@ -505,7 +510,11 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                           {rep}
                         </span>
                         <span style={{ font: `600 12px ${FONT}`, color: late ? C.neg : C.muted, whiteSpace: 'nowrap' }}>
-                          {late ? 'lejárt' : ix.leafById[e.leaf_id]?.label}
+                          {dev
+                            ? `terv ${fmt(e.amount * gSign)} → ${dev > 0 ? '+' : '−'}${fmt(Math.abs(dev))}`
+                            : late
+                              ? 'lejárt'
+                              : ix.leafById[e.leaf_id]?.label}
                         </span>
                       </span>
                     </span>
@@ -513,12 +522,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                       <span
                         style={{
                           font: `700 15px ${FONT_H}`,
-                          color: e.done || isAct ? C.blueDark : C.navy,
+                          color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy,
                           fontVariantNumeric: 'tabular-nums',
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {fmt(e.amount * gSign)}
+                        {fmt((linked && dev ? linked.amount : e.amount) * gSign)}
                       </span>
                       {!selMode && !isAct && canEdit && (
                         <button
@@ -559,6 +568,54 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   </div>
                 );
               })}
+              {catDeleted.map((d) => (
+                <div
+                  key={'del' + d.rid}
+                  style={{
+                    border: `1.5px dashed ${C.line2}`,
+                    borderRadius: 14,
+                    padding: '12px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    background: 'transparent',
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <span
+                      style={{
+                        font: `600 15px ${FONT}`,
+                        color: C.faint,
+                        textDecoration: 'line-through',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {d.name || ix.leafById[d.leaf_id]?.label}
+                    </span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.faint }}>
+                      törölve · {Number(d.date.slice(8))}. · <s>{fmt(d.amount * gSign)} Ft</s>
+                    </span>
+                  </span>
+                  {canEdit && (
+                    <button
+                      onClick={() => run(() => api('/api/trash/restore', { body: { rids: [d.rid] } }), `${d.name || 'Tétel'} visszaállítva`)}
+                      style={{
+                        height: 36,
+                        border: `1.5px solid ${C.line2}`,
+                        background: '#fff',
+                        borderRadius: 999,
+                        padding: '0 14px',
+                        font: `600 13px ${FONT}`,
+                        color: C.blueDark,
+                      }}
+                    >
+                      ↺ Vissza
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </>
         )}

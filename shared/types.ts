@@ -119,6 +119,13 @@ export interface DataBundle {
   billingo: BillingoDoc[];
   settings: Settings;
   integrations: { billingo: boolean; enableBanking: boolean };
+  /** törölt (kukában lévő) tervek az elmúlt 2 hónaptól – áthúzva látszanak, visszaállíthatók */
+  deleted?: DeletedEntry[];
+}
+
+export interface DeletedEntry extends Entry {
+  rid: number;
+  deleted_at: number;
 }
 
 export interface EntryBatch {
@@ -126,4 +133,6 @@ export interface EntryBatch {
   delete?: string[];
   series?: Series[];
   deleteSeries?: string[];
+  /** visszavonás: a saját, épp most létrehozott tételek kuka nélkül törlődnek */
+  purge?: boolean;
 }

@@ -12,7 +12,7 @@ function cleanPayRule(v: unknown): string | null {
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings] = await env.DB.batch([
+  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
     env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
     env.DB.prepare('SELECT * FROM series'),
@@ -29,6 +29,13 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
     ),
     env.DB.prepare('SELECT key, value FROM settings'),
+    env.DB.prepare(
+      `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
+       FROM deleted_entries d
+       WHERE d.kind = 'plan' AND d.date >= date('now', '-62 days') AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
+         AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
+       ORDER BY d.date LIMIT 2000`,
+    ),
   ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
@@ -43,6 +50,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     bankTx: bankTx.results as any,
     billingo: billingo.results as any,
     settings: st,
+    deleted: deleted.results as any,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY) },
   };
 }
@@ -113,11 +121,10 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   for (const id of b.delete || []) {
     // törlés előtt a kukába (visszakereshető, visszaállítható)
     stmts.push(
-      env.DB.prepare(`INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries WHERE id = ?`).bind(
-        t,
-        userId,
-        String(id),
-      ),
+      env.DB.prepare(
+        `INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries
+         WHERE id = ? AND NOT (? = 1 AND updated_by = ? AND updated_at > ?)`,
+      ).bind(t, userId, String(id), b.purge ? 1 : 0, userId, t - 15 * 60_000),
     );
     stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
   }

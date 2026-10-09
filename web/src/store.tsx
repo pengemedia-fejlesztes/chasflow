@@ -101,13 +101,15 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
       setData(applyLocal(cur, b));
       try {
         await api('/api/entries/batch', { body: b });
+        // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell
+        if (b.delete?.length && !b.purge) reload();
         const undoable = opts.undoable !== false;
         showToast({
           msg,
           undo: undoable
             ? () => {
                 setToast(null);
-                commit(inv, 'Visszavonva', { undoable: false });
+                commit({ ...inv, purge: true }, 'Visszavonva', { undoable: false });
               }
             : undefined,
         });
