@@ -1,5 +1,5 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
-import { parseAmount, parseDate } from '../shared/categories';
+import { normalizeText, parseAmount, parseDate } from '../shared/categories';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
@@ -31,8 +31,18 @@ async function matchingContext(env: Env) {
   const lg: Record<string, string> = {};
   leaves.forEach((l) => (lg[l.id] = l.group_id));
   const rules: Record<string, string> = {};
+  // a korábbi tények megnevezéseiből tanult párok (pl. „X-Page” → Domain-Tárhely); a jóváhagyáskor tanult szabály felülírja
+  const hist = await env.DB.prepare(
+    "SELECT name, leaf_id, COUNT(*) AS n FROM entries WHERE kind = 'actual' AND name <> '' AND date >= date('now', '-3 years') GROUP BY name, leaf_id ORDER BY n",
+  ).all<{ name: string; leaf_id: string }>();
+  hist.results.forEach((r) => {
+    const k = partnerKey(r.name);
+    if (k.length >= 3 && !/^(havi dij|megbizasi dij|munkaber|egyszeri dij|szamla)$/.test(k)) rules[k] = r.leaf_id;
+  });
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
-  return { leaves, sectionOf: (id: string) => sec[lg[id]] || 'out', rules, plans: plansR.results as unknown as Entry[], refs: await invoiceRefs(env) };
+  const sectionOf = (id: string) => sec[lg[id]] || 'out';
+  const unforeseen = leaves.find((l) => !l.archived && sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
+  return { leaves, sectionOf, rules, plans: plansR.results as unknown as Entry[], refs: await invoiceRefs(env), unforeseen };
 }
 
 type Ctx = Awaited<ReturnType<typeof matchingContext>>;
@@ -59,7 +69,7 @@ function insertTxStmt(
     tx.partner.slice(0, 200),
     tx.memo.slice(0, 500),
     status,
-    leaf ?? (plan ? plan.leaf_id : null),
+    leaf ?? (plan ? plan.leaf_id : tx.amount < 0 ? ctx.unforeseen : null),
     plan?.id ?? null,
     now(),
   );
@@ -133,34 +143,92 @@ export async function syncAll(env: Env) {
   return res;
 }
 
-async function approve(env: Env, u: User, ids: string[]) {
+export interface ApproveItem {
+  id: string;
+  leaf_id?: string | null;
+  plan_id?: string | null;
+  name?: string;
+  rep?: 'once' | 'monthly' | 'quarterly';
+  count?: number;
+}
+
+/** „Előre nem látható költség” alkategória – az új, tervhez nem köthető kiadások alapértelmezése. */
+async function unforeseenLeaf(env: Env): Promise<string | null> {
+  const r = await env.DB.prepare("SELECT l.id, l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = 'out' AND l.archived = 0").all<{
+    id: string;
+    label: string;
+  }>();
+  return r.results.find((l) => normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
+}
+
+const addMonthsDate = (date: string, n: number) => {
+  const [y, m, d] = date.split('-').map(Number);
+  const t = y * 12 + (m - 1) + n;
+  const ny = Math.floor(t / 12),
+    nm = (t % 12) + 1;
+  const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+};
+
+async function approve(env: Env, u: User, items: ApproveItem[]) {
   const stmts: D1PreparedStatement[] = [];
   const t = now();
-  for (const id of ids) {
-    const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'new'").bind(id).first<any>();
+  const unforeseen = await unforeseenLeaf(env);
+  for (const it of items) {
+    const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'new'").bind(String(it.id)).first<any>();
     if (!tx) continue;
-    if (!tx.leaf_id) throw new HttpError(400, `Válassz kategóriát: ${tx.partner || tx.memo}`);
+    const leafId = it.leaf_id || tx.leaf_id || (tx.amount < 0 ? unforeseen : null);
+    if (!leafId) throw new HttpError(400, `Válassz kategóriát: ${tx.partner || tx.memo}`);
+    const leafOk = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leafId).first();
+    if (!leafOk) throw new HttpError(400, 'Ismeretlen kategória.');
+    const planId = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
     const actualId = 'a' + tx.id;
-    const name = (tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
+    const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
+    const rep = it.rep === 'monthly' || it.rep === 'quarterly' ? it.rep : null;
+    const sid = rep ? 's' + tx.id : null;
+    // a tény mindig a banki könyvelés napjára kerül
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by)
-         VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'bank', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      ).bind(actualId, tx.date, tx.leaf_id, name, tx.amount, 'bank:' + tx.id, tx.plan_id, tx.memo || null, t, u.id),
+        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by)
+         VALUES (?, 'actual', ?, ?, ?, ?, ?, 0, 0, 'bank', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      ).bind(actualId, tx.date, leafId, name, tx.amount, sid, 'bank:' + tx.id, planId, tx.memo || null, t, u.id),
     );
-    if (tx.plan_id)
-      stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind(actualId, t, u.id, tx.plan_id));
-    stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ? WHERE id = ?").bind(actualId, tx.id));
+    if (planId)
+      stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind(actualId, t, u.id, planId));
+    if (rep && sid) {
+      // ismétlődő: a következő hónaptól tervezett tételek ugyanazzal az összeggel és nappal
+      const step = rep === 'quarterly' ? 3 : 1;
+      const n = Math.ceil(Math.min(36, Math.max(1, Number(it.count) || 12)) / step);
+      stmts.push(
+        env.DB.prepare('INSERT OR REPLACE INTO series (id, leaf_id, name, rep, day) VALUES (?, ?, ?, ?, ?)').bind(
+          sid,
+          leafId,
+          name,
+          rep,
+          Number(tx.date.slice(8)),
+        ),
+      );
+      for (let i = 1; i <= n; i++)
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, updated_at, updated_by)
+             VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'manual', ?, ?) ON CONFLICT DO NOTHING`,
+          ).bind(`r${tx.id}_${i}`, addMonthsDate(tx.date, i * step), leafId, name, tx.amount, sid, t, u.id),
+        );
+    }
+    stmts.push(
+      env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = ? WHERE id = ?").bind(actualId, leafId, planId, tx.id),
+    );
     const key = partnerKey(tx.partner || '');
     if (key)
       stmts.push(
         env.DB.prepare(
           'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, hits = partner_rules.hits + 1, updated_at = excluded.updated_at',
-        ).bind(key, tx.leaf_id, t),
+        ).bind(key, leafId, t),
       );
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
-  await audit(env, u.id, 'bank_approve', { n: ids.length });
+  await audit(env, u.id, 'bank_approve', { n: items.length });
 }
 
 async function unapprove(env: Env, u: User, ids: string[]) {
@@ -171,6 +239,9 @@ async function unapprove(env: Env, u: User, ids: string[]) {
       env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(tx.actual_id),
       env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND link_id = ?').bind(tx.plan_id, tx.actual_id),
       env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
+      // a jóváhagyáskor létrehozott ismétlődő tervek (amelyek még nyitottak) is visszavonódnak
+      env.DB.prepare("DELETE FROM entries WHERE series_id = ? AND kind = 'plan' AND done = 0").bind('s' + tx.id),
+      env.DB.prepare('DELETE FROM series WHERE id = ?').bind('s' + tx.id),
     ]);
   }
   await audit(env, u.id, 'bank_unapprove', { n: ids.length });
@@ -283,8 +354,9 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
 
   if (path === '/api/bank/approve' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
-    const b = await readJson<{ ids: string[] }>(req);
-    await approve(env, u, (b.ids || []).slice(0, 500));
+    const b = await readJson<{ ids?: string[]; items?: ApproveItem[] }>(req);
+    const items = b.items || (b.ids || []).map((id) => ({ id }));
+    await approve(env, u, items.slice(0, 500));
     return json({ ok: true });
   }
   if (path === '/api/bank/unapprove' && req.method === 'POST') {

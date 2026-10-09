@@ -1,44 +1,40 @@
 // Bankszinkron: számlák egyenlege, beérkezett banki tételek jóváhagyása (kategória + terv párosítás).
-import { fmt, monthLabel, ymOf } from '../../shared/model';
-import type { BankTx, Entry } from '../../shared/types';
+import { useMemo } from 'react';
+import { normalizeText } from '../../shared/categories';
+import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
-import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle, relTime, shortDate } from './ui';
-
-function candidates(tx: BankTx, entries: Entry[]): Entry[] {
-  return entries
-    .filter((e) => e.kind === 'plan' && !e.done && Math.sign(e.amount) === Math.sign(tx.amount))
-    .map((e) => ({ e, dd: Math.abs(Date.parse(tx.date) - Date.parse(e.date)) / 86400000, da: Math.abs(Math.abs(e.amount) - Math.abs(tx.amount)) }))
-    .filter((x) => x.dd <= 75)
-    .sort((a, b) =>
-      tx.leaf_id && (a.e.leaf_id === tx.leaf_id) !== (b.e.leaf_id === tx.leaf_id) ? (a.e.leaf_id === tx.leaf_id ? -1 : 1) : a.da - b.da || a.dd - b.dd,
-    )
-    .slice(0, 25)
-    .map((x) => x.e);
-}
+import { TxCard } from './TxCard';
+import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, shortDate } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
   const { ix, data, run, canEdit } = useStore();
   const inbox = data.bankTx.filter((t) => t.status === 'new').sort((a, b) => b.date.localeCompare(a.date));
   const done = data.bankTx.filter((t) => t.status !== 'new').slice(0, 30);
-  const byId = new Map(data.entries.map((e) => [e.id, e]));
   const accounts = data.accounts.filter((a) => a.active);
   const lastSync = Math.max(0, ...accounts.map((a) => a.last_sync || 0));
 
-  const patch = (id: string, body: object) => run(() => api(`/api/bank/tx/${id}`, { method: 'PATCH', body }));
   const approve = (ids: string[]) =>
     run(
       () => api('/api/bank/approve', { body: { ids } }),
       `${ids.length} banki tétel jóváhagyva, terv lezárva`,
       () => api('/api/bank/unapprove', { body: { ids } }),
     );
-  const ignore = (ids: string[]) =>
-    run(
-      () => api('/api/bank/ignore', { body: { ids } }),
-      `${ids.length} tétel kihagyva`,
-      () => api('/api/bank/ignore', { body: { ids, undo: true } }),
-    );
-  const ready = inbox.filter((t) => t.leaf_id);
+  // az új kiadások alapértelmezett kategóriája: „Előre nem látható költség”
+  const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
+  const ready = inbox.filter((t) => t.leaf_id || (t.amount < 0 && unforeseen));
+  // leggyakoribb kategóriák az elmúlt évből (gyors választáshoz)
+  const [freqIn, freqOut] = useMemo(() => {
+    const since = String(Number(data.today.slice(0, 4)) - 1) + data.today.slice(4);
+    const cnt: Record<string, number> = {};
+    data.entries.forEach((e) => e.kind === 'actual' && e.date >= since && (cnt[e.leaf_id] = (cnt[e.leaf_id] || 0) + 1));
+    const top = (sec: 'in' | 'out') =>
+      Object.keys(cnt)
+        .filter((id) => ix.leafById[id] && !ix.leafById[id].archived && ix.sectionOf(id) === sec)
+        .sort((a, b) => cnt[b] - cnt[a])
+        .slice(0, 6);
+    return [top('in'), top('out')];
+  }, [data.entries, data.today, ix]);
 
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1180 }}>
@@ -48,8 +44,8 @@ export function BankView({ mobile }: { mobile?: boolean }) {
             <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.blue, marginBottom: 8 }}>Bankszinkron</div>
             <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beérkezett banki tételek</h1>
             <p style={{ margin: '10px 0 0', font: `400 15px/1.5 ${FONT}`, color: C.muted, maxWidth: '62ch' }}>
-              A rendszer kategóriát javasol és párosítja a tervezett tétellel (pl. Billingo számlával). Jóváhagyáskor a terv lezárul, az összeg tényként kerül
-              be.
+              A rendszer kategóriát javasol és párosítja a tervvel (pl. Billingo számlával). A tény mindig a banki dátumra kerül; ha ismétlődő, a következő
+              hónapoktól terv is készül belőle.
             </p>
           </div>
           {canEdit && (
@@ -138,87 +134,9 @@ export function BankView({ mobile }: { mobile?: boolean }) {
         </div>
       )}
 
-      {inbox.map((t) => {
-        const cands = candidates(t, data.entries);
-        const plan = t.plan_id ? byId.get(t.plan_id) : null;
-        const diff = plan ? Math.abs(t.amount) - Math.abs(plan.amount) : 0;
-        const dup = data.entries.find((e) => e.kind === 'actual' && e.amount === t.amount && Math.abs(Date.parse(e.date) - Date.parse(t.date)) <= 5 * 86400000);
-        const acc = data.accounts.find((a) => a.id === t.account_id);
-        const section = t.amount >= 0 ? 'in' : 'out';
-        return (
-          <div
-            key={t.id}
-            style={{
-              ...card,
-              padding: '14px 16px',
-              display: 'grid',
-              gridTemplateColumns: mobile ? '1fr' : 'minmax(0,1.3fr) 130px minmax(0,1.4fr) auto',
-              gap: '10px 16px',
-              alignItems: 'center',
-            }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
-              <span style={{ font: `600 14.5px ${FONT}`, color: C.navy }}>{t.partner || '(ismeretlen partner)'}</span>
-              <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {shortDate(t.date)} · {acc?.bank_name} · {t.memo}
-              </span>
-            </div>
-            <span
-              style={{
-                textAlign: mobile ? 'left' : 'right',
-                font: `700 16px ${FONT_H}`,
-                color: t.amount > 0 ? C.blueDark : C.navy,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {t.amount > 0 ? '+' : '−'}
-              {fmt(Math.abs(t.amount))}
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-              <LeafSelect
-                ix={ix}
-                section={section}
-                value={t.leaf_id}
-                onChange={(v) => patch(t.id, { leaf_id: v })}
-                style={{ height: 34, background: C.bg2, color: C.blueDark, fontSize: 13 }}
-              />
-              <select
-                value={t.plan_id || ''}
-                onChange={(e) => patch(t.id, { plan_id: e.target.value || null })}
-                style={{ ...inputStyle, height: 32, fontSize: 12.5, color: plan ? C.blueDark : C.muted }}
-              >
-                <option value="">Nincs tervezett pár — új tény tétel lesz</option>
-                {cands.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {`Terv: ${e.name || ix.leafById[e.leaf_id]?.label} · ${monthLabel(ymOf(e.date))} ${Number(e.date.slice(8))}. · ${fmt(Math.abs(e.amount))}`}
-                  </option>
-                ))}
-              </select>
-              {plan && diff !== 0 && (
-                <span style={{ font: `500 12px ${FONT}`, color: '#8A6D1C' }}>
-                  Eltérés a tervtől: {diff > 0 ? '+' : '−'}
-                  {fmt(Math.abs(diff))} Ft
-                </span>
-              )}
-              {dup && (
-                <span style={{ font: `500 12px ${FONT}`, color: C.neg }}>
-                  Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
-                </span>
-              )}
-            </div>
-            {canEdit && (
-              <div style={{ display: 'flex', gap: 8, justifyContent: mobile ? 'stretch' : 'flex-end' }}>
-                <Pill small onClick={() => ignore([t.id])} style={mobile ? { flex: 1, height: 42 } : undefined}>
-                  Kihagy
-                </Pill>
-                <Pill small kind="dark" disabled={!t.leaf_id} onClick={() => approve([t.id])} style={mobile ? { flex: 2, height: 42 } : undefined}>
-                  Jóváhagy ✓
-                </Pill>
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {inbox.map((t) => (
+        <TxCard key={t.id} t={t} frequent={t.amount >= 0 ? freqIn : freqOut} unforeseen={unforeseen} mobile={mobile} />
+      ))}
       {mobile && canEdit && ready.length > 1 && (
         <Pill kind="primary" onClick={() => approve(ready.map((t) => t.id))} style={{ height: 50 }}>
           Mind jóváhagyása ({ready.length})
