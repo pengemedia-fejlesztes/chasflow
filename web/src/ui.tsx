@@ -262,3 +262,41 @@ export const relTime = (ms: number | string | null | undefined) => {
 };
 
 export const shortDate = (d: string) => `${d.slice(5, 7)}.${d.slice(8, 10)}.`;
+
+/** Dátum mező, ami mindig év. hó. nap sorrendben látszik; koppintásra a rendszer saját dátumválasztója nyílik. */
+export function DateField(props: { value: string; onChange: (v: string) => void; min?: string; big?: boolean; style?: CSSProperties }) {
+  const [y, m, d] = props.value.split('-');
+  const wd = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'][new Date(props.value + 'T12:00:00').getDay()] || '';
+  return (
+    <label
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        height: props.big ? 44 : 38,
+        border: `1px solid ${C.line2}`,
+        borderRadius: props.big ? 12 : 8,
+        padding: '0 12px',
+        background: '#fff',
+        cursor: 'pointer',
+        ...props.style,
+      }}
+    >
+      <span style={{ font: `600 ${props.big ? 16 : 14}px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
+        {y}. {m}. {d}.
+      </span>
+      <span style={{ font: `500 13px ${FONT}`, color: C.muted, flex: 1 }}>{wd}</span>
+      <span aria-hidden style={{ font: `500 15px ${FONT}`, color: C.blueDark }}>
+        📅
+      </span>
+      <input
+        type="date"
+        value={props.value}
+        min={props.min}
+        onChange={(e) => e.target.value && props.onChange(e.target.value)}
+        style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', border: 0 }}
+      />
+    </label>
+  );
+}

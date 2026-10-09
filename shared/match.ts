@@ -20,30 +20,70 @@ export interface TxLike {
   memo: string;
 }
 
-/** Beépített kulcsszavak (normalizált szöveg) → alkategória név (normalizált), ha az létezik. */
-const KEYWORDS: [RegExp, string[]][] = [
-  [/tranzakcios dij|bankkartya dij|kartyadij|koltsegelszamolas|szamlavezetesi|banki dij|havi dij terheles/, ['bank koltseg', 'bankkoltseg']],
-  [/kisvallalati ado|\bkiva\b/, ['kiva']],
-  [/tb jarulek|szocialis hozzajarulas|levont szja|szja eloleg|egyes meghat|nav jarulek/, ['jarulekok']],
-  [/\bafa\b|altalanos forgalmi ado/, ['afa']],
-  [/iparuzesi ado|\bipa\b|helyi ado/, ['iparuzesi ado']],
-  [/yettel|telenor|netfone/, ['yettel']],
-  [/telekom/, ['telekom']],
-  [/rackforest|tarhely|domain/, ['domain tarhely']],
-  [/anthropic|claude|openai|chatgpt|google workspace|ahrefs|cookieyes|typesafe|openrouter|rankmath|adobe|canva|figma/, ['szoftver beszerzes']],
+/** Beépített párosítások (szövegrészlet → alkategória név). Az adatbázisba „beépített” szabályként kerülnek, ott szerkeszthetők. */
+export const SEED_RULES: { patterns: string[]; leaves: string[]; auto: boolean; note: string }[] = [
+  {
+    patterns: ['tranzakcios dij', 'bankkartya dij', 'kartyadij', 'koltsegelszamolas', 'szamlavezetesi dij', 'banki dij'],
+    leaves: ['bank koltseg', 'bankkoltseg'],
+    auto: true,
+    note: 'Banki díjak – automatikusan a hónap költsége',
+  },
+  { patterns: ['kisvallalati ado'], leaves: ['kiva'], auto: false, note: 'KIVA' },
+  {
+    patterns: ['tb jarulek', 'levont szja', 'szja eloleg', 'egyes meghat', 'szocialis hozzajarulas'],
+    leaves: ['jarulekok'],
+    auto: false,
+    note: 'Járulékok, SZJA',
+  },
+  { patterns: ['altalanos forgalmi ado'], leaves: ['afa'], auto: false, note: 'ÁFA' },
+  { patterns: ['iparuzesi ado'], leaves: ['iparuzesi ado'], auto: false, note: 'Iparűzési adó' },
+  { patterns: ['yettel', 'netfone'], leaves: ['yettel'], auto: false, note: 'Telefon' },
+  { patterns: ['telekom'], leaves: ['telekom'], auto: false, note: 'Telekom' },
+  { patterns: ['rackforest'], leaves: ['domain tarhely'], auto: false, note: 'Tárhely' },
+  {
+    patterns: ['anthropic', 'openai', 'chatgpt', 'google workspace', 'ahrefs', 'cookieyes', 'typesafe', 'openrouter'],
+    leaves: ['szoftver beszerzes'],
+    auto: false,
+    note: 'Szoftver előfizetések',
+  },
 ];
 
-/** Kategória javaslat: 1) tanult szabály, 2) beépített kulcsszavak, 3) kategória név szerepel a partner/közlemény szövegben. */
-export function suggestLeaf(tx: TxLike, rules: RuleMap, leaves: Leaf[], leafSection: (id: string) => 'in' | 'out'): string | null {
+export interface ContainsRule {
+  pattern: string; // normalizált
+  leaf_id: string;
+  auto?: number;
+}
+
+/** A beépített szabályok feloldása a meglévő alkategóriákra (ha nincs adatbázisbeli szabály). */
+export function seedContainsRules(leaves: Leaf[], leafSection: (id: string) => 'in' | 'out'): (ContainsRule & { note: string; auto: number })[] {
+  const out: (ContainsRule & { note: string; auto: number })[] = [];
+  for (const r of SEED_RULES) {
+    const l = leaves.find((l) => !l.archived && leafSection(l.id) === 'out' && r.leaves.includes(normalizeText(l.label)));
+    if (l) for (const p of r.patterns) out.push({ pattern: p, leaf_id: l.id, auto: r.auto ? 1 : 0, note: r.note });
+  }
+  return out;
+}
+
+/** Az első illeszkedő „tartalmazza” szabály (a hosszabb, specifikusabb minta előbb). */
+export function matchContains(tx: TxLike, contains: ContainsRule[], leafSection: (id: string) => 'in' | 'out'): ContainsRule | null {
+  const text = ' ' + normalizeText(tx.partner + ' ' + tx.memo) + ' ';
+  const want = tx.amount >= 0 ? 'in' : 'out';
+  let best: ContainsRule | null = null;
+  for (const r of contains) {
+    const p = normalizeText(r.pattern);
+    if (p.length < 2 || !text.includes(p) || leafSection(r.leaf_id) !== want) continue;
+    if (!best || p.length > normalizeText(best.pattern).length) best = r;
+  }
+  return best;
+}
+
+/** Kategória javaslat: 1) „tartalmazza” szabályok, 2) tanult partner szabály, 3) kategória név szerepel a szövegben. */
+export function suggestLeaf(tx: TxLike, rules: RuleMap, leaves: Leaf[], leafSection: (id: string) => 'in' | 'out', contains?: ContainsRule[]): string | null {
   const key = partnerKey(tx.partner);
   const wantSection = tx.amount >= 0 ? 'in' : 'out';
+  const c = matchContains(tx, contains ?? seedContainsRules(leaves, leafSection), leafSection);
+  if (c) return c.leaf_id;
   if (key && rules[key] && leafSection(rules[key]) === wantSection) return rules[key];
-  const text = normalizeText(tx.partner + ' ' + tx.memo);
-  for (const [re, labels] of KEYWORDS) {
-    if (!re.test(text)) continue;
-    const l = leaves.find((l) => !l.archived && leafSection(l.id) === wantSection && labels.includes(normalizeText(l.label)));
-    if (l) return l.id;
-  }
   const hay = ' ' + normalizeText(tx.partner + ' ' + tx.memo) + ' ';
   let best: { id: string; len: number } | null = null;
   for (const l of leaves) {

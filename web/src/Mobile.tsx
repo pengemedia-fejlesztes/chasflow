@@ -1,19 +1,20 @@
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
+import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
-import { REP, dateIn, deleteEntries, genSeries, markDone, shiftEntries, uid } from './logic';
+import { REP, dateIn, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
+import { LeafPicker } from './LeafPicker';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
-import { C, FONT, FONT_H, ToastView, relTime } from './ui';
+import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
 type Tab = 'home' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
-  | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; m: string; day: string; actual: boolean }
+  | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'item'; id: string; amount: string; day: number; all: boolean }
   | { kind: 'filters' };
 
@@ -82,7 +83,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const selIds = Object.keys(sel).filter((k) => sel[k]);
 
   const openNew = () =>
-    setSheet({ kind: 'new', type: 'in', amount: '', name: '', leaf: null, rep: 'once', m: m >= ix.cur ? m : ix.cur, day: '10', actual: false });
+    setSheet({ kind: 'new', type: 'in', amount: '', name: '', leaf: null, rep: 'once', count: 12, date: m > ix.cur ? m + '-10' : data.today });
   const dark = tab === 'home';
 
   return (
@@ -751,11 +752,6 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
   if (sheet.kind === 'new') {
     const f = sheet;
     const set = (p: Partial<typeof f>) => setSheet({ ...f, ...p });
-    const freq: Record<string, number> = {};
-    data.entries.forEach((e) => {
-      if (e.date >= ix.cur.slice(0, 4) + '-01-01' || e.kind === 'plan') freq[e.leaf_id] = (freq[e.leaf_id] || 0) + 1;
-    });
-    const leaves = ix.leaves.filter((l) => !l.archived && ix.sectionOf(l.id) === f.type).sort((a, b) => (freq[b.id] || 0) - (freq[a.id] || 0));
     const amt = parseInt(f.amount || '0');
     const press = (k: string) => {
       let a = f.amount || '';
@@ -765,13 +761,22 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
       if (a.length > 11) return;
       set({ amount: a });
     };
-    const months = monthRange(ix.cur, addMonths(ix.cur, 17));
-    const count = f.rep === 'monthly' ? 6 : f.rep === 'quarterly' ? 6 : 1;
-    const n = f.rep === 'once' ? 1 : f.rep === 'monthly' ? 6 : 2;
+    const step = f.rep === 'quarterly' ? 3 : 1;
+    const n = f.rep === 'once' ? 1 : Math.ceil(f.count / step);
+    const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
+    const seg = (on: boolean): React.CSSProperties => ({
+      flex: 1,
+      height: 38,
+      border: 0,
+      borderRadius: 9,
+      font: `600 13.5px ${FONT}`,
+      background: on ? C.navy : 'transparent',
+      color: on ? '#fff' : C.muted,
+    });
     body = (
       <>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <span style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>Új tétel</span>
+          <span style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>Új tervezett tétel</span>
           <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, gap: 2 }}>
             {(
               [
@@ -797,7 +802,7 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
             ))}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
           <span style={{ font: `800 40px ${FONT_H}`, color: amt ? C.navy : C.faint, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums' }}>
             {amt ? fmt(amt) : '0'}
           </span>
@@ -810,100 +815,41 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
           style={{ height: 46, border: `1px solid ${C.line2}`, borderRadius: 12, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted }}>Kategória · gyakoriak elöl</span>
-          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 2 }}>
-            {leaves.map((l) => (
-              <button
-                key={l.id}
-                onClick={() => set({ leaf: l.id })}
-                style={{
-                  flex: 'none',
-                  height: 38,
-                  border: `1px solid ${f.leaf === l.id ? C.blue : C.line2}`,
-                  borderRadius: 999,
-                  padding: '0 14px',
-                  font: `600 13px ${FONT}`,
-                  background: f.leaf === l.id ? C.blue : '#fff',
-                  color: f.leaf === l.id ? '#fff' : C.ink,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
+          <span style={lbl}>{f.type === 'in' ? 'Ügyfél / kategória' : 'Kategória'}</span>
+          <LeafPicker key={f.type} big section={f.type} value={f.leaf} onChange={(id) => set({ leaf: id })} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={lbl}>Ütemezés</span>
           <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
             {(
               [
                 ['once', 'Egyszeri'],
-                ['monthly', 'Havonta'],
-                ['quarterly', 'Negyedév'],
+                ['monthly', 'Havi'],
+                ['quarterly', 'Negyedéves'],
               ] as [Rep, string][]
             ).map(([v, l]) => (
-              <button
-                key={v}
-                onClick={() => set({ rep: v, actual: false })}
-                style={{
-                  flex: 1,
-                  height: 36,
-                  border: 0,
-                  borderRadius: 9,
-                  font: `600 12.5px ${FONT}`,
-                  background: f.rep === v && !f.actual ? C.navy : 'transparent',
-                  color: f.rep === v && !f.actual ? '#fff' : C.muted,
-                }}
-              >
+              <button key={v} onClick={() => set({ rep: v })} style={seg(f.rep === v)}>
                 {l}
               </button>
             ))}
-            <button
-              onClick={() => set({ actual: !f.actual, rep: 'once' })}
-              style={{
-                flex: 1,
-                height: 36,
-                border: 0,
-                borderRadius: 9,
-                font: `600 12.5px ${FONT}`,
-                background: f.actual ? C.navy : 'transparent',
-                color: f.actual ? '#fff' : C.muted,
-              }}
-            >
-              Tény
-            </button>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              aria-label="Nap"
-              value={f.day}
-              onChange={(e) => set({ day: e.target.value.replace(/\D/g, '').slice(0, 2) })}
-              inputMode="numeric"
-              style={{ width: 48, height: 42, border: `1px solid ${C.line2}`, borderRadius: 12, textAlign: 'center', font: `600 16px ${FONT}`, color: C.navy }}
-            />
-            <select
-              aria-label="Hónap"
-              value={f.m}
-              onChange={(e) => set({ m: e.target.value })}
-              style={{
-                flex: 1,
-                height: 42,
-                border: `1px solid ${C.line2}`,
-                borderRadius: 12,
-                background: '#fff',
-                padding: '0 8px',
-                font: `600 14px ${FONT}`,
-                color: C.navy,
-              }}
-            >
-              {(f.actual ? monthRange(ix.cur.slice(0, 4) + '-01', ix.cur) : months).map((ym) => (
-                <option key={ym} value={ym}>
-                  {monthLabel(ym)} {ym.slice(2, 4)}
-                </option>
+          {f.rep !== 'once' && (
+            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+              {[3, 6, 12, 24].map((c) => (
+                <button key={c} onClick={() => set({ count: c })} style={seg(f.count === c)}>
+                  {c} hó
+                </button>
               ))}
-            </select>
-          </div>
+            </div>
+          )}
         </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ ...lbl, minWidth: 92 }}>{f.rep === 'once' ? 'Dátum' : 'Első dátum'}</span>
+          <DateField big value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ flex: 1 }} />
+        </label>
+        <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, marginTop: -6 }}>
+          {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
+        </span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
           {['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0', '⌫'].map((k) => (
             <button
@@ -926,41 +872,23 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
           onClick={() => {
             if (!amt || !f.leaf) return;
             const name = f.name.trim() || ix.leafById[f.leaf].label;
-            const day = Math.min(31, parseInt(f.day) || 10);
-            if (f.actual) {
-              const date = dateIn(f.m, day) > data.today ? data.today : dateIn(f.m, day);
-              commit(
-                {
-                  upsert: [
-                    {
-                      id: uid('a'),
-                      kind: 'actual',
-                      date,
-                      leaf_id: f.leaf,
-                      name,
-                      amount: f.type === 'in' ? amt : -amt,
-                      series_id: null,
-                      done: 0,
-                      tentative: 0,
-                      source: 'manual',
-                      ext_ref: null,
-                      link_id: null,
-                      note: null,
-                    },
-                  ],
-                },
-                `Tény rögzítve: ${name}`,
-              );
-            } else {
-              const b = genSeries({ leaf: f.leaf, section: f.type, name, amount: amt, startYm: f.m, count, rep: f.rep, day });
-              commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`);
-            }
-            onSaved(f.m);
+            const b = genSeries({
+              leaf: f.leaf,
+              section: f.type,
+              name,
+              amount: amt,
+              startYm: ymOf(f.date),
+              count: f.rep === 'once' ? 1 : f.count,
+              rep: f.rep,
+              day: Number(f.date.slice(8)),
+            });
+            commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`);
+            onSaved(ymOf(f.date));
             close();
           }}
           style={{ height: 52, border: 0, borderRadius: 999, background: C.blue, color: '#fff', font: `600 16px ${FONT}`, opacity: amt && f.leaf ? 1 : 0.6 }}
         >
-          {!f.leaf ? 'Válassz kategóriát' : !amt ? 'Adj meg összeget' : f.actual ? 'Mentés · tény' : `Mentés · ${n} tétel`}
+          {!f.leaf ? 'Válassz kategóriát' : !amt ? 'Adj meg összeget' : `Mentés · ${n} tétel`}
         </button>
       </>
     );

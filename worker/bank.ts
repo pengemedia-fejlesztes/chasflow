@@ -1,6 +1,7 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import { normalizeText, parseAmount, parseDate } from '../shared/categories';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
+import { autoApprove, loadContains } from './rules';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
 import { invoiceRefs, syncBillingo } from './billingo';
@@ -42,7 +43,7 @@ async function matchingContext(env: Env) {
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
   const sectionOf = (id: string) => sec[lg[id]] || 'out';
   const unforeseen = leaves.find((l) => !l.archived && sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
-  return { leaves, sectionOf, rules, plans: plansR.results as unknown as Entry[], refs: await invoiceRefs(env), unforeseen };
+  return { leaves, sectionOf, rules, plans: plansR.results as unknown as Entry[], refs: await invoiceRefs(env), unforeseen, contains: await loadContains(env) };
 }
 
 type Ctx = Awaited<ReturnType<typeof matchingContext>>;
@@ -54,7 +55,7 @@ function insertTxStmt(
   tx: { ext: string; date: string; amount: number; currency: string; partner: string; memo: string },
   status: 'new' | 'ignored' = 'new',
 ) {
-  const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf);
+  const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
   const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs);
   return env.DB.prepare(
     `INSERT INTO bank_tx (id, account_id, ext_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, created_at)
@@ -84,7 +85,7 @@ async function initialFrom(env: Env): Promise<string> {
   return next > min ? next : min;
 }
 
-export async function syncBanks(env: Env): Promise<{ accounts: number; newTx: number; errors: string[] }> {
+export async function syncBanks(env: Env): Promise<{ accounts: number; newTx: number; auto?: number; errors: string[] }> {
   const accts = await env.DB.prepare("SELECT * FROM bank_accounts WHERE provider = 'enablebanking' AND active = 1").all<any>();
   if (!accts.results.length) return { accounts: 0, newTx: 0, errors: [] };
   const ctx = await matchingContext(env);
@@ -121,7 +122,21 @@ export async function syncBanks(env: Env): Promise<{ accounts: number; newTx: nu
   }
   const after = await env.DB.prepare("SELECT COUNT(*) AS n FROM bank_tx WHERE status = 'new'").first<{ n: number }>();
   await setSetting(env, 'bank_last_sync', String(now()));
-  return { accounts: accts.results.length, newTx: (after?.n || 0) - (before?.n || 0), errors };
+  const auto = await autoApprove(env, approve);
+  return { accounts: accts.results.length, newTx: (after?.n || 0) - (before?.n || 0), auto, errors };
+}
+
+/** A szabályok újraalkalmazása a jóváhagyásra váró tételekre (kategória), majd automatikus jóváhagyás. */
+export async function reapplyRules(env: Env): Promise<{ updated: number; auto: number }> {
+  const ctx = await matchingContext(env);
+  const txs = await env.DB.prepare("SELECT id, date, amount, partner, memo, leaf_id FROM bank_tx WHERE status = 'new'").all<any>();
+  const stmts: D1PreparedStatement[] = [];
+  for (const t of txs.results) {
+    const leaf = suggestLeaf(t, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
+    if (leaf && leaf !== t.leaf_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE id = ?').bind(leaf, t.id));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return { updated: stmts.length, auto: await autoApprove(env, approve) };
 }
 
 export async function syncAll(env: Env) {
@@ -139,6 +154,12 @@ export async function syncAll(env: Env) {
     } catch (e: any) {
       res.bankError = e.message;
     }
+  }
+  try {
+    // kézi kivonatnál is: a várakozó tételekre az automatikus szabályok (pl. banki díjak)
+    res.auto = await autoApprove(env, approve);
+  } catch (e: any) {
+    res.autoError = e.message;
   }
   return res;
 }
@@ -170,7 +191,7 @@ const addMonthsDate = (date: string, n: number) => {
   return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
 };
 
-async function approve(env: Env, u: User, items: ApproveItem[]) {
+export async function approve(env: Env, userId: number | null, items: ApproveItem[]) {
   const stmts: D1PreparedStatement[] = [];
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
@@ -191,10 +212,10 @@ async function approve(env: Env, u: User, items: ApproveItem[]) {
       env.DB.prepare(
         `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by)
          VALUES (?, 'actual', ?, ?, ?, ?, ?, 0, 0, 'bank', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      ).bind(actualId, tx.date, leafId, name, tx.amount, sid, 'bank:' + tx.id, planId, tx.memo || null, t, u.id),
+      ).bind(actualId, tx.date, leafId, name, tx.amount, sid, 'bank:' + tx.id, planId, tx.memo || null, t, userId),
     );
     if (planId)
-      stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind(actualId, t, u.id, planId));
+      stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind(actualId, t, userId, planId));
     if (rep && sid) {
       // ismétlődő: a következő hónaptól tervezett tételek ugyanazzal az összeggel és nappal
       const step = rep === 'quarterly' ? 3 : 1;
@@ -213,7 +234,7 @@ async function approve(env: Env, u: User, items: ApproveItem[]) {
           env.DB.prepare(
             `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, updated_at, updated_by)
              VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'manual', ?, ?) ON CONFLICT DO NOTHING`,
-          ).bind(`r${tx.id}_${i}`, addMonthsDate(tx.date, i * step), leafId, name, tx.amount, sid, t, u.id),
+          ).bind(`r${tx.id}_${i}`, addMonthsDate(tx.date, i * step), leafId, name, tx.amount, sid, t, userId),
         );
     }
     stmts.push(
@@ -228,7 +249,7 @@ async function approve(env: Env, u: User, items: ApproveItem[]) {
       );
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
-  await audit(env, u.id, 'bank_approve', { n: items.length });
+  await audit(env, userId, userId ? 'bank_approve' : 'bank_auto_approve', { n: items.length });
 }
 
 async function unapprove(env: Env, u: User, ids: string[]) {
@@ -356,7 +377,7 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ ids?: string[]; items?: ApproveItem[] }>(req);
     const items = b.items || (b.ids || []).map((id) => ({ id }));
-    await approve(env, u, items.slice(0, 500));
+    await approve(env, u.id, items.slice(0, 500));
     return json({ ok: true });
   }
   if (path === '/api/bank/unapprove' && req.method === 'POST') {
@@ -454,7 +475,8 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     stmts.push(env.DB.prepare('UPDATE bank_accounts SET last_sync = ? WHERE id = ?').bind(now(), acc.id));
     for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
     const after = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
-    const added = { inbox: (after.new || 0) - (before.new || 0), archived: (after.ignored || 0) - (before.ignored || 0) };
+    const auto = await autoApprove(env, approve);
+    const added = { inbox: (after.new || 0) - (before.new || 0) - auto, archived: (after.ignored || 0) - (before.ignored || 0), auto };
     await audit(env, u.id, 'bank_csv_import', { bank, rows: n, ...added });
     return json({ ok: true, rows: n, ...added, duplicates: n - added.inbox - added.archived, cutoff });
   }

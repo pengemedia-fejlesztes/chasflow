@@ -4,17 +4,18 @@ import { displayGroup } from '../../shared/categories';
 import { parseBankRows } from '../../shared/bankfile';
 import { fmt } from '../../shared/model';
 import { api } from './api';
+import { RulesTab } from './RulesTab';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime } from './ui';
 
-type Tab = 'account' | 'users' | 'integrations' | 'data' | 'categories';
+type Tab = 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules';
 
 export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobile?: boolean }) {
   const { isAdmin } = useStore();
   const [tab, setTab] = useState<Tab>('account');
   const tabs: [Tab, string][] = [['account', 'Fiókom']];
   if (isAdmin) tabs.push(['users', 'Felhasználók'], ['integrations', 'Bekötések'], ['data', 'Adatok']);
-  tabs.push(['categories', 'Kategóriák']);
+  tabs.push(['rules', 'Párosítások'], ['categories', 'Kategóriák']);
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {!mobile && <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beállítások</h1>}
@@ -25,6 +26,7 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
       {tab === 'users' && isAdmin && <Users />}
       {tab === 'integrations' && isAdmin && <Integrations />}
       {tab === 'data' && isAdmin && <DataTab />}
+      {tab === 'rules' && <RulesTab />}
       {tab === 'categories' && <Categories />}
     </div>
   );
@@ -369,7 +371,7 @@ function Integrations() {
     });
     if (res)
       showToast(
-        `${bankName}: ${res.inbox} új tétel jóváhagyásra, ${res.archived} archívumba (≤ ${res.cutoff || '—'}), ${res.duplicates} már korábban beolvasva.`,
+        `${bankName}: ${res.inbox} új tétel jóváhagyásra, ${res.auto || 0} automatikusan könyvelve, ${res.archived} archívumba (≤ ${res.cutoff || '—'}), ${res.duplicates} már korábban beolvasva.`,
       );
   };
 

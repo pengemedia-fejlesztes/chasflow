@@ -1,6 +1,7 @@
 // Cashflow tervező – Cloudflare Worker belépési pont (API + ütemezett szinkron).
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
-import { handleBank, syncAll } from './bank';
+import { handleBank, reapplyRules, syncAll } from './bank';
+import { handleRules } from './rules';
 import { handleData } from './data';
 import { Env, HttpError, json, withSecurityHeaders } from './util';
 
@@ -34,6 +35,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     const r = await h(env, req, path, u);
     if (r) return r;
   }
+  const rr = await handleRules(env, req, path, u, () => reapplyRules(env));
+  if (rr) return rr;
   const b = await handleBank(env, req, path, u, url);
   if (b) return b;
   throw new HttpError(404, 'Nincs ilyen végpont.');
