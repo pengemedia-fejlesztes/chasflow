@@ -192,7 +192,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       ).bind(
         d.id,
         d.invoice_number || null,
-        partner,
+        partnerRaw, // a számlázási (cég)név változatlanul; az álnév csak a terv nevében
         gross,
         d.currency || 'HUF',
         d.invoice_date || null,

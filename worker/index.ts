@@ -2,6 +2,7 @@
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
 import { handleBank, reapplyRules, syncAll } from './bank';
 import { handleRules } from './rules';
+import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { Env, HttpError, json, withSecurityHeaders } from './util';
 
@@ -58,13 +59,19 @@ export default {
 
   async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
     // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
-    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)));
+    const hour = Number(
+      new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),
+    );
     if (!SYNC_HOURS.includes(hour)) return;
     ctx.waitUntil(
-      syncAll(env).then(
-        (r) => console.log('sync', JSON.stringify(r)),
-        (e) => console.error('sync failed', e),
-      ),
+      syncAll(env)
+        .then(
+          (r) => console.log('sync', JSON.stringify(r)),
+          (e) => console.error('sync failed', e),
+        )
+        // reggel 5-kor: a havi terv–tény pillanatkép (lezárt hónapok egyszer, a folyó hónap naponta)
+        .then(() => (hour === SYNC_HOURS[0] ? refreshMonthStats(env, null).then((r) => console.log('stats', JSON.stringify(r))) : undefined))
+        .catch((e) => console.error('stats failed', e)),
     );
   },
 } satisfies ExportedHandler<Env>;

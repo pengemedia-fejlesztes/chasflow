@@ -121,6 +121,10 @@ export interface DataBundle {
   integrations: { billingo: boolean; enableBanking: boolean };
   /** törölt (kukában lévő) tervek az elmúlt 2 hónaptól – áthúzva látszanak, visszaállíthatók */
   deleted?: DeletedEntry[];
+  /** havi terv–tény pillanatképek (lezárt hónapok + folyó hónap) */
+  monthStats?: import('./planactual').MonthStat[];
+  /** banki (számlázási) partnernevek kategóriánként */
+  partnerNames?: { leaf_id: string; partner: string; n: number; last: string }[];
 }
 
 export interface DeletedEntry extends Entry {

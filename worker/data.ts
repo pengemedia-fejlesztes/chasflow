@@ -3,6 +3,7 @@ import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow
 import { partnerKey } from '../shared/match';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
+import { refreshMonthStats } from './stats';
 import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from './util';
 
 /** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
@@ -12,7 +13,7 @@ function cleanPayRule(v: unknown): string | null {
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted] = await env.DB.batch([
+  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
     env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
     env.DB.prepare('SELECT * FROM series'),
@@ -36,6 +37,12 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.date LIMIT 2000`,
     ),
+    env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
+    // partnerek banki (számlázási) nevei kategóriánként
+    env.DB.prepare(
+      `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
+       WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
+    ),
   ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
@@ -51,6 +58,8 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     billingo: billingo.results as any,
     settings: st,
     deleted: deleted.results as any,
+    monthStats: monthStats.results as any,
+    partnerNames: partnerNames.results as any,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY) },
   };
 }
@@ -271,6 +280,56 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const allowed = ['opening_balance', 'billingo_leaf_default'];
     for (const k of allowed) if (k in b) await setSetting(env, k, b[k] == null ? null : String(b[k]).slice(0, 200));
     await audit(env, u.id, 'settings', b);
+    return json({ ok: true });
+  }
+
+  if (path === '/api/stats/refresh' && req.method === 'POST') {
+    // kézi frissítés: a folyó hónap (és a még nem lezárt múltbeliek); `all` (admin): a lezártakat is újraszámolja
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ all?: boolean }>(req).catch(() => ({}) as { all?: boolean });
+    if (b.all) requireRole(u, 'admin');
+    const r = await refreshMonthStats(env, u.id, !!b.all);
+    await audit(env, u.id, 'stats.refresh', { ...r, all: !!b.all });
+    return json(r);
+  }
+
+  const mg = path.match(/^\/api\/leaves\/([\w-]+)\/merge$/);
+  if (mg && req.method === 'POST') {
+    // partner összevonása: a forrás minden tétele, sorozata, banki tétele és szabálya a célhoz kerül
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ into: string }>(req);
+    const from = mg[1],
+      into = String(b.into || '');
+    if (!into || into === from) throw new HttpError(400, 'Válassz másik partnert.');
+    const [f, t] = await Promise.all([
+      env.DB.prepare('SELECT l.id, l.label, g.section FROM leaves l JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
+        .bind(from)
+        .first<{ id: string; label: string; section: string }>(),
+      env.DB.prepare('SELECT l.id, l.label, g.section FROM leaves l JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
+        .bind(into)
+        .first<{ id: string; label: string; section: string }>(),
+    ]);
+    if (!f || !t) throw new HttpError(404, 'Ismeretlen partner.');
+    if (f.section !== t.section) {
+      // bevétel ↔ kiadás: nem mozgatható, csak azonos névre hozzuk (egy partnerként látszik a statisztikában)
+      await env.DB.prepare('UPDATE leaves SET label = ? WHERE id = ?').bind(t.label, f.id).run();
+      await audit(env, u.id, 'leaf.link', { from: f, into: t });
+      return json({ ok: true, linked: true });
+    }
+    await env.DB.batch([
+      env.DB.prepare('UPDATE entries SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      env.DB.prepare('UPDATE series SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      env.DB.prepare('UPDATE deleted_entries SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      env.DB.prepare('UPDATE match_rules SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      env.DB.prepare('UPDATE partner_rules SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
+      // a régi név is ide párosul a jövőben (Billingo / bank)
+      env.DB.prepare(
+        'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 0, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, updated_at = excluded.updated_at',
+      ).bind(partnerKey(f.label), t.id, now()),
+      env.DB.prepare('UPDATE leaves SET archived = 1 WHERE id = ?').bind(f.id),
+    ]);
+    await audit(env, u.id, 'leaf.merge', { from: f, into: t });
     return json({ ok: true });
   }
 

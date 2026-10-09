@@ -4,8 +4,8 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
-import { PartnersView } from './PartnersView';
-import { PlanActualView } from './PlanActualView';
+import { StatsView, type StatsTab } from './StatsView';
+import { partnerIdOf } from '../../shared/partners';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
@@ -20,7 +20,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
-type Tab = 'home' | 'alerts' | 'pva' | 'partners' | 'cat' | 'income' | 'bank' | 'more';
+type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
@@ -32,7 +32,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const { ix, data, filters, commit, toast, canEdit, run } = st;
   const [tab, setTab] = useState<Tab>('home');
   const flags = useFlags();
-  const [partnerLeaf, setPartnerLeaf] = useState<string | null>(null);
+  const [partnerKey, setPartnerKey] = useState<string | null>(null);
+  const [statsTab, setStatsTab] = useState<StatsTab>('pva');
+  const openPartner = (leaf: string) => (setPartnerKey(partnerIdOf(ix.leafById[leaf]?.label || leaf)), setTab('stats'));
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
   const m = months.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
@@ -230,11 +232,11 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 [
                   ['pva', 'Terv vs. tény', 'havonta: bevétel, kiadás, profit'],
                   ['partners', 'Partnerek', 'statisztika, fizetési előzmények'],
-                ] as [Tab, string, string][]
+                ] as [StatsTab, string, string][]
               ).map(([t, title, sub]) => (
                 <button
                   key={t}
-                  onClick={() => (t === 'partners' && setPartnerLeaf(null), setTab(t))}
+                  onClick={() => (setPartnerKey(null), setStatsTab(t), setTab('stats'))}
                   style={{
                     border: `1px solid ${C.line2}`,
                     background: '#fff',
@@ -477,6 +479,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 onOpenPlan={openItem}
                 onDetail={openDetail}
                 onToggleDone={(e) => commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓')}
+                onPartner={openPartner}
               />
               {catDeleted.map((d) => (
                 <div
@@ -530,16 +533,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
-        {tab === 'partners' && (
+        {tab === 'stats' && (
           <>
-            <MobileHeader title="Partnerek" sub="Statisztika" onBack={() => setTab('home')} />
-            <PartnersView key={partnerLeaf || 'list'} mobile initialLeaf={partnerLeaf} onBack={() => setPartnerLeaf(null)} />
-          </>
-        )}
-        {tab === 'pva' && (
-          <>
-            <MobileHeader title="Terv vs. tény" sub="Havi összesítő" onBack={() => setTab('home')} />
-            <PlanActualView mobile />
+            <MobileHeader title="Statisztika" sub="Terv vs. tény · partnerek" onBack={() => (setPartnerKey(null), setTab('home'))} />
+            <StatsView key={(partnerKey || '') + statsTab} mobile initialTab={statsTab} partnerKey={partnerKey} onPartnerBack={() => setPartnerKey(null)} />
           </>
         )}
         {tab === 'alerts' && (
@@ -660,14 +657,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         </div>
       </div>
 
-      {sheet && (
-        <SheetView
-          sheet={sheet}
-          setSheet={setSheet}
-          onSaved={(ym) => setM(ym)}
-          onPartner={(leaf) => (setSheet(null), setPartnerLeaf(leaf), setTab('partners'))}
-        />
-      )}
+      {sheet && <SheetView sheet={sheet} setSheet={setSheet} onSaved={(ym) => setM(ym)} onPartner={(leaf) => (setSheet(null), openPartner(leaf))} />}
       {toast && <ToastView {...toast} mobile />}
     </div>
   );
@@ -1242,6 +1232,7 @@ function SheetView({
   return (
     <div onClick={close} style={{ position: 'fixed', inset: 0, zIndex: 20, background: 'rgba(0,32,64,.45)', display: 'flex', alignItems: 'flex-end' }}>
       <div
+        className="sheet"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',

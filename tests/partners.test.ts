@@ -24,19 +24,20 @@ const groups: Group[] = [
 ];
 const leaves: Leaf[] = [
   { id: 'mb', group_id: 'gi', label: 'Mr. Big', sort: 1, archived: 0 },
+  { id: 'mbo', group_id: 'go', label: 'Mr Big', sort: 1, archived: 0 }, // ugyanaz a partner kiadási oldalon
   { id: 'ph', group_id: 'gi', label: 'Pharmazone', sort: 2, archived: 0 },
-  { id: 'zu', group_id: 'go', label: 'Zuban Erna', sort: 1, archived: 0 },
 ];
 
 describe('partnerstatisztika', () => {
-  it('összegek, részesedés, évek, fizetési késés', () => {
+  it('bevétel + kiadás egy partnernél, múlt, jövő, összetevők, számlák', () => {
     const es = [
-      E({ amount: 100000, date: '2026-09-05' }),
-      E({ amount: 150000, date: '2026-10-06' }),
-      E({ amount: 200000, date: '2024-05-01' }),
+      E({ amount: 100000, date: '2026-09-05', name: 'Marketing tanácsadás' }),
+      E({ amount: 150000, date: '2026-10-06', name: 'Marketing tanácsadás' }),
+      E({ amount: 200000, date: '2024-05-01', name: 'Kampány' }),
+      E({ leaf_id: 'mbo', amount: -30000, date: '2026-09-20', name: 'Visszaszámlázás' }),
       E({ leaf_id: 'ph', amount: 750000, date: '2026-08-10' }),
-      E({ leaf_id: 'zu', amount: -280000, date: '2026-09-30' }),
-      E({ kind: 'plan', amount: 80000, date: '2026-11-10' }),
+      E({ kind: 'plan', amount: 80000, date: '2026-11-10', name: 'Marketing tanácsadás' }),
+      E({ kind: 'plan', amount: 500000, date: '2026-12-01', tentative: 1, name: 'Új projekt' }),
     ];
     const docs = [
       {
@@ -51,21 +52,16 @@ describe('partnerstatisztika', () => {
       },
       { id: 2, number: 'P/2', partner: 'MR. BIG TEAM KFT.', gross: 80000, due_date: '2026-10-01', paid_date: null, payment_status: 'expired', cancelled: 0 },
     ] as BillingoDoc[];
-    const st = partnerStats(es, leaves, groups, docs, '2026-10-09');
-    const mb = st.find((p) => p.leaf.id === 'mb')!;
-    expect(mb).toMatchObject({
-      total: 450000,
-      last12: 250000,
-      count: 3,
-      last: '2026-10-06',
-      first: '2024-05-01',
-      openPlan: 80000,
-      avgLate: 4,
-      lateCount: 1,
-      outstanding: 80000,
-    });
-    expect(mb.byYear).toEqual({ '2024': 200000, '2026': 250000 });
-    expect(mb.share12).toBeCloseTo(0.25);
-    expect(st.find((p) => p.leaf.id === 'zu')).toMatchObject({ section: 'out', total: 280000, share12: 1 });
+    const st = partnerStats(es, leaves, groups, docs, '2026-10-09', [{ leaf_id: 'mb', partner: 'MR. BIG TEAM KFT', n: 5 }]);
+    const mb = st.find((p) => p.key === 'mrbig')!;
+    expect(mb.leaves.map((l) => l.id).sort()).toEqual(['mb', 'mbo']);
+    expect(mb.sides.in).toMatchObject({ total: 450000, last12: 250000, count: 3, openPlan: 80000, offers: 500000 });
+    expect(mb.sides.out).toMatchObject({ total: 30000, count: 1 });
+    expect(mb.sides.in!.share12).toBeCloseTo(0.25);
+    expect(mb).toMatchObject({ avgLate: 4, lateCount: 1, outstanding: 80000, last: '2026-10-06', first: '2024-05-01' });
+    expect(mb.future.map((e) => e.name)).toEqual(['Marketing tanácsadás', 'Új projekt']);
+    expect(mb.pastComponents[0]).toMatchObject({ name: 'Marketing tanácsadás', total: 250000, count: 2 });
+    expect(mb.billingNames.map((b) => b.source)).toEqual(['bank', 'Billingo']);
+    expect(mb.byYear['2026']).toEqual({ inc: 250000, out: 30000 });
   });
 });

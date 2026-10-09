@@ -67,3 +67,13 @@ button {
     font-size: 16px !important;
   } /* iOS: ne zoomoljon be fókuszkor */
 }
+
+/* alsó lapok: a mezők és gombok ne nyomódjanak össze, ha a lap görgethető */
+.sheet > * {
+  flex-shrink: 0;
+}
+input,
+select,
+textarea {
+  box-sizing: border-box;
+}

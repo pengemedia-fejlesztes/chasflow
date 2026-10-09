@@ -256,7 +256,9 @@ export async function archiveMergedDuplicates(env: Env): Promise<number> {
   if (!contains.length) return 0;
   const { sectionOf } = await sectionMap(env);
   // a csoport összegéhez az archivált (ignored) tételek is számítanak, csak a jóváhagyottak nem
-  const txs = await env.DB.prepare("SELECT id, account_id, date, amount, partner, memo, status FROM bank_tx WHERE status IN ('new', 'ignored') AND date >= date('now', '-150 days')").all<{
+  const txs = await env.DB.prepare(
+    "SELECT id, account_id, date, amount, partner, memo, status FROM bank_tx WHERE status IN ('new', 'ignored') AND date >= date('now', '-150 days')",
+  ).all<{
     id: string;
     account_id: string;
     date: string;

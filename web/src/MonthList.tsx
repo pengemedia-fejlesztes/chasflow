@@ -72,6 +72,7 @@ export function MonthList(props: {
   onOpenPlan: (e: Entry) => void;
   onDetail: (r: MonthRow) => void;
   onToggleDone: (e: Entry) => void;
+  onPartner?: (leaf: string) => void;
 }) {
   const { rows, sign, m } = props;
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -125,6 +126,7 @@ function Row(p: {
   onOpenPlan: (e: Entry) => void;
   onDetail: (r: MonthRow) => void;
   onToggleDone: (e: Entry) => void;
+  onPartner?: (leaf: string) => void;
 }) {
   const { ix, canEdit } = useStore();
   const { r, sign } = p;
@@ -228,6 +230,18 @@ function Row(p: {
           <span style={{ font: `600 12px ${FONT}`, color: red ? C.neg : C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {sub}
           </span>
+          {p.onPartner && !p.selMode && (
+            <span
+              role="button"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                p.onPartner!(r.leaf_id);
+              }}
+              style={{ font: `600 12px ${FONT}`, color: C.blueDark, whiteSpace: 'nowrap', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
+            >
+              {sub === ix.leafById[r.leaf_id]?.label ? 'partner ›' : `${ix.leafById[r.leaf_id]?.label} ›`}
+            </span>
+          )}
         </span>
       </span>
       <span style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
