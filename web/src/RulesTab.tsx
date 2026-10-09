@@ -12,6 +12,7 @@ interface ContainsRow {
   pattern: string;
   leaf_id: string;
   auto: number;
+  merge: number;
   note: string | null;
   source: string;
   hits: number;
@@ -20,7 +21,18 @@ interface LearnedRow {
   pattern: string;
   leaf_id: string;
   auto: number;
+  merge: number;
   hits: number;
+}
+interface SuggestionRow {
+  key: string;
+  partner: string;
+  leaf_id: string;
+  count: number;
+  total: number;
+  months: number;
+  avg: number;
+  recurring: boolean;
 }
 type Row = { kind: 'contains'; r: ContainsRow } | { kind: 'learned'; r: LearnedRow };
 
@@ -53,7 +65,9 @@ export function RulesTab() {
   const [contains, setContains] = useState<ContainsRow[]>([]);
   const [learned, setLearned] = useState<LearnedRow[]>([]);
   const [q, setQ] = useState('');
-  const [nr, setNr] = useState({ pattern: '', section: 'out' as Section, leaf: null as string | null, auto: false });
+  const [nr, setNr] = useState({ pattern: '', section: 'out' as Section, leaf: null as string | null, auto: false, merge: false });
+  const [sugg, setSugg] = useState<SuggestionRow[] | null>(null);
+  const loadSugg = () => api<SuggestionRow[]>('/api/rules/suggestions').then(setSugg, (e) => showToast({ msg: e.message, error: true }));
   const [editing, setEditing] = useState<string | null>(null);
   const [addFor, setAddFor] = useState<Record<string, string>>({});
 
@@ -67,12 +81,14 @@ export function RulesTab() {
     );
   useEffect(() => {
     load();
+    loadSugg();
   }, []);
 
   const act = async (fn: () => Promise<any>, msg: string) => {
     try {
       const r = await fn();
       await load();
+      loadSugg();
       await run(
         async () => {},
         msg + (r?.auto ? ` · ${r.auto} tétel automatikusan könyvelve` : '') + (r?.updated ? ` · ${r.updated} várakozó tétel átsorolva` : ''),
@@ -138,6 +154,7 @@ export function RulesTab() {
                 ]}
               />
               <Toggle on={nr.auto} onClick={() => setNr({ ...nr, auto: !nr.auto })} label="Automatikus könyvelés" />
+              <Toggle on={nr.merge} onClick={() => setNr({ ...nr, merge: !nr.merge })} label="Havi összevonás" />
             </div>
             <LeafPicker key={nr.section} section={nr.section} value={nr.leaf} onChange={(id) => setNr({ ...nr, leaf: id })} />
             <div>
@@ -146,7 +163,7 @@ export function RulesTab() {
                 disabled={!nr.pattern.trim() || !nr.leaf}
                 onClick={() =>
                   act(
-                    () => api('/api/rules', { body: { pattern: nr.pattern, leaf_id: nr.leaf, auto: nr.auto } }),
+                    () => api('/api/rules', { body: { pattern: nr.pattern, leaf_id: nr.leaf, auto: nr.auto, merge: nr.merge } }),
                     `Párosítás mentve: „${nr.pattern}” → ${ix.leafById[nr.leaf!]?.label}`,
                   ).then(() => setNr({ ...nr, pattern: '', leaf: null, auto: false }))
                 }
@@ -170,6 +187,59 @@ export function RulesTab() {
           )}
         </div>
       </div>
+
+      {sugg && sugg.length > 0 && (
+        <div style={{ ...card, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 8, borderColor: C.blue }}>
+          <div>
+            <div style={{ font: `700 16px ${FONT_H}`, color: C.navy }}>Javasolt párosítások ({sugg.length})</div>
+            <div style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted, marginTop: 4 }}>
+              A korábbi banki tételeket összevetettük a tényekkel (összeg + dátum): ezek a partnerek mindig ugyanabba a kategóriába kerültek. Egy kattintással
+              szabály lehet belőlük; a rendszeresek (≥ 3 hónap) automatikus könyvelésre is javasoltak.
+            </div>
+          </div>
+          {sugg.map((g) => {
+            const L = ix.leafById[g.leaf_id];
+            if (!L) return null;
+            return (
+              <div key={g.key} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 8 }}>
+                <span style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ font: `600 14px ${FONT}`, color: C.navy }}>
+                    {g.partner} → {L.label}
+                  </span>
+                  <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                    {displayGroup(ix.groupById[L.group_id]?.label || '')} · {g.count}/{g.total} alkalommal · {g.months} hónapban · átlag{' '}
+                    {Math.round(g.avg).toLocaleString('hu-HU')} Ft
+                  </span>
+                </span>
+                {canEdit && (
+                  <>
+                    <Pill
+                      small
+                      kind="light"
+                      onClick={() =>
+                        act(() => api('/api/rules', { body: { pattern: g.key, leaf_id: g.leaf_id, auto: false } }), `Párosítás: ${g.partner} → ${L.label}`)
+                      }
+                    >
+                      Elfogad
+                    </Pill>
+                    {g.recurring && (
+                      <Pill
+                        small
+                        kind="dark"
+                        onClick={() =>
+                          act(() => api('/api/rules', { body: { pattern: g.key, leaf_id: g.leaf_id, auto: true } }), `Automatikus: ${g.partner} → ${L.label}`)
+                        }
+                      >
+                        Elfogad + automatikus
+                      </Pill>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {groups.map(([leafId, rows]) => {
         const L = ix.leafById[leafId];
@@ -207,6 +277,19 @@ export function RulesTab() {
                                   ? api(`/api/rules/${row.r.id}`, { method: 'PATCH', body: { auto: !r.auto } })
                                   : api('/api/partner-rules', { method: 'PATCH', body: { pattern: r.pattern, auto: !r.auto } }),
                               !r.auto ? 'Automatikus könyvelés bekapcsolva' : 'Automatikus könyvelés kikapcsolva',
+                            )
+                          }
+                        />
+                        <Toggle
+                          on={!!r.merge}
+                          label="Havi összevonás"
+                          onClick={() =>
+                            act(
+                              () =>
+                                row.kind === 'contains'
+                                  ? api(`/api/rules/${row.r.id}`, { method: 'PATCH', body: { merge: !r.merge } })
+                                  : api('/api/partner-rules', { method: 'PATCH', body: { pattern: r.pattern, merge: !r.merge } }),
+                              !r.merge ? 'Havi összevonás bekapcsolva (dátum + bank + kategória)' : 'Havi összevonás kikapcsolva',
                             )
                           }
                         />

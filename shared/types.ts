@@ -9,6 +9,7 @@ export interface Group {
   section: Section;
   label: string;
   sort: number;
+  pay_rule?: string | null;
 }
 
 export interface Leaf {
@@ -17,6 +18,7 @@ export interface Leaf {
   label: string;
   sort: number;
   archived: number;
+  pay_rule?: string | null;
 }
 
 export interface Series {

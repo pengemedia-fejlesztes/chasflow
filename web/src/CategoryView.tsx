@@ -4,7 +4,7 @@ import { displayGroup } from '../../shared/categories';
 import { addMonths, endOfMonth, fmt, monthLabel, monthRange, ymOf } from '../../shared/model';
 import type { Entry, Rep } from '../../shared/types';
 import type { EditTarget } from './EntryModal';
-import { REP, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { REP, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
 
@@ -58,7 +58,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     const amt = parseInt(String(qa.amount).replace(/\D/g, '')) || 0;
     if (!amt || !qaLeaf) return;
     const name = qa.name.trim() || ix.leafById[qaLeaf].label;
-    const b = genSeries({ leaf: qaLeaf, section, name, amount: amt, startYm: qa.m, count: qa.count, rep: qa.rep, day: 10 });
+    const b = genSeries({ leaf: qaLeaf, section, name, amount: amt, startYm: qa.m, count: qa.count, rep: qa.rep, day: 10, payRule: ruleOf(ix, qaLeaf) });
     commit(b, `${b.upsert!.length} tétel felvéve: ${name}`);
     setQa({ ...qa, name: '', amount: '' });
   };

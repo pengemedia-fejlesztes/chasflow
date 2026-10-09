@@ -2,6 +2,7 @@
 import { normalizeText, parseAmount, parseDate } from '../shared/categories';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
 import { autoApprove, loadContains } from './rules';
+import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
 import { invoiceRefs, syncBillingo } from './billingo';
@@ -171,6 +172,8 @@ export interface ApproveItem {
   name?: string;
   rep?: 'once' | 'monthly' | 'quarterly';
   count?: number;
+  /** havonta + bankonként egy összevont tényben (pl. banki díjak) */
+  merge?: boolean;
 }
 
 /** „Előre nem látható költség” alkategória – az új, tervhez nem köthető kiadások alapértelmezése. */
@@ -195,13 +198,55 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const stmts: D1PreparedStatement[] = [];
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
+  const mergedSeen = new Set<string>();
   for (const it of items) {
     const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'new'").bind(String(it.id)).first<any>();
     if (!tx) continue;
     const leafId = it.leaf_id || tx.leaf_id || (tx.amount < 0 ? unforeseen : null);
     if (!leafId) throw new HttpError(400, `Válassz kategóriát: ${tx.partner || tx.memo}`);
-    const leafOk = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leafId).first();
-    if (!leafOk) throw new HttpError(400, 'Ismeretlen kategória.');
+    const leafRow = await env.DB.prepare('SELECT id, label FROM leaves WHERE id = ?').bind(leafId).first<{ id: string; label: string }>();
+    if (!leafRow) throw new HttpError(400, 'Ismeretlen kategória.');
+    if (it.merge) {
+      // Összevonás: dátum (hónap) + bank + kategória → egyetlen tény, a hónap legutolsó tételének dátumával
+      const ym = String(tx.date).slice(0, 7);
+      const mid = `m_${leafId}_${tx.account_id}_${ym}`.replace(/[^\w-]/g, '_');
+      const acc = await env.DB.prepare('SELECT bank_name FROM bank_accounts WHERE id = ?').bind(tx.account_id).first<{ bank_name: string }>();
+      let planId: string | null = null;
+      if (!mergedSeen.has(mid)) {
+        mergedSeen.add(mid);
+        const exists = await env.DB.prepare('SELECT id FROM entries WHERE id = ?').bind(mid).first();
+        if (!exists) {
+          // az adott havi terv (pl. Bankköltség) lezárása
+          const p = await env.DB.prepare(
+            "SELECT id FROM entries WHERE kind = 'plan' AND done = 0 AND leaf_id = ? AND substr(date, 1, 7) = ? ORDER BY date LIMIT 1",
+          )
+            .bind(leafId, ym)
+            .first<{ id: string }>();
+          planId = p?.id ?? null;
+        }
+      }
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by)
+           VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'bank', ?, ?, 'összevont banki tételek', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET amount = entries.amount + excluded.amount, date = MAX(entries.date, excluded.date),
+             updated_at = excluded.updated_at`,
+        ).bind(
+          mid,
+          tx.date,
+          leafId,
+          `${leafRow.label} · ${acc?.bank_name || 'bank'} · ${ym.replace('-', '. ')}. (összevont)`,
+          tx.amount,
+          'merge:' + mid,
+          planId,
+          t,
+          userId,
+        ),
+      );
+      if (planId) stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ?').bind(mid, t, planId));
+      stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(mid, leafId, tx.id));
+      continue;
+    }
     const planId = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
@@ -219,6 +264,12 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     if (rep && sid) {
       // ismétlődő: a következő hónaptól tervezett tételek ugyanazzal az összeggel és nappal
       const step = rep === 'quarterly' ? 3 : 1;
+      const pr = await env.DB.prepare('SELECT l.pay_rule AS lp, g.pay_rule AS gp FROM leaves l JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
+        .bind(leafId)
+        .first<{ lp: string | null; gp: string | null }>();
+      const rule = pr?.lp || pr?.gp || null;
+      const nextDate = (i: number) =>
+        rule ? payDate(addMonthsDate(tx.date, i * step).slice(0, 7), rule, Number(tx.date.slice(8))) : addMonthsDate(tx.date, i * step);
       const n = Math.ceil(Math.min(36, Math.max(1, Number(it.count) || 12)) / step);
       stmts.push(
         env.DB.prepare('INSERT OR REPLACE INTO series (id, leaf_id, name, rep, day) VALUES (?, ?, ?, ?, ?)').bind(
@@ -234,7 +285,7 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
           env.DB.prepare(
             `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, updated_at, updated_by)
              VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'manual', ?, ?) ON CONFLICT DO NOTHING`,
-          ).bind(`r${tx.id}_${i}`, addMonthsDate(tx.date, i * step), leafId, name, tx.amount, sid, t, userId),
+          ).bind(`r${tx.id}_${i}`, nextDate(i), leafId, name, tx.amount, sid, t, userId),
         );
     }
     stmts.push(
@@ -256,6 +307,18 @@ async function unapprove(env: Env, u: User, ids: string[]) {
   for (const id of ids) {
     const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'approved'").bind(id).first<any>();
     if (!tx) continue;
+    if (String(tx.actual_id || '').startsWith('m_')) {
+      // összevont tényből kivonjuk; ha kiürül, törlődik és a terv újra nyitott lesz
+      await env.DB.batch([
+        env.DB.prepare('UPDATE entries SET amount = amount - ? WHERE id = ?').bind(tx.amount, tx.actual_id),
+        env.DB.prepare(
+          "UPDATE entries SET done = 0, link_id = NULL WHERE kind = 'plan' AND link_id = ? AND EXISTS (SELECT 1 FROM entries WHERE id = ? AND amount = 0)",
+        ).bind(tx.actual_id, tx.actual_id),
+        env.DB.prepare('DELETE FROM entries WHERE id = ? AND amount = 0').bind(tx.actual_id),
+        env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
+      ]);
+      continue;
+    }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(tx.actual_id),
       env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND link_id = ?').bind(tx.plan_id, tx.actual_id),

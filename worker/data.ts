@@ -5,6 +5,12 @@ import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/t
 import { publicUser, requireRole, type User } from './auth';
 import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from './util';
 
+/** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
+function cleanPayRule(v: unknown): string | null {
+  const r = v == null ? '' : String(v);
+  return /^(first_workday|last_workday|day:([1-9]|[12]\d|3[01]))$/.test(r) ? r : null;
+}
+
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
   const [groups, leaves, series, entries, accounts, bankTx, billingo, settings] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
@@ -213,6 +219,18 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         .bind(b.archived ? 1 : 0, lm[1])
         .run();
     if (b.group_id !== undefined) await env.DB.prepare('UPDATE leaves SET group_id = ? WHERE id = ?').bind(String(b.group_id), lm[1]).run();
+    if (b.pay_rule !== undefined) await env.DB.prepare('UPDATE leaves SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), lm[1]).run();
+    if (b.group_id !== undefined || b.pay_rule !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
+    return json({ ok: true });
+  }
+  const gm = path.match(/^\/api\/groups\/([\w-]+)$/);
+  if (gm && req.method === 'PATCH') {
+    requireRole(u, 'admin', 'member');
+    const b = await readJson(req);
+    if (b.pay_rule !== undefined) await env.DB.prepare('UPDATE groups SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), gm[1]).run();
+    if (b.label !== undefined && String(b.label).trim())
+      await env.DB.prepare('UPDATE groups SET label = ? WHERE id = ?').bind(String(b.label).trim().slice(0, 80), gm[1]).run();
+    await audit(env, u.id, 'group_updated', { id: gm[1], ...b });
     return json({ ok: true });
   }
   if (path === '/api/groups' && req.method === 'POST') {

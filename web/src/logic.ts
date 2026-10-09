@@ -1,5 +1,6 @@
 // Kliens oldali műveletek: minden módosítás egy EntryBatch-et állít elő (visszavonható).
 import { addMonths, endOfMonth, ymOf } from '../../shared/model';
+import { effectiveRule, payDate } from '../../shared/workdays';
 import type { DataBundle, Entry, EntryBatch, Rep, Section, Series } from '../../shared/types';
 
 export const uid = (p: string) => p + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -29,6 +30,8 @@ export function genSeries(o: {
   rep: Rep;
   day: number;
   tentative?: boolean;
+  /** fizetési nap szabály (első/utolsó munkanap, N-ig) – ha van, ez határozza meg a napot */
+  payRule?: string | null;
 }): EntryBatch {
   const sid = uid('s');
   const step = o.rep === 'quarterly' ? 3 : 1;
@@ -39,7 +42,7 @@ export function genSeries(o: {
     entries.push({
       id: uid('e'),
       kind: 'plan',
-      date: dateIn(addMonths(o.startYm, i * step), o.day),
+      date: o.payRule ? payDate(addMonths(o.startYm, i * step), o.payRule, o.day) : dateIn(addMonths(o.startYm, i * step), o.day),
       leaf_id: o.leaf,
       name: o.name,
       amount: signed(o.section, o.amount),
@@ -193,4 +196,27 @@ export function applyLocal(d: DataBundle, b: EntryBatch): DataBundle {
   (b.deleteSeries || []).forEach((id) => series.delete(id));
   (b.series || []).forEach((s) => series.set(s.id, s));
   return { ...d, entries: [...entries.values()].sort((a, b) => a.date.localeCompare(b.date)), series: [...series.values()] };
+}
+
+/** A kategória érvényes fizetési nap szabálya (saját, különben a csoporté). */
+export function ruleOf(
+  ix: { leafById: Record<string, { group_id: string; pay_rule?: string | null }>; groupById: Record<string, { pay_rule?: string | null }> },
+  leafId: string | null,
+) {
+  if (!leafId) return null;
+  const l = ix.leafById[leafId];
+  return l ? effectiveRule(l, ix.groupById[l.group_id]) || null : null;
+}
+
+/** Új tétel dátuma a kategória fizetési szabálya szerint (ha a hónapban már elmúlt, a következő hónapra). */
+export function ruleDateFor(ix: Parameters<typeof ruleOf>[0], leafId: string | null, date: string, today: string): string {
+  const r = ruleOf(ix, leafId);
+  if (!r) return date;
+  let ym = ymOf(date);
+  let d = payDate(ym, r, Number(date.slice(8)));
+  if (d < today) {
+    ym = addMonths(ym, 1);
+    d = payDate(ym, r, Number(date.slice(8)));
+  }
+  return d;
 }

@@ -6,7 +6,8 @@ import type { Entry, Rep, Section } from '../../shared/types';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
-import { REP, dateIn, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
+import { REP, ruleDateFor, ruleOf, dateIn, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
+import { payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
@@ -818,7 +819,7 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={lbl}>{f.type === 'in' ? 'Ügyfél / kategória' : 'Kategória'}</span>
-          <LeafPicker key={f.type} big section={f.type} value={f.leaf} onChange={(id) => set({ leaf: id })} />
+          <LeafPicker key={f.type} big section={f.type} value={f.leaf} onChange={(id) => set({ leaf: id, date: ruleDateFor(ix, id, f.date, data.today) })} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={lbl}>Ütemezés</span>
@@ -850,6 +851,7 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
           <DateField big value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ flex: 1 }} />
         </label>
         <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, marginTop: -6 }}>
+          {ruleOf(ix, f.leaf) ? `Fizetés: ${payRuleLabel(ruleOf(ix, f.leaf))} (szabály) · ` : ''}
           {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
         </span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
@@ -883,6 +885,7 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
               count: f.rep === 'once' ? 1 : f.count,
               rep: f.rep,
               day: Number(f.date.slice(8)),
+              payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
             });
             commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`);
             onSaved(ymOf(f.date));

@@ -2,7 +2,9 @@
 import { useEffect, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { parseBankRows } from '../../shared/bankfile';
-import { fmt } from '../../shared/model';
+import { addMonths, fmt } from '../../shared/model';
+import { payDate, payRuleLabel } from '../../shared/workdays';
+import { ruleOf } from './logic';
 import { api } from './api';
 import { RulesTab } from './RulesTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
@@ -642,12 +644,76 @@ function DataTab() {
   );
 }
 
+const PAY_OPTS: [string, string][] = [
+  ['', 'Nincs'],
+  ['first_workday', 'Hónap 1. munkanapja'],
+  ['last_workday', 'Hónap utolsó munkanapja'],
+];
+
+/** Fizetési nap szabály választó gombokkal (N-ig: szám mező). */
+function PayRuleChips({ value, onChange, inherited }: { value: string | null | undefined; onChange: (v: string | null) => void; inherited?: string | null }) {
+  const dayM = (value || '').match(/^day:(\d+)$/);
+  const [day, setDay] = useState(dayM ? dayM[1] : '10');
+  const chip = (on: boolean): React.CSSProperties => ({
+    border: `1px solid ${on ? C.navy : C.line2}`,
+    borderRadius: 999,
+    padding: '5px 11px',
+    font: `600 12px ${FONT}`,
+    cursor: 'pointer',
+    background: on ? C.navy : '#fff',
+    color: on ? '#fff' : C.ink,
+    whiteSpace: 'nowrap',
+  });
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      {PAY_OPTS.map(([v, l]) => (
+        <button key={v} type="button" onClick={() => onChange(v || null)} style={chip((value || '') === v)}>
+          {v === '' && inherited ? `Csoport szerint (${payRuleLabel(inherited)})` : l}
+        </button>
+      ))}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <button type="button" onClick={() => onChange(`day:${Math.min(31, Math.max(1, Number(day) || 10))}`)} style={chip(!!dayM)}>
+          Minden hónap
+        </button>
+        <input
+          inputMode="numeric"
+          value={day}
+          onChange={(e) => setDay(e.target.value.replace(/\D/g, '').slice(0, 2))}
+          onBlur={() => dayM && onChange(`day:${Math.min(31, Math.max(1, Number(day) || 10))}`)}
+          style={{ ...inputStyle, width: 44, height: 28, padding: '0 6px', textAlign: 'center', fontSize: 12.5 }}
+        />
+        <span style={{ font: `600 12px ${FONT}`, color: C.muted }}>-ig</span>
+      </span>
+    </div>
+  );
+}
+
 function Categories() {
   const { ix, data, run, isAdmin, canEdit } = useStore();
   const [nl, setNl] = useState<Record<string, string>>({});
   const [ng, setNg] = useState({ section: 'out', label: '' });
   const [showArchived, setShowArchived] = useState(false);
+  const [openLeaf, setOpenLeaf] = useState<string | null>(null);
+  const { commit } = useStore();
   const used = new Set(data.entries.map((e) => e.leaf_id));
+  /** a nyitott (nem Billingo) tervek dátumának igazítása a szabályhoz – visszavonható */
+  const reschedule = (leafIds: string[]) => {
+    const upsert = data.entries
+      .filter((e) => e.kind === 'plan' && !e.done && e.source !== 'billingo' && leafIds.includes(e.leaf_id) && e.date >= ix.cur + '-01')
+      .map((e) => {
+        const r = ruleOf(ix, e.leaf_id);
+        if (!r) return e;
+        // a legközelebbi szabály szerinti nap: hónap eleji tétel → előző hónap utolsó munkanapja, hónap végi → következő hónap első munkanapja
+        const day = Number(e.date.slice(8));
+        const ym = e.date.slice(0, 7);
+        const target = r === 'last_workday' && day <= 7 ? addMonths(ym, -1) : r === 'first_workday' && day >= 24 ? addMonths(ym, 1) : ym;
+        const d = payDate(target, r, day);
+        return { ...e, date: d < ix.cur + '-01' ? payDate(ym, r, day) : d };
+      })
+      .filter((e, i, arr) => e.date !== data.entries.find((x) => x.id === arr[i].id)?.date);
+    if (!upsert.length) return run(async () => {}, 'Minden nyitott terv már a szabály szerinti napon van.');
+    commit({ upsert }, `${upsert.length} nyitott terv átütemezve a fizetési szabály szerint`);
+  };
   return (
     <>
       {isAdmin && (
@@ -683,6 +749,24 @@ function Categories() {
       </label>
       {ix.groups.map((g) => (
         <Section key={g.id} title={`${g.section === 'in' ? 'Bevétel' : 'Kiadás'} · ${displayGroup(g.label)}`}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg, borderRadius: 10, padding: '8px 10px' }}>
+            <span style={{ ...eyebrow, fontSize: 10.5 }}>Fizetési nap a csoport minden tételére{g.section === 'in' ? ' (partnerenként felülírható)' : ''}</span>
+            {canEdit ? (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                <PayRuleChips
+                  value={g.pay_rule}
+                  onChange={(v) =>
+                    run(() => api(`/api/groups/${g.id}`, { method: 'PATCH', body: { pay_rule: v } }), `${displayGroup(g.label)}: ${payRuleLabel(v)}`)
+                  }
+                />
+                <Pill small kind="light" onClick={() => reschedule(ix.leaves.filter((l) => l.group_id === g.id).map((l) => l.id))}>
+                  Nyitott tervek igazítása
+                </Pill>
+              </div>
+            ) : (
+              <span style={{ font: `500 13px ${FONT}` }}>{payRuleLabel(g.pay_rule)}</span>
+            )}
+          </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {ix.leaves
               .filter((l) => l.group_id === g.id && (showArchived || !l.archived))
@@ -702,9 +786,21 @@ function Categories() {
                   }}
                 >
                   {l.label}
+                  {l.pay_rule && (
+                    <span style={{ font: `600 10.5px ${FONT}`, color: C.blueDark, background: C.bg2, borderRadius: 999, padding: '1px 6px' }}>
+                      {payRuleLabel(l.pay_rule).replace('minden hónap ', '').replace('hónap ', '')}
+                    </span>
+                  )}
                   {!used.has(l.id) && <span style={{ ...eyebrow, fontSize: 9 }}>üres</span>}
                   {canEdit && (
                     <>
+                      <button
+                        title="Fizetési nap, áthelyezés"
+                        onClick={() => setOpenLeaf(openLeaf === l.id ? null : l.id)}
+                        style={{ border: 0, background: 'transparent', cursor: 'pointer', color: openLeaf === l.id ? C.blue : C.muted }}
+                      >
+                        📅
+                      </button>
                       <button
                         title="Átnevezés"
                         onClick={() => {
@@ -732,6 +828,45 @@ function Categories() {
                 </span>
               ))}
           </div>
+          {canEdit && openLeaf && ix.leafById[openLeaf]?.group_id === g.id && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, border: `1px solid ${C.blue}`, borderRadius: 10, padding: 10 }}>
+              <span style={{ font: `700 13.5px ${FONT_H}`, color: C.navy }}>{ix.leafById[openLeaf].label}</span>
+              <span style={{ ...eyebrow, fontSize: 10.5 }}>Fizetési nap</span>
+              <PayRuleChips
+                value={ix.leafById[openLeaf].pay_rule}
+                inherited={g.pay_rule}
+                onChange={(v) =>
+                  run(
+                    () => api(`/api/leaves/${openLeaf}`, { method: 'PATCH', body: { pay_rule: v } }),
+                    `${ix.leafById[openLeaf].label}: ${v ? payRuleLabel(v) : 'csoport szerint'}`,
+                  )
+                }
+              />
+              <div>
+                <Pill small kind="light" onClick={() => reschedule([openLeaf])}>
+                  Nyitott tervek igazítása
+                </Pill>
+              </div>
+              <span style={{ ...eyebrow, fontSize: 10.5 }}>Áthelyezés másik csoportba</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {ix.groups
+                  .filter((x) => x.section === g.section && x.id !== g.id)
+                  .map((x) => (
+                    <Pill
+                      key={x.id}
+                      small
+                      onClick={() =>
+                        run(() => api(`/api/leaves/${openLeaf}`, { method: 'PATCH', body: { group_id: x.id } }), `Áthelyezve: ${displayGroup(x.label)}`).then(
+                          () => setOpenLeaf(null),
+                        )
+                      }
+                    >
+                      → {displayGroup(x.label)}
+                    </Pill>
+                  ))}
+              </div>
+            </div>
+          )}
           {canEdit && (
             <div style={{ display: 'flex', gap: 8 }}>
               <input

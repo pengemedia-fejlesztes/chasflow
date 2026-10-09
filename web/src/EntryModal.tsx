@@ -2,7 +2,8 @@
 import { useMemo, useState } from 'react';
 import { addMonths, fmt, monthLabel, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { REP, dateIn, genSeries, rowKey, signed } from './logic';
+import { REP, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } from './logic';
+import { payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
@@ -65,6 +66,7 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
         rep: f.rep,
         day: Number(startDate.slice(8)),
         tentative: f.tentative,
+        payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
       });
       commit(b, `${b.upsert!.length} tétel felvéve → ${L?.label}`);
     }
@@ -150,7 +152,12 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={eyebrow}>{f.type === 'in' ? 'Ügyfél / kategória' : 'Kategória'}</span>
             <div style={{ maxHeight: 260, overflow: 'auto' }}>
-              <LeafPicker key={f.type} section={f.type} value={f.leaf} onChange={(id) => set({ leaf: id })} />
+              <LeafPicker
+                key={f.type}
+                section={f.type}
+                value={f.leaf}
+                onChange={(id) => set({ leaf: id, ...(edit ? {} : { date: ruleDateFor(ix, id, f.date, data.today) }) })}
+              />
             </div>
           </div>
           <>
@@ -158,6 +165,9 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={eyebrow}>{f.rep === 'once' ? 'Dátum' : 'Első dátum'}</span>
                 <DateField value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ width: 260 }} />
+                {ruleOf(ix, f.leaf) && (
+                  <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Fizetés: {payRuleLabel(ruleOf(ix, f.leaf))} (szabály)</span>
+                )}
               </div>
             )}
             {edit && (
