@@ -4,6 +4,7 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { PlanActualView } from './PlanActualView';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
@@ -18,7 +19,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
-type Tab = 'home' | 'alerts' | 'cat' | 'income' | 'bank' | 'more';
+type Tab = 'home' | 'alerts' | 'pva' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
@@ -222,6 +223,27 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               </button>
             </div>
             {flags.length > 0 && <FlagBanner mobile n={flags.length} kinds={flags.map((f) => f.kind)} onClick={() => setTab('alerts')} />}
+            <button
+              onClick={() => setTab('pva')}
+              style={{
+                margin: '14px 16px 0',
+                width: 'calc(100% - 32px)',
+                border: `1px solid ${C.line2}`,
+                background: '#fff',
+                borderRadius: 14,
+                padding: '13px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <b style={{ font: `700 14px ${FONT}`, color: C.navy }}>Terv vs. tény havonta</b>
+                <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>bevétel, kiadás, profit – terv, tény, eltérés</span>
+              </span>
+              <span style={{ font: `600 13px ${FONT}`, color: C.blueDark }}>Megnézem →</span>
+            </button>
             {newTx > 0 && (
               <button
                 onClick={() => setTab('bank')}
@@ -501,6 +523,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
+        {tab === 'pva' && (
+          <>
+            <MobileHeader title="Terv vs. tény" sub="Havi összesítő" onBack={() => setTab('home')} />
+            <PlanActualView mobile />
+          </>
+        )}
         {tab === 'alerts' && (
           <>
             <MobileHeader title="Riasztások" sub="Eltérések a havi tervtől" onBack={() => setTab('home')} />

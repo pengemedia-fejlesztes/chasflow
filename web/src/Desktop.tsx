@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, type Matrix } from '../../shared/model';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { PlanActualView } from './PlanActualView';
 import { api } from './api';
 import { BankView } from './BankView';
 import { CategoryView } from './CategoryView';
@@ -15,7 +16,7 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'settings';
+export type View = 'overview' | 'alerts' | 'pva' | 'cat' | 'income' | 'bank' | 'settings';
 
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
@@ -48,6 +49,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
     ['alerts', 'Riasztások', flags.length],
+    ['pva', 'Terv vs. tény', 0],
     ['income', 'Tervezett bevétel', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['settings', 'Beállítások', 0],
@@ -230,6 +232,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           />
         )}
         {view === 'alerts' && <AlertsView />}
+        {view === 'pva' && <PlanActualView />}
         {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
         {view === 'income' && <IncomeView />}
