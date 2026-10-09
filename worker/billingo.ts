@@ -1,5 +1,5 @@
 // Billingo v3 szinkron: kiállított számlák → tervezett bevétel.
-import { suggestLeaf } from '../shared/match';
+import { partnerKey, suggestLeaf } from '../shared/match';
 import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
 import { Env, getSetting, now, setSetting } from './util';
@@ -120,6 +120,11 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     return null;
   };
 
+  // partner álnevek (pl. „MAGYAR OKLEVELES ADÓSZAKÉRTŐK EGYESÜLETE” → „MOKLASZ”): a terv neve ezzel jelenik meg
+  let alias: Record<string, string> = {};
+  try {
+    alias = JSON.parse((await getSetting(env, 'partner_alias')) || '{}');
+  } catch {}
   const t = now();
   const stmts: D1PreparedStatement[] = [];
   let plans = 0;
@@ -127,7 +132,8 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     if (!d.id || !INCOME_TYPES.has(String(d.type))) continue;
     const rate = d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1;
     const gross = Math.round((Number(d.gross_total) || 0) * rate);
-    const partner = d.partner?.name || 'Ismeretlen partner';
+    const partnerRaw = d.partner?.name || 'Ismeretlen partner';
+    const partner = alias[partnerKey(partnerRaw)] || partnerRaw;
     const ext = `billingo:${d.id}`;
     const ex = existing.get(ext);
     const cancelled = !!d.cancelled || d.payment_status === 'cancelled';
