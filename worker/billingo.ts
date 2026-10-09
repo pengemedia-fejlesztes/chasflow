@@ -2,7 +2,7 @@
 import { partnerKey, suggestLeaf } from '../shared/match';
 import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
-import { Env, getSetting, now, setSetting } from './util';
+import { Env, HttpError, getSetting, now, setSetting } from './util';
 
 const BASE = 'https://api.billingo.hu/v3';
 
@@ -219,4 +219,17 @@ export async function invoiceRefs(env: Env): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   r.results.forEach((x) => (out[x.plan_id] = x.number));
   return out;
+}
+
+/** A számla nyilvános (Billingo által kiszolgált) megtekintő linkje. */
+export async function billingoPublicUrl(env: Env, id: number): Promise<string> {
+  if (!env.BILLINGO_API_KEY) throw new HttpError(400, 'Nincs beállítva Billingo kapcsolat.');
+  const doc = await env.DB.prepare('SELECT id FROM billingo_docs WHERE id = ?').bind(id).first();
+  if (!doc) throw new HttpError(404, 'Ismeretlen Billingo bizonylat.');
+  const res = await fetch(`${env.BILLINGO_API_URL || BASE}/documents/${id}/public-url`, {
+    headers: { 'X-API-KEY': env.BILLINGO_API_KEY, Accept: 'application/json' },
+  });
+  const j = (await res.json().catch(() => null)) as { public_url?: string } | null;
+  if (!res.ok || !j?.public_url) throw new HttpError(502, `A Billingo nem adta ki a számlát (${res.status}).`);
+  return j.public_url;
 }

@@ -88,6 +88,8 @@ export function markDone(d: DataBundle, ids: string[], val: boolean): EntryBatch
       upsert.push({ ...e, done: 0, link_id: null });
       const linked = e.link_id ? byId.get(e.link_id) : null;
       if (linked && linked.source === 'manual') del.push(linked.id);
+      // banki / importált tény megmarad, de leválik a tervről (különben „nem tervezett” sem lenne)
+      else if (linked && linked.kind === 'actual' && linked.link_id === e.id) upsert.push({ ...linked, link_id: null });
     }
   }
   return { upsert, delete: del };

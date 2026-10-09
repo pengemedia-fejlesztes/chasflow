@@ -4,6 +4,8 @@ import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
+import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
@@ -19,6 +21,7 @@ import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 type Tab = 'home' | 'alerts' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
   | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
+  | { kind: 'detail'; planId: string | null; actualId: string | null }
   | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean }
   | { kind: 'filters' };
 
@@ -83,10 +86,29 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const maxV = Math.max(...months.map((ym) => Math.abs(balances.bal.get(ym) || 0)), 1);
   const G = ix.groupById[catId];
   const gIds = new Set(ix.leaves.filter((l) => l.group_id === catId).map((l) => l.id));
-  const catItems = data.entries.filter((e) => inM(e) && gIds.has(e.leaf_id) && visibleEntry(e)).sort((a, b) => a.done - b.done || a.date.localeCompare(b.date));
+  const [rowFilter, setRowFilter] = useRowFilter();
+  const allRows = useMemo(() => monthRows(data.entries, m, gIds, data.today), [data.entries, m, catId, data.today]);
+  const rows = allRows.filter((r) => rowVisible(r, rowFilter));
+  const rowCounts = {
+    actual: allRows.filter((r) => r.completed).length,
+    plan: allRows.filter((r) => !r.completed && r.kind === 'plan').length,
+    offer: allRows.filter((r) => r.kind === 'offer').length,
+  };
+  const openItem = (e: Entry) =>
+    setSheet({
+      kind: 'item',
+      id: e.id,
+      amount: String(Math.abs(e.amount)),
+      date: e.date,
+      name: e.name,
+      leaf: e.leaf_id,
+      section: ix.sectionOf(e.leaf_id),
+      pick: false,
+      all: false,
+    });
+  const openDetail = (r: MonthRow) => setSheet({ kind: 'detail', planId: r.plan?.id ?? null, actualId: r.actual?.id ?? null });
   const gSign = G?.section === 'in' ? 1 : -1;
   const catDeleted = (data.deleted || []).filter((d) => inM(d) && gIds.has(d.leaf_id));
-  const actualById = new Map(data.entries.filter((e) => e.kind === 'actual').map((e) => [e.id, e]));
   const selIds = Object.keys(sel).filter((k) => sel[k]);
 
   const openNew = () =>
@@ -398,9 +420,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
             </div>
             <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <span style={{ font: `700 14px ${FONT_H}`, color: C.navy, padding: '0 4px' }}>
-                {m.slice(0, 4)}. {MSL[Number(m.slice(5)) - 1]} · összesen: {fmt(catItems.reduce((a, e) => a + e.amount * gSign, 0))} Ft
+                {m.slice(0, 4)}. {MSL[Number(m.slice(5)) - 1]} · összesen: {fmt(rows.reduce((a, r) => a + r.amount * gSign, 0))} Ft
               </span>
-              {catItems.length === 0 && (
+              <FilterChips f={rowFilter} onChange={setRowFilter} counts={rowCounts} />
+              {rows.length === 0 && (
                 <div
                   style={{
                     background: '#fff',
@@ -412,172 +435,20 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                     color: C.muted,
                   }}
                 >
-                  Ebben a hónapban nincs tétel.
+                  Ebben a hónapban nincs tétel{allRows.length ? ' a kiválasztott szűrővel' : ''}.
                 </div>
               )}
-              {catItems.map((e) => {
-                const s = !!sel[e.id];
-                const isAct = e.kind === 'actual';
-                const linked = !isAct && e.done && e.link_id ? actualById.get(e.link_id) : undefined;
-                const dev = linked && Math.abs(linked.amount - e.amount) >= Math.max(1000, Math.abs(e.amount) * 0.01) ? (linked.amount - e.amount) * gSign : 0;
-                const late = (!isAct && !e.done && e.date < data.today) || dev !== 0;
-                const series = data.series.find((x) => x.id === e.series_id);
-                const rep = isAct
-                  ? 'Tény'
-                  : e.done
-                    ? '✓ Teljesült'
-                    : e.tentative
-                      ? 'Ajánlat'
-                      : series
-                        ? REP[series.rep]
-                        : e.source === 'billingo'
-                          ? 'Billingo'
-                          : 'Terv';
-                return (
-                  <div
-                    key={e.id}
-                    onClick={() => {
-                      if (!canEdit) return;
-                      if (selMode) {
-                        if (e.done || isAct) return;
-                        setSel((x) => ({ ...x, [e.id]: !x[e.id] }));
-                      } else if (!isAct)
-                        setSheet({
-                          kind: 'item',
-                          id: e.id,
-                          amount: String(Math.abs(e.amount)),
-                          date: e.date,
-                          name: e.name,
-                          leaf: e.leaf_id,
-                          section: ix.sectionOf(e.leaf_id),
-                          pick: false,
-                          all: false,
-                        });
-                    }}
-                    style={{
-                      width: '100%',
-                      minHeight: 68,
-                      border: `1.5px solid ${s ? C.blue : e.done ? C.line2 : C.line}`,
-                      background: s ? C.bg2 : '#fff',
-                      borderRadius: 14,
-                      padding: '12px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                    }}
-                  >
-                    {selMode && (
-                      <span
-                        style={{
-                          width: 24,
-                          height: 24,
-                          flex: 'none',
-                          borderRadius: 7,
-                          border: `2px solid ${e.done || isAct ? C.line : s ? C.blue : C.line2}`,
-                          background: s ? C.blue : '#fff',
-                          color: '#fff',
-                          display: 'grid',
-                          placeItems: 'center',
-                          font: `700 13px ${FONT}`,
-                        }}
-                      >
-                        {s ? '✓' : ''}
-                      </span>
-                    )}
-                    <span
-                      style={{
-                        width: 46,
-                        flex: 'none',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        lineHeight: 1.05,
-                        padding: '6px 0',
-                        borderRadius: 10,
-                        background: late ? C.negBg : e.done || isAct ? C.bg2 : C.bg,
-                      }}
-                    >
-                      <b style={{ font: `800 19px ${FONT_H}`, color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy }}>{Number(e.date.slice(8))}</b>
-                      <span style={{ font: `600 10.5px ${FONT}`, color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy, textTransform: 'uppercase' }}>
-                        {monthLabel(m).replace('.', '')}
-                      </span>
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                      <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {e.name || ix.leafById[e.leaf_id]?.label}
-                      </span>
-                      <span style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 6px', alignItems: 'center' }}>
-                        <span
-                          style={{
-                            padding: '2px 8px',
-                            borderRadius: 999,
-                            background: e.done || isAct ? '#fff' : C.bg2,
-                            color: C.blueDark,
-                            font: `600 11px ${FONT}`,
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {rep}
-                        </span>
-                        <span style={{ font: `600 12px ${FONT}`, color: late ? C.neg : C.muted, whiteSpace: 'nowrap' }}>
-                          {dev
-                            ? `terv ${fmt(e.amount * gSign)} → ${dev > 0 ? '+' : '−'}${fmt(Math.abs(dev))}`
-                            : late
-                              ? 'lejárt'
-                              : ix.leafById[e.leaf_id]?.label}
-                        </span>
-                      </span>
-                    </span>
-                    <span style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                      <span
-                        style={{
-                          font: `700 15px ${FONT_H}`,
-                          color: late ? C.neg : e.done || isAct ? C.blueDark : C.navy,
-                          fontVariantNumeric: 'tabular-nums',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {fmt((linked && dev ? linked.amount : e.amount) * gSign)}
-                      </span>
-                      {!selMode && !isAct && canEdit && (
-                        <button
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓');
-                          }}
-                          title="Kész"
-                          style={{
-                            width: 44,
-                            height: 36,
-                            margin: '-2px -8px -8px 0',
-                            border: 0,
-                            background: 'transparent',
-                            padding: 0,
-                            display: 'grid',
-                            placeItems: 'center',
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 999,
-                              border: `2px solid ${e.done ? C.blue : C.muted2}`,
-                              background: e.done ? C.blue : '#fff',
-                              color: '#fff',
-                              font: `700 14px/1 ${FONT}`,
-                              display: 'grid',
-                              placeItems: 'center',
-                            }}
-                          >
-                            {e.done ? '✓' : ''}
-                          </span>
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
+              <MonthList
+                rows={rows}
+                sign={gSign}
+                m={m}
+                selMode={selMode}
+                sel={sel}
+                setSel={setSel}
+                onOpenPlan={openItem}
+                onDetail={openDetail}
+                onToggleDone={(e) => commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓')}
+              />
               {catDeleted.map((d) => (
                 <div
                   key={'del' + d.rid}
@@ -1188,6 +1059,117 @@ function SheetView({ sheet, setSheet, onSaved }: { sheet: Sheet; setSheet: (s: S
               {ix.sectionOf(sheet.leaf) !== sheet.section ? 'Válassz kategóriát' : 'Mentés'}
             </button>
           </div>
+        </>
+      );
+    }
+  }
+
+  if (sheet.kind === 'detail') {
+    const plan = sheet.planId ? data.entries.find((x) => x.id === sheet.planId) : undefined;
+    const actual = sheet.actualId ? data.entries.find((x) => x.id === sheet.actualId) : undefined;
+    const base = actual || plan;
+    if (base) {
+      const sign = ix.sectionOf(base.leaf_id) === 'in' ? 1 : -1;
+      const diff = plan && actual ? (actual.amount - plan.amount) * sign : 0;
+      const dev = plan && actual ? isDeviation(actual.amount, plan.amount) : false;
+      const days = plan && actual ? daysBetween(plan.date, actual.date) : null;
+      const avg = avgDelay(data.entries, base.leaf_id);
+      const doc = billingoDocFor(data.billingo, data.bankTx, plan, actual, ix.leafById[base.leaf_id]?.label);
+      const tx = actual?.ext_ref?.startsWith('bank:') ? data.bankTx.find((t) => t.id === actual.ext_ref!.slice(5)) : undefined;
+      const dd = (d: string) => d.replace(/-/g, '.') + '.';
+      const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
+      const cell = (label: string, value: React.ReactNode, color?: string) => (
+        <div style={{ background: C.bg, borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={lbl}>{label}</span>
+          <b style={{ font: `700 16px ${FONT_H}`, color: color || C.navy, fontVariantNumeric: 'tabular-nums' }}>{value}</b>
+        </div>
+      );
+      const openDoc = async () => {
+        if (!doc) return;
+        const w = window.open('', '_blank');
+        try {
+          const r = await api<{ url: string }>(`/api/billingo/doc/${doc.id}/url`);
+          if (w) w.location.href = r.url;
+          else window.location.href = r.url;
+        } catch (e: any) {
+          w?.close();
+          alert(e.message || 'Nem sikerült megnyitni a számlát.');
+        }
+      };
+      body = (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
+              {plan && actual ? 'Teljesült terv' : actual ? 'Tény (terv nélkül)' : 'Késznek jelölt terv'}
+            </span>
+            <span style={{ font: `700 19px ${FONT_H}`, color: C.navy }}>{plan?.name || actual?.name || ix.leafById[base.leaf_id]?.label}</span>
+            <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+              {ix.sectionOf(base.leaf_id) === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(ix.groupById[ix.leafById[base.leaf_id]?.group_id]?.label || '')} ·{' '}
+              {ix.leafById[base.leaf_id]?.label}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–')}
+            {cell('Tény', actual ? `${fmt(actual.amount * sign)} Ft` : '–', dev ? C.neg : C.blueDark)}
+            {cell('Tervezett dátum', plan ? dd(plan.date) : '–')}
+            {cell('Teljesült', actual ? dd(actual.date) : plan?.done ? 'késznek jelölve' : '–')}
+            {cell('Különbség', plan && actual ? `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmt(Math.abs(diff))} Ft` : '–', dev ? C.neg : undefined)}
+            {cell(
+              'Eltérés napokban',
+              days === null ? '–' : days === 0 ? 'pontosan' : `${Math.abs(days)} nap ${days > 0 ? 'késés' : 'korábban'}`,
+              days !== null && days > 0 ? C.neg : undefined,
+            )}
+          </div>
+          {avg && (
+            <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+              Ebben a kategóriában átlagosan {Math.abs(Math.round(avg.avg))} nap {avg.avg >= 0 ? 'késés' : 'előny'} ({avg.n} teljesült tétel alapján).
+            </span>
+          )}
+          {(tx || actual?.note) && (
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={lbl}>Banki tétel</span>
+              <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{tx?.partner || actual?.name}</span>
+              <span style={{ font: `400 13px ${FONT}`, color: C.muted, wordBreak: 'break-word' }}>{tx?.memo || actual?.note}</span>
+            </div>
+          )}
+          {doc ? (
+            <button onClick={openDoc} style={{ height: 50, border: 0, borderRadius: 999, background: C.blue, color: '#fff', font: `600 15px ${FONT}` }}>
+              🧾 Billingo számla megnyitása · {doc.number}
+            </button>
+          ) : (
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.faint, textAlign: 'center' }}>Ehhez a tételhez nem találtam Billingo számlát.</span>
+          )}
+          {plan && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                onClick={() => {
+                  commit(markDone(data, [plan.id], false), 'Terv újra nyitott');
+                  close();
+                }}
+                style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: 999, background: '#fff', font: `600 14px ${FONT}`, color: C.navy }}
+              >
+                Visszaállítás nyitottra
+              </button>
+              <button
+                onClick={() =>
+                  setSheet({
+                    kind: 'item',
+                    id: plan.id,
+                    amount: String(Math.abs(plan.amount)),
+                    date: plan.date,
+                    name: plan.name,
+                    leaf: plan.leaf_id,
+                    section: ix.sectionOf(plan.leaf_id),
+                    pick: false,
+                    all: false,
+                  })
+                }
+                style={{ height: 46, border: 0, borderRadius: 999, background: C.navy, font: `600 14px ${FONT}`, color: '#fff' }}
+              >
+                Terv szerkesztése
+              </button>
+            </div>
+          )}
         </>
       );
     }

@@ -5,7 +5,7 @@ import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
-import { invoiceRefs, syncBillingo } from './billingo';
+import { billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
 import * as eb from './enablebanking';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
@@ -339,6 +339,11 @@ async function unapprove(env: Env, u: User, ids: string[]) {
 }
 
 export async function handleBank(env: Env, req: Request, path: string, u: User, url: URL): Promise<Response | null> {
+  const bdoc = path.match(/^\/api\/billingo\/doc\/(\d{1,15})\/url$/);
+  if (bdoc && req.method === 'GET') {
+    // Billingo számlakép egy kattintással (nyilvános, időkorlátos link a Billingótól)
+    return json({ url: await billingoPublicUrl(env, Number(bdoc[1])) });
+  }
   if (!path.startsWith('/api/bank') && path !== '/api/sync') return null;
 
   if (path === '/api/sync' && req.method === 'POST') {
