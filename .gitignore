@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.xls
+*.xlsx
+*.csv
+*.pem
+.DS_Store

@@ -1,0 +1,69 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: #f4f7fb;
+  color: #1f2933;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+a {
+  color: #1e6488;
+  text-decoration: none;
+}
+a:hover {
+  color: #287faa;
+}
+button,
+input,
+select {
+  font-family: inherit;
+}
+button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.hov-primary:hover:not(:disabled) {
+  background: #3d9bd0 !important;
+}
+.hov-dark:hover:not(:disabled) {
+  background: #163350 !important;
+}
+.hov-ghost:hover:not(:disabled) {
+  border-color: #002040 !important;
+}
+.hov-light:hover:not(:disabled) {
+  background: #dceaf4 !important;
+}
+.side-btn:hover {
+  background: #163350 !important;
+}
+.add-btn:hover {
+  background: #287faa !important;
+  color: #fff !important;
+  border-color: #287faa !important;
+}
+.row-hover:hover {
+  background: #fafbfc !important;
+}
+.cell-empty:hover:not(:disabled) {
+  border-color: #287faa !important;
+}
+.icon-btn:hover {
+  background: #eaf2f8 !important;
+  color: #1e6488 !important;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 900px) {
+  input,
+  select {
+    font-size: 16px !important;
+  } /* iOS: ne zoomoljon be fókuszkor */
+}

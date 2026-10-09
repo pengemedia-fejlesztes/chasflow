@@ -1,0 +1,34 @@
+# Cloudflare Worker konfiguráció – Cashflow tervező
+name = "cashflow-tervezo"
+main = "worker/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# A buildelt webes felület (Vite → dist/). Az /api/* kéréseket a Worker kezeli,
+# minden mást a statikus fájlok (SPA fallback-kel).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# D1 adatbázis. A database_id-t az első `wrangler d1 create cashflow` után
+# kell ide beírni (lásd README).
+[[d1_databases]]
+binding = "DB"
+database_name = "cashflow"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# Óránkénti automatikus szinkron (Billingo + bankok)
+[triggers]
+crons = ["17 * * * *"]
+
+[observability]
+enabled = true
+
+# Titkok (NEM a repóban!):  wrangler secret put <NÉV>
+#   SETUP_TOKEN        – az első admin felhasználó létrehozásához
+#   BILLINGO_API_KEY   – Billingo v3 API kulcs
+#   EB_APP_ID          – Enable Banking alkalmazás azonosító (PSD2 bankkapcsolat)
+#   EB_PRIVATE_KEY     – Enable Banking alkalmazás privát kulcs (PEM, PKCS#8)
