@@ -109,6 +109,37 @@ async function contactEmail(env: Env): Promise<string> {
   return r?.email || 'info@example.hu';
 }
 
+/** POST a NAV-nak; átmeneti hálózati hibánál egyszer újrapróbálja, és érthető hibaüzenetet ad. */
+async function navPost(env: Env, body: string): Promise<string> {
+  let last = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch((env.NAV_API_URL || BASE) + '/queryInvoiceDigest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/xml', Accept: 'application/xml', 'User-Agent': 'CashflowTervezo/1.0 (+360 Marketing)' },
+        body,
+      });
+    } catch (e: any) {
+      last = `NAV hiba: nem sikerült kapcsolódni (${e?.message || 'hálózati hiba'})`;
+      continue;
+    }
+    const text = await res.text();
+    if (res.ok || text.includes('funcCode')) return text;
+    const snippet = text
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+    last =
+      res.status >= 520 && res.status <= 530
+        ? `NAV hiba: HTTP ${res.status} – a Cloudflare nem tudott kapcsolódni a NAV szerveréhez${snippet ? ` (${snippet})` : ''}`
+        : `NAV hiba: HTTP ${res.status}${snippet ? ` – ${snippet}` : ''}`;
+    if (res.status < 500) break;
+  }
+  throw new Error(last);
+}
+
 async function fetchDigests(env: Env, from: string, to: string): Promise<NavDigest[]> {
   const contact = await contactEmail(env);
   const out: NavDigest[] = [];
@@ -117,13 +148,8 @@ async function fetchDigests(env: Env, from: string, to: string): Promise<NavDige
     for (let page = 1; page <= 50; page++) {
       const requestId = ('RID' + randomId().replace(/[^A-Za-z0-9]/g, '')).slice(0, 30);
       const timestamp = new Date().toISOString().replace(/\.\d+Z$/, '.000Z');
-      const res = await fetch((env.NAV_API_URL || BASE) + '/queryInvoiceDigest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/xml', Accept: 'application/xml' },
-        body: digestRequestXml(env, { requestId, timestamp, page, from: start, to: end, contact }),
-      });
-      const text = await res.text();
-      if (!res.ok && !text.includes('funcCode')) throw new Error(`NAV hiba: HTTP ${res.status}`);
+      const body = digestRequestXml(env, { requestId, timestamp, page, from: start, to: end, contact });
+      const text = await navPost(env, body);
       const r = parseDigestResponse(text);
       out.push(...r.items);
       if (page >= r.pages) break;

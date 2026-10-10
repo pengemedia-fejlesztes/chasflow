@@ -375,7 +375,9 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (Cloudflare titkok: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
     const b = await readJson<{ from?: string }>(req).catch(() => ({}) as { from?: string });
     const from = b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from) ? b.from : undefined;
-    const r = await syncNav(env, { from });
+    const r = await syncNav(env, { from }).catch((e: any) => {
+      throw new HttpError(502, String(e?.message || e));
+    });
     await audit(env, u.id, 'nav_sync', r);
     return json(r);
   }
