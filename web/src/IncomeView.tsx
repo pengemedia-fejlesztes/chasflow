@@ -15,7 +15,7 @@ const BSTATUS: Record<string, [string, string]> = {
   none: ['fizetési státusz nélkül', C.muted],
 };
 
-export function IncomeView({ mobile }: { mobile?: boolean }) {
+export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
   const { ix, data, filters, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
   const horizon = endOfMonth(filters.to > ix.cur ? filters.to : addMonths(ix.cur, 3));
@@ -95,7 +95,9 @@ export function IncomeView({ mobile }: { mobile?: boolean }) {
               return (
                 <div
                   key={e.id}
+                  onClick={() => onOpen?.(e)}
                   style={{
+                    cursor: onOpen ? 'pointer' : undefined,
                     display: 'flex',
                     flexWrap: 'wrap',
                     alignItems: 'center',
@@ -150,7 +152,7 @@ export function IncomeView({ mobile }: { mobile?: boolean }) {
                     {fmt(e.amount)} Ft
                   </span>
                   {canEdit && (
-                    <span style={{ display: 'flex', gap: 6 }}>
+                    <span style={{ display: 'flex', gap: 6 }} onClick={(ev) => ev.stopPropagation()}>
                       <Pill small kind="light" onClick={() => commit(shiftEntries(data, [e.id], 1), `${e.name} → +1 hónap`)}>
                         +1 hó
                       </Pill>

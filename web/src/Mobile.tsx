@@ -55,18 +55,28 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
     const est = filters.estimate ? buildEstimates(ix, to > ix.cur ? to : ix.cur) : new Map();
     const proj = projection(ix, filters, to > ix.cur ? to : ix.cur, est);
     const net = new Map<string, number>();
+    const inc = new Map<string, number>();
     months.forEach((ym) => {
-      let n = 0;
-      if (ym < ix.cur) for (const [, mm] of ix.actual) n += mm.get(ym) || 0;
+      let n = 0,
+        i = 0;
+      const add = (map: Map<string, Map<string, number>>) => {
+        for (const [leaf, mm] of map) {
+          const v = mm.get(ym) || 0;
+          n += v;
+          if (ix.sectionOf(leaf) === 'in') i += v;
+        }
+      };
+      if (ym < ix.cur) add(ix.actual);
       else {
-        for (const [, mm] of ym === ix.cur ? ix.actual : new Map()) n += mm.get(ym) || 0;
-        for (const [, mm] of ix.openPlan) n += mm.get(ym) || 0;
-        if (filters.includeOffers) for (const [, mm] of ix.offer) n += mm.get(ym) || 0;
-        if (filters.estimate && ym > ix.cur) for (const [, mm] of est) n += mm.get(ym) || 0;
+        if (ym === ix.cur) add(ix.actual);
+        add(ix.openPlan);
+        if (filters.includeOffers) add(ix.offer);
+        if (filters.estimate && ym > ix.cur) add(est);
       }
       net.set(ym, n);
+      inc.set(ym, i);
     });
-    return { bal: new Map(months.map((ym) => [ym, ym < ix.cur ? actualBalanceAt(ix, ym) : (proj.get(ym) ?? ix.anchor)])), net };
+    return { bal: new Map(months.map((ym) => [ym, ym < ix.cur ? actualBalanceAt(ix, ym) : (proj.get(ym) ?? ix.anchor)])), net, inc };
   }, [ix, filters, months]);
 
   const inM = (e: Entry) => ymOf(e.date) === m;
@@ -93,29 +103,29 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
     .filter((x) => x.groups.length);
 
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
-  const maxV = Math.max(...months.map((ym) => Math.abs(balances.bal.get(ym) || 0)), 1);
+  const maxNet = Math.max(...months.map((ym) => Math.abs(balances.net.get(ym) || 0)), 1);
+  /** havi eredmény a bevétel %-ában (null, ha nincs bevétel) */
+  const margin = (ym: string) => {
+    const i = balances.inc.get(ym) || 0;
+    return i > 0 ? Math.round(((balances.net.get(ym) || 0) / i) * 100) : null;
+  };
   const G = ix.groupById[catId];
   const gIds = new Set(ix.leaves.filter((l) => l.group_id === catId).map((l) => l.id));
   const [rowFilter, setRowFilter] = useRowFilter();
-  const allRows = useMemo(() => monthRows(data.entries, m, gIds, data.today), [data.entries, m, catId, data.today]);
+  // a kategória tételei + az azonos oldal (bevétel / kiadás) többi kategóriájában lévő ajánlatok (pl. „Ajánlatok” csoport ügyfelei)
+  const allRows = useMemo(() => {
+    const own = monthRows(data.entries, m, gIds, data.today);
+    const sec = G?.section;
+    const others = new Set(ix.leaves.filter((l) => !gIds.has(l.id) && ix.sectionOf(l.id) === sec).map((l) => l.id));
+    const offers = monthRows(data.entries, m, others, data.today).filter((r) => r.kind === 'offer');
+    return [...own, ...offers].sort((a, b) => a.date.localeCompare(b.date));
+  }, [data.entries, m, catId, data.today, ix]);
   const rows = allRows.filter((r) => rowVisible(r, rowFilter));
   const rowCounts = {
     actual: allRows.filter((r) => r.completed).length,
     plan: allRows.filter((r) => !r.completed && r.kind === 'plan').length,
     offer: allRows.filter((r) => r.kind === 'offer').length,
   };
-  const openItem = (e: Entry) =>
-    setSheet({
-      kind: 'item',
-      id: e.id,
-      amount: String(Math.abs(e.amount)),
-      date: e.date,
-      name: e.name,
-      leaf: e.leaf_id,
-      section: ix.sectionOf(e.leaf_id),
-      pick: false,
-      all: false,
-    });
   const openDetail = (r: MonthRow) => setSheet({ kind: 'detail', planId: r.plan?.id ?? null, actualId: r.actual?.id ?? null });
   const gSign = G?.section === 'in' ? 1 : -1;
   const catDeleted = (data.deleted || []).filter((d) => inM(d) && gIds.has(d.leaf_id));
@@ -174,41 +184,62 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   {fmt(balances.bal.get(m) || 0)} <small style={{ font: `600 16px ${FONT}`, color: C.muted2 }}>Ft</small>
                 </span>
                 <span style={{ font: `500 13px ${FONT}`, color: C.muted2 }}>
-                  Havi cashflow:{' '}
-                  <b style={{ color: (balances.net.get(m) || 0) < 0 ? C.negLight : C.blue2 }}>
+                  Havi eredmény:{' '}
+                  <b style={{ color: (balances.net.get(m) || 0) < 0 ? '#FF8A7A' : '#4CC38A' }}>
                     {(balances.net.get(m) || 0) > 0 ? '+' : ''}
                     {fmt(balances.net.get(m) || 0)} Ft
                   </b>
+                  {margin(m) !== null && (
+                    <b style={{ color: (balances.net.get(m) || 0) < 0 ? '#FF8A7A' : '#4CC38A' }}>
+                      {' '}
+                      ({(margin(m) || 0) > 0 ? '+' : ''}
+                      {margin(m)}% a bevételhez)
+                    </b>
+                  )}
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 80, overflowX: 'auto', scrollbarWidth: 'none' }}>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'stretch', height: 128, overflowX: 'auto', scrollbarWidth: 'none' }}>
                 {months.map((ym) => {
-                  const v = balances.bal.get(ym) || 0;
+                  // havi eredmény (bevétel − kiadás): zöld plusz, piros mínusz; alatta az eredmény a bevétel %-ában
+                  const v = balances.net.get(ym) || 0;
+                  const pc = margin(ym);
+                  const h = Math.max(v ? 4 : 0, Math.round((Math.abs(v) / maxNet) * 44));
+                  const col = v >= 0 ? '#4CC38A' : '#FF8A7A';
                   return (
                     <button
                       key={ym}
                       onClick={() => setM(ym)}
                       style={{
-                        flex: `1 0 ${months.length > 10 ? 30 : 0}px`,
+                        flex: `1 0 ${months.length > 10 ? 34 : 0}px`,
                         height: '100%',
                         border: 0,
-                        background: 'transparent',
-                        padding: 0,
+                        borderRadius: 8,
+                        background: ym === m ? 'rgba(255,255,255,.08)' : 'transparent',
+                        padding: '2px 0',
                         display: 'flex',
                         flexDirection: 'column',
-                        justifyContent: 'flex-end',
                         alignItems: 'center',
-                        gap: 5,
+                        gap: 3,
                       }}
                     >
-                      <div
-                        style={{
-                          width: '100%',
-                          height: `${Math.max(6, Math.round((Math.abs(v) / maxV) * 72))}%`,
-                          borderRadius: '6px 6px 2px 2px',
-                          background: v < 0 ? C.neg : ym === m ? C.blue2 : ym < ix.cur ? '#2C5578' : C.navy3,
-                        }}
-                      />
+                      <div style={{ position: 'relative', width: '100%', flex: 1 }}>
+                        <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', borderTop: '1px solid rgba(255,255,255,.18)' }} />
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '18%',
+                            right: '18%',
+                            height: h,
+                            top: v >= 0 ? `calc(50% - ${h}px)` : '50%',
+                            borderRadius: v >= 0 ? '4px 4px 0 0' : '0 0 4px 4px',
+                            background: col,
+                            opacity: ym > ix.cur ? 0.55 : 1,
+                          }}
+                        />
+                      </div>
+                      <span style={{ font: `700 9.5px ${FONT}`, color: pc === null ? C.muted2 : col, whiteSpace: 'nowrap' }}>
+                        {pc === null ? '–' : `${pc > 0 ? '+' : ''}${pc}%`}
+                      </span>
                       <span style={{ font: `600 10.5px ${FONT}`, color: ym === m ? '#fff' : C.muted2 }}>{monthLabel(ym).replace('.', '')}</span>
                     </button>
                   );
@@ -481,7 +512,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 selMode={selMode}
                 sel={sel}
                 setSel={setSel}
-                onOpenPlan={openItem}
+                onOpenPlan={(e) => setSheet({ kind: 'detail', planId: e.id, actualId: null })}
                 onDetail={openDetail}
                 onToggleDone={(e) => commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓')}
                 onPartner={openPartner}
@@ -553,7 +584,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         {tab === 'income' && (
           <>
             <MobileHeader title="Tervezett bevétel" sub="Billingo számlák" onBack={() => setTab('home')} />
-            <IncomeView mobile />
+            <IncomeView
+              mobile
+              onOpen={(e) => setSheet({ kind: 'detail', planId: e.kind === 'plan' ? e.id : null, actualId: e.kind === 'actual' ? e.id : null })}
+            />
           </>
         )}
         {tab === 'bank' && (
@@ -1126,6 +1160,7 @@ function SheetView({
       const diff = plan && actual ? (actual.amount - plan.amount) * sign : 0;
       const dev = plan && actual ? isDeviation(actual.amount, plan.amount) : false;
       const days = plan && actual ? daysBetween(plan.date, actual.date) : null;
+      const openDays = plan && !plan.done && !actual ? daysBetween(plan.date, data.today) : null;
       const avg = avgDelay(data.entries, base.leaf_id);
       const doc = billingoDocFor(data.billingo, data.bankTx, plan, actual, ix.leafById[base.leaf_id]?.label);
       const tx = actual?.ext_ref?.startsWith('bank:') ? data.bankTx.find((t) => t.id === actual.ext_ref!.slice(5)) : undefined;
@@ -1153,7 +1188,17 @@ function SheetView({
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
-              {plan && actual ? 'Teljesült terv' : actual ? 'Tény (terv nélkül)' : 'Késznek jelölt terv'}
+              {plan && actual
+                ? 'Teljesült terv'
+                : actual
+                  ? 'Tény (terv nélkül)'
+                  : plan?.done
+                    ? 'Késznek jelölt terv'
+                    : plan?.tentative
+                      ? 'Ajánlat (nyitott)'
+                      : plan?.source === 'billingo'
+                        ? 'Billingo számla (nyitott)'
+                        : 'Nyitott terv'}
             </span>
             <span style={{ font: `700 19px ${FONT_H}`, color: C.navy }}>{plan?.name || actual?.name || ix.leafById[base.leaf_id]?.label}</span>
             <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
@@ -1171,12 +1216,22 @@ function SheetView({
             {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–')}
             {cell('Tény', actual ? `${fmt(actual.amount * sign)} Ft` : '–', dev ? C.neg : C.blueDark)}
             {cell('Tervezett dátum', plan ? dd(plan.date) : '–')}
-            {cell('Teljesült', actual ? dd(actual.date) : plan?.done ? 'késznek jelölve' : '–')}
+            {cell('Teljesült', actual ? dd(actual.date) : plan?.done ? 'késznek jelölve' : 'még nyitott', !actual && plan && !plan.done ? C.muted : undefined)}
             {cell('Különbség', plan && actual ? `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmt(Math.abs(diff))} Ft` : '–', dev ? C.neg : undefined)}
             {cell(
               'Eltérés napokban',
-              days === null ? '–' : days === 0 ? 'pontosan' : `${Math.abs(days)} nap ${days > 0 ? 'késés' : 'korábban'}`,
-              days !== null && days > 0 ? C.neg : undefined,
+              days !== null
+                ? days === 0
+                  ? 'pontosan'
+                  : `${Math.abs(days)} nap ${days > 0 ? 'késés' : 'korábban'}`
+                : openDays === null
+                  ? '–'
+                  : openDays > 0
+                    ? `${openDays} napja lejárt`
+                    : openDays === 0
+                      ? 'ma esedékes'
+                      : `${-openDays} nap múlva`,
+              (days !== null && days > 0) || (openDays !== null && openDays > 0) ? C.neg : undefined,
             )}
           </div>
           {avg && (
@@ -1202,12 +1257,19 @@ function SheetView({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <button
                 onClick={() => {
-                  commit(markDone(data, [plan.id], false), 'Terv újra nyitott');
+                  commit(markDone(data, [plan.id], !plan.done), plan.done ? 'Terv újra nyitott' : 'Kész ✓');
                   close();
                 }}
-                style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: 999, background: '#fff', font: `600 14px ${FONT}`, color: C.navy }}
+                style={{
+                  height: 46,
+                  border: `1.5px solid ${plan.done ? C.line2 : C.blue}`,
+                  borderRadius: 999,
+                  background: plan.done ? '#fff' : C.blue,
+                  font: `600 14px ${FONT}`,
+                  color: plan.done ? C.navy : '#fff',
+                }}
               >
-                Visszaállítás nyitottra
+                {plan.done ? 'Visszaállítás nyitottra' : '✓ Késznek jelöl'}
               </button>
               <button
                 onClick={() =>
@@ -1226,7 +1288,7 @@ function SheetView({
                 }
                 style={{ height: 46, border: 0, borderRadius: 999, background: C.navy, font: `600 14px ${FONT}`, color: '#fff' }}
               >
-                Terv szerkesztése
+                {plan.done ? 'Terv szerkesztése' : 'Szerkesztés'}
               </button>
             </div>
           )}
