@@ -75,12 +75,17 @@ export function FilterBar({ compact }: { compact?: boolean }) {
           ['out', 'Kiadás'],
         ]}
       />
-      {toggle(f.estimate, 'Becslés', () => setFilters({ estimate: !f.estimate }), 'Ahol nincs terv: az elmúlt 6 hónapból legalább 5-ször előforduló tételek átlaga')}
+      {toggle(
+        f.estimate,
+        'Becslés',
+        () => setFilters({ estimate: !f.estimate }),
+        'Ahol nincs terv: az elmúlt 6 hónapból legalább 5-ször előforduló tételek átlaga',
+      )}
       {toggle(f.includeOffers, 'Ajánlatok', () => setFilters({ includeOffers: !f.includeOffers }), 'A még el nem fogadott ajánlatok beszámítása')}
       {compact && (
         <span style={{ flex: '1 1 100%', font: `400 12.5px/1.45 ${FONT}`, color: C.muted }}>
-          <b>Becslés</b>: ahol nincs terv, azok a tételek, amelyek az elmúlt 6 hónapból legalább 5-ször előfordultak (pl. havidíjak, bérek), az átlagos havi összegükkel, a kiválasztott időszak végéig. <b>Ajánlatok</b>: a
-          tárgyalás alatt álló, még bizonytalan üzletek is beszámítanak, mintha megvalósulnának.
+          <b>Becslés</b>: ahol nincs terv, azok a tételek, amelyek az elmúlt 6 hónapból legalább 5-ször előfordultak (pl. havidíjak, bérek), az átlagos havi
+          összegükkel, a kiválasztott időszak végéig. <b>Ajánlatok</b>: a tárgyalás alatt álló, még bizonytalan üzletek is beszámítanak, mintha megvalósulnának.
         </span>
       )}
       <input

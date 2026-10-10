@@ -1,5 +1,5 @@
 // Statisztikák központ: csoportosított lista (Beállítások → Statisztikák), egy kattintással a részletes nézet.
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import {
   concentration,
@@ -62,6 +62,37 @@ export function StatsHub({
   const [tInput, setTInput] = useState(data.settings.profit_target || '');
   const [open, setOpen] = useState<StatId | null>(partnerKey ? 'partners' : initial || null);
   useBack(!!open && !partnerKey, () => setOpen(null));
+  // görgetés: megnyitáskor a statisztika tetejére, visszalépéskor oda, ahol a listában voltál
+  const rootRef = useRef<HTMLDivElement>(null);
+  const saved = useRef<number | null>(null);
+  const scroller = (): { get: () => number; set: (v: number) => void } => {
+    let el = rootRef.current?.parentElement || null;
+    while (el) {
+      const oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+        const e = el;
+        return { get: () => e.scrollTop, set: (v) => (e.scrollTop = v) };
+      }
+      el = el.parentElement;
+    }
+    return { get: () => window.scrollY, set: (v) => window.scrollTo(0, v) };
+  };
+  const go = (id: StatId) => {
+    saved.current = scroller().get();
+    setOpen(id);
+  };
+  useLayoutEffect(() => {
+    if (open) {
+      const top = rootRef.current ? rootRef.current.getBoundingClientRect().top + window.scrollY - 70 : 0;
+      const sc = scroller();
+      sc.set(Math.min(sc.get(), Math.max(0, top)));
+    } else if (saved.current !== null) {
+      const v = saved.current;
+      saved.current = null;
+      requestAnimationFrame(() => scroller().set(v));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const partners = usePartners();
   const liq = useMemo(() => liquidity(ix), [ix]);
   const trend = useMemo(() => revenueTrend(ix, 24), [ix]);
@@ -74,7 +105,7 @@ export function StatsHub({
   const offers = useMemo(() => offerConversion(data.entries, data.lostOffers || [], data.today), [data.entries, data.lostOffers, data.today]);
   const taxMonths = monthRange(addMonths(ix.cur, 1), addMonths(ix.cur, 6));
   const tax = useMemo(() => taxForecast(ix, buildEstimates(ix, addMonths(ix.cur, 7)), taxMonths), [ix, taxMonths.join()]);
-  const season = useMemo(() => seasonality(ix), [ix]);
+  const season = useMemo(() => seasonality(ix, buildEstimates(ix, addMonths(ix.cur, 12))), [ix]);
   const weakest = [...season.rows].sort((a, b) => a.index - b.index)[0];
   const nextTax = tax.rows.reduce((s, r) => s + (r.forecast[0]?.est || 0), 0);
   const discipline = partners.filter((p) => p.avgLate !== null).sort((a, b) => (b.avgLate || 0) - (a.avgLate || 0));
@@ -181,7 +212,7 @@ export function StatsHub({
   if (open) {
     const card_ = groupsList.flatMap((g) => g.cards).find((c) => c.id === open)!;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {!partnerKey && (
           <button
             onClick={() => setOpen(null)}
@@ -395,31 +426,71 @@ export function StatsHub({
         )}
         {open === 'season' && (
           <>
-            <DivergingBars
-              title={`Átlagos havi bevétel naptári hónaponként (${season.from.slice(0, 4)} óta)`}
-              markerLabel="éves átlag"
-              labelOf={(ym) => MSL[Number(ym.slice(5)) - 1]}
-              points={season.rows.map((r) => ({
-                ym: `2000-${String(r.m).padStart(2, '0')}`,
-                v: Math.round(r.inc),
-                plan: Math.round(season.avgInc),
-                note: `${r.index}% · ${r.years} év adata`,
-              }))}
-            />
-            <div style={{ ...card, padding: '10px 14px' }}>
-              {season.rows.map((r) => (
-                <div key={r.m} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
-                  <span style={{ width: 90, font: `600 13.5px ${FONT}`, color: C.ink }}>{MSL[r.m - 1]}</span>
-                  <span style={{ flex: 1, font: `500 12.5px ${FONT}`, color: C.muted }}>
-                    bevétel {fmt(r.inc)} · kiadás {fmt(r.out)}
-                  </span>
-                  <b style={{ font: `700 13px ${FONT}`, minWidth: 48, textAlign: 'right', color: r.index < 85 ? C.neg : r.index > 115 ? '#1A7340' : C.navy }}>
-                    {r.index}%
-                  </b>
-                </div>
-              ))}
+            <Note>
+              Naptári hónaponként a bevétel: <b>átlag</b> {season.from.slice(0, 4)} óta (minden elérhető év), az <b>elmúlt év</b> ténye és a <b>következő év</b>{' '}
+              becslése (tény + terv + becslés). A szám az oszlopon, a % az átlag az éves havi átlaghoz képest.
+            </Note>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', font: `500 12px ${FONT}`, color: C.muted }}>
+              <span>
+                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: 2, background: C.muted2, marginRight: 5, verticalAlign: -1 }} />
+                átlag
+              </span>
+              <span>
+                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: 2, background: C.blue, marginRight: 5, verticalAlign: -1 }} />
+                elmúlt év (tény)
+              </span>
+              <span>
+                <i
+                  style={{
+                    display: 'inline-block',
+                    width: 12,
+                    height: 10,
+                    borderRadius: 2,
+                    border: `1.5px dashed ${C.navy}`,
+                    marginRight: 5,
+                    verticalAlign: -2,
+                  }}
+                />
+                következő év (becslés)
+              </span>
             </div>
-            <Note>100% = az éves havi átlag. 85% alatt gyenge, 115% fölött erős hónap. Érdemes a gyenge hónapokra tartalékot tervezni.</Note>
+            <div style={{ ...card, padding: '6px 14px 10px' }}>
+              {(() => {
+                const max = Math.max(1, ...season.rows.flatMap((r) => [r.inc, r.last, r.next]));
+                const bar = (v: number, kind: 'avg' | 'last' | 'next', label: string) => (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 62, flex: 'none', font: `500 10.5px ${FONT}`, color: C.muted, whiteSpace: 'nowrap' }}>{label}</span>
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div
+                        style={{
+                          width: `${Math.max(v ? 2 : 0, (v / max) * 100)}%`,
+                          height: 12,
+                          borderRadius: '0 4px 4px 0',
+                          background: kind === 'avg' ? C.muted2 : kind === 'last' ? C.blue : 'transparent',
+                          border: kind === 'next' ? `1.5px dashed ${C.navy}` : 0,
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      <b style={{ font: `700 11.5px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{fmtM(v)}</b>
+                    </div>
+                  </div>
+                );
+                return season.rows.map((r) => (
+                  <div key={r.m} style={{ padding: '8px 0', borderTop: `1px solid ${C.line3}`, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <b style={{ flex: 1, font: `700 13.5px ${FONT}`, color: C.navy }}>{MSL[r.m - 1]}</b>
+                      <b style={{ font: `700 12.5px ${FONT}`, color: r.index < 85 ? C.neg : r.index > 115 ? '#1A7340' : C.muted }}>
+                        {r.index}% {r.index < 85 ? '· gyenge' : r.index > 115 ? '· erős' : ''}
+                      </b>
+                    </div>
+                    {bar(r.inc, 'avg', `átlag (${r.years} év)`)}
+                    {bar(r.last, 'last', r.lastYm.slice(0, 4) + '.')}
+                    {bar(r.next, 'next', r.nextYm.slice(0, 4) + '. bec.')}
+                  </div>
+                ));
+              })()}
+            </div>
+            <Note>85% alatt gyenge, 115% fölött erős hónap. Érdemes a gyenge hónapokra tartalékot vagy több ajánlatot tervezni.</Note>
           </>
         )}
         {open === 'offers' && (
@@ -525,7 +596,7 @@ export function StatsHub({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
         Adatok: {monthLong(ix.cur)} · banki egyenleg és tények alapján. Koppints egy statisztikára a részletekért.
       </span>
@@ -536,7 +607,7 @@ export function StatsHub({
             {g.cards.map((c) => (
               <button
                 key={c.id}
-                onClick={() => setOpen(c.id)}
+                onClick={() => go(c.id)}
                 style={{ ...card, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: 'pointer' }}
               >
                 <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>

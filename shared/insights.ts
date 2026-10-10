@@ -172,8 +172,11 @@ export function taxForecast(ix: Index, est: Map<string, Map<string, number>>, mo
 }
 
 // ───────────── Szezonalitás ─────────────
-/** Naptári hónaponkénti átlagos bevétel, kiadás, eredmény a teljes lezárt időszakból; index: 100 = éves havi átlag. */
-export function seasonality(ix: Index) {
+/**
+ * Naptári hónaponként: átlagos bevétel a teljes lezárt időszakból (az első ténytől), az elmúlt 12 hónap ténye
+ * és a következő 12 hónap becslése (tény + nyitott terv + becslés). Index: 100 = éves havi átlag.
+ */
+export function seasonality(ix: Index, est: Map<string, Map<string, number>> = new Map()) {
   const first = (ix.firstActual || ix.cur).slice(0, 7);
   const all = monthRange(first, addMonths(ix.cur, -1));
   const by = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, inc: 0, out: 0, n: 0 }));
@@ -185,7 +188,28 @@ export function seasonality(ix: Index) {
     b.out += outs[i].v;
     b.n++;
   });
-  const rows = by.map((b) => ({ m: b.m, inc: b.n ? b.inc / b.n : 0, out: b.n ? b.out / b.n : 0, net: b.n ? (b.inc - b.out) / b.n : 0, years: b.n }));
+  const incOf = (ym: string, withPlan: boolean) => {
+    let v = 0;
+    for (const [leaf, mm] of ix.actual) if (ix.sectionOf(leaf) === 'in') v += mm.get(ym) || 0;
+    if (withPlan) {
+      for (const [leaf, mm] of ix.openPlan) if (ix.sectionOf(leaf) === 'in') v += mm.get(ym) || 0;
+      for (const [leaf, mm] of est) if (ix.sectionOf(leaf) === 'in') v += mm.get(ym) || 0;
+    }
+    return v;
+  };
+  const lastYm = (m: number) => monthRange(addMonths(ix.cur, -12), addMonths(ix.cur, -1)).find((ym) => Number(ym.slice(5)) === m)!;
+  const nextYm = (m: number) => monthRange(ix.cur, addMonths(ix.cur, 11)).find((ym) => Number(ym.slice(5)) === m)!;
+  const rows = by.map((b) => ({
+    m: b.m,
+    inc: b.n ? b.inc / b.n : 0,
+    out: b.n ? b.out / b.n : 0,
+    net: b.n ? (b.inc - b.out) / b.n : 0,
+    years: b.n,
+    lastYm: lastYm(b.m),
+    last: incOf(lastYm(b.m), false),
+    nextYm: nextYm(b.m),
+    next: incOf(nextYm(b.m), true),
+  }));
   const avgInc = rows.reduce((s, r) => s + r.inc, 0) / 12 || 1;
   return { rows: rows.map((r) => ({ ...r, index: Math.round((r.inc / avgInc) * 100) })), avgInc, from: first };
 }

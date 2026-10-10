@@ -118,7 +118,24 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
            was_offer = MAX(entries.was_offer, excluded.was_offer),
            source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
-      ).bind(e.id, e.kind, e.date, e.leaf_id, e.name, e.amount, e.series_id, e.done, e.tentative, e.tentative || (raw as any).was_offer ? 1 : 0, e.source, e.ext_ref, e.link_id, e.note, t, userId),
+      ).bind(
+        e.id,
+        e.kind,
+        e.date,
+        e.leaf_id,
+        e.name,
+        e.amount,
+        e.series_id,
+        e.done,
+        e.tentative,
+        e.tentative || (raw as any).was_offer ? 1 : 0,
+        e.source,
+        e.ext_ref,
+        e.link_id,
+        e.note,
+        t,
+        userId,
+      ),
     );
   }
   // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek)

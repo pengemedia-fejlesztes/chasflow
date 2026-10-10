@@ -23,7 +23,27 @@ import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
 
 type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
-  | { kind: 'new'; type: Section; amount: string; name: string; leaf: string | null; rep: Rep; count: number; date: string }
+  | {
+      kind: 'new';
+      type: Section;
+      amount: string;
+      name: string;
+      leaf: string | null;
+      rep: Rep;
+      count: number;
+      date: string;
+      /** konstrukció: egyszerű tétel · setup + havidíj · két részlet (pl. weboldal) */
+      mode?: 'simple' | 'setup' | 'parts';
+      tentative?: boolean;
+      setup?: string;
+      monthly?: string;
+      mStart?: string;
+      months?: number;
+      p1?: string;
+      p1d?: string;
+      p2?: string;
+      p2d?: string;
+    }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
   | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean; back?: Sheet }
   | { kind: 'filters' };
@@ -775,6 +795,68 @@ function SheetView({
     };
     const step = f.rep === 'quarterly' ? 3 : 1;
     const n = f.rep === 'once' ? 1 : Math.ceil(f.count / step);
+    const mode = f.type === 'in' ? f.mode || 'simple' : 'simple';
+    // az „Ajánlatok” csoport ügyfelénél alapból ajánlat
+    const offer = f.tentative ?? (!!f.leaf && /aj[aá]nlat/i.test(ix.groupById[ix.leafById[f.leaf]?.group_id]?.label || ''));
+    const num = (v?: string) => parseInt(v || '0') || 0;
+    const money = (v: string | undefined, on: (v: string) => void) => (
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          alignItems: 'center',
+          border: `1.5px solid ${C.line2}`,
+          borderRadius: 12,
+          padding: '0 12px',
+          height: 46,
+        }}
+      >
+        <input
+          value={num(v) ? fmt(num(v)) : ''}
+          onChange={(e) => on(e.target.value.replace(/\D/g, '').slice(0, 11))}
+          inputMode="numeric"
+          placeholder="0"
+          style={{ flex: 1, minWidth: 0, border: 0, outline: 0, font: `700 17px ${FONT_H}`, color: C.navy, background: 'transparent' }}
+        />
+        <span style={{ font: `600 13px ${FONT}`, color: C.muted }}>Ft</span>
+      </div>
+    );
+    const count =
+      mode === 'setup' ? (num(f.setup) ? 1 : 0) + (num(f.monthly) ? f.months || 12 : 0) : mode === 'parts' ? (num(f.p1) ? 1 : 0) + (num(f.p2) ? 1 : 0) : n;
+    const ready = !!f.leaf && (mode === 'simple' ? !!amt : count > 0);
+    const saveComposite = () => {
+      if (!ready || !f.leaf) return;
+      const base = f.name.trim() || ix.leafById[f.leaf].label;
+      const parts: { name: string; amount: number; date: string; rep: Rep; count: number }[] = [];
+      if (mode === 'setup') {
+        if (num(f.setup)) parts.push({ name: `${base} – setup`, amount: num(f.setup), date: f.date, rep: 'once', count: 1 });
+        const ms = f.mStart || f.date;
+        if (num(f.monthly)) parts.push({ name: `${base} – havidíj`, amount: num(f.monthly), date: ms, rep: 'monthly', count: f.months || 12 });
+      } else {
+        if (num(f.p1)) parts.push({ name: `${base} – 1. részlet`, amount: num(f.p1), date: f.p1d || f.date, rep: 'once', count: 1 });
+        if (num(f.p2)) parts.push({ name: `${base} – 2. részlet`, amount: num(f.p2), date: f.p2d || addMonthsDate(f.p1d || f.date, 1), rep: 'once', count: 1 });
+      }
+      const batch = { upsert: [] as Entry[], series: [] as NonNullable<ReturnType<typeof genSeries>['series']> };
+      for (const p of parts) {
+        const b = genSeries({
+          leaf: f.leaf,
+          section: f.type,
+          name: p.name,
+          amount: p.amount,
+          startYm: ymOf(p.date),
+          count: p.count,
+          rep: p.rep,
+          day: Number(p.date.slice(8)),
+          tentative: offer,
+        });
+        batch.upsert.push(...(b.upsert || []));
+        batch.series.push(...(b.series || []));
+      }
+      commit(batch, `${batch.upsert.length} tétel${offer ? ' (ajánlat)' : ''} → ${ix.leafById[f.leaf].label}`);
+      onSaved(ymOf(parts[0].date));
+      close();
+    };
     const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
     const seg = (on: boolean): React.CSSProperties => ({
       flex: 1,
@@ -814,12 +896,47 @@ function SheetView({
             ))}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
-          <span style={{ font: `800 40px ${FONT_H}`, color: amt ? C.navy : C.faint, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums' }}>
-            {amt ? fmt(amt) : '0'}
-          </span>
-          <span style={{ font: `600 16px ${FONT}`, color: C.muted }}>Ft</span>
-        </div>
+        {f.type === 'in' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={lbl}>Konstrukció</span>
+            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+              {(
+                [
+                  ['simple', 'Egy tétel'],
+                  ['setup', 'Setup + havidíj'],
+                  ['parts', '1. + 2. részlet'],
+                ] as ['simple' | 'setup' | 'parts', string][]
+              ).map(([v, l]) => (
+                <button key={v} onClick={() => set({ mode: v })} style={{ ...seg(mode === v), fontSize: 12.5 }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => set({ tentative: !offer })}
+              style={{
+                alignSelf: 'flex-start',
+                height: 36,
+                borderRadius: 999,
+                padding: '0 14px',
+                border: `1.5px solid ${offer ? '#C9A227' : C.line2}`,
+                background: offer ? '#FFF6DE' : '#fff',
+                color: offer ? '#8A6D1C' : C.muted,
+                font: `600 13px ${FONT}`,
+              }}
+            >
+              {offer ? '✓ ' : ''}Ajánlat (még nem biztos)
+            </button>
+          </div>
+        )}
+        {mode === 'simple' && (
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
+            <span style={{ font: `800 40px ${FONT_H}`, color: amt ? C.navy : C.faint, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums' }}>
+              {amt ? fmt(amt) : '0'}
+            </span>
+            <span style={{ font: `600 16px ${FONT}`, color: C.muted }}>Ft</span>
+          </div>
+        )}
         <input
           value={f.name}
           onChange={(e) => set({ name: e.target.value })}
@@ -830,59 +947,107 @@ function SheetView({
           <span style={lbl}>{f.type === 'in' ? 'Ügyfél / kategória' : 'Kategória'}</span>
           <LeafPicker key={f.type} big section={f.type} value={f.leaf} onChange={(id) => set({ leaf: id, date: ruleDateFor(ix, id, f.date, data.today) })} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span style={lbl}>Ütemezés</span>
-          <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
-            {(
-              [
-                ['once', 'Egyszeri'],
-                ['monthly', 'Havi'],
-                ['quarterly', 'Negyedéves'],
-              ] as [Rep, string][]
-            ).map(([v, l]) => (
-              <button key={v} onClick={() => set({ rep: v })} style={seg(f.rep === v)}>
-                {l}
-              </button>
-            ))}
-          </div>
-          {f.rep !== 'once' && (
+        {mode === 'setup' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <span style={lbl}>Egyszeri díj – setup</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {money(f.setup, (v) => set({ setup: v }))}
+              <DateField value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ flex: '0 0 170px' }} />
+            </div>
+            <span style={lbl}>Havidíj</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {money(f.monthly, (v) => set({ monthly: v }))}
+              <DateField value={f.mStart || f.date} min={ix.cur + '-01'} onChange={(v) => set({ mStart: v })} style={{ flex: '0 0 170px' }} />
+            </div>
+            <span style={lbl}>Hány hónapig tart?</span>
             <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
               {[3, 6, 12, 24].map((c) => (
-                <button key={c} onClick={() => set({ count: c })} style={seg(f.count === c)}>
+                <button key={c} onClick={() => set({ months: c })} style={seg((f.months || 12) === c)}>
                   {c} hó
                 </button>
               ))}
             </div>
-          )}
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ ...lbl, minWidth: 92 }}>{f.rep === 'once' ? 'Dátum' : 'Első dátum'}</span>
-          <DateField big value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ flex: 1 }} />
-        </label>
-        <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, marginTop: -6 }}>
-          {ruleOf(ix, f.leaf) ? `Fizetés: ${payRuleLabel(ruleOf(ix, f.leaf))} (szabály) · ` : ''}
-          {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
-        </span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0', '⌫'].map((k) => (
-            <button
-              key={k}
-              onClick={() => press(k)}
-              style={{
-                height: 48,
-                border: 0,
-                borderRadius: 12,
-                background: k === '⌫' || k === '000' ? '#EEF2F7' : C.bg,
-                font: `600 20px ${FONT}`,
-                color: C.navy,
-              }}
-            >
-              {k}
-            </button>
-          ))}
-        </div>
+          </div>
+        )}
+        {mode === 'parts' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <span style={lbl}>1. részlet (pl. előleg)</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {money(f.p1, (v) => set({ p1: v }))}
+              <DateField value={f.p1d || f.date} min={ix.cur + '-01'} onChange={(v) => set({ p1d: v })} style={{ flex: '0 0 170px' }} />
+            </div>
+            <span style={lbl}>2. részlet (pl. átadáskor)</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {money(f.p2, (v) => set({ p2: v }))}
+              <DateField
+                value={f.p2d || addMonthsDate(f.p1d || f.date, 1)}
+                min={ix.cur + '-01'}
+                onChange={(v) => set({ p2d: v })}
+                style={{ flex: '0 0 170px' }}
+              />
+            </div>
+          </div>
+        )}
+        {mode === 'simple' && (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={lbl}>Ütemezés</span>
+              <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+                {(
+                  [
+                    ['once', 'Egyszeri'],
+                    ['monthly', 'Havi'],
+                    ['quarterly', 'Negyedéves'],
+                  ] as [Rep, string][]
+                ).map(([v, l]) => (
+                  <button key={v} onClick={() => set({ rep: v })} style={seg(f.rep === v)}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {f.rep !== 'once' && (
+                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+                  {[3, 6, 12, 24].map((c) => (
+                    <button key={c} onClick={() => set({ count: c })} style={seg(f.count === c)}>
+                      {c} hó
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ ...lbl, minWidth: 92 }}>{f.rep === 'once' ? 'Dátum' : 'Első dátum'}</span>
+              <DateField big value={f.date} min={ix.cur + '-01'} onChange={(v) => set({ date: v })} style={{ flex: 1 }} />
+            </label>
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, marginTop: -6 }}>
+              {ruleOf(ix, f.leaf) ? `Fizetés: ${payRuleLabel(ruleOf(ix, f.leaf))} (szabály) · ` : ''}
+              {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
+            </span>
+          </>
+        )}
+        {mode === 'simple' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0', '⌫'].map((k) => (
+              <button
+                key={k}
+                onClick={() => press(k)}
+                style={{
+                  height: 48,
+                  border: 0,
+                  borderRadius: 12,
+                  background: k === '⌫' || k === '000' ? '#EEF2F7' : C.bg,
+                  font: `600 20px ${FONT}`,
+                  color: C.navy,
+                }}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           onClick={() => {
+            if (mode !== 'simple') return saveComposite();
             if (!amt || !f.leaf) return;
             const name = f.name.trim() || ix.leafById[f.leaf].label;
             const b = genSeries({
@@ -895,14 +1060,15 @@ function SheetView({
               rep: f.rep,
               day: Number(f.date.slice(8)),
               payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
+              tentative: offer,
             });
             commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`);
             onSaved(ymOf(f.date));
             close();
           }}
-          style={{ height: 52, border: 0, borderRadius: 999, background: C.blue, color: '#fff', font: `600 16px ${FONT}`, opacity: amt && f.leaf ? 1 : 0.6 }}
+          style={{ height: 52, border: 0, borderRadius: 999, background: C.blue, color: '#fff', font: `600 16px ${FONT}`, opacity: ready ? 1 : 0.6 }}
         >
-          {!f.leaf ? 'Válassz kategóriát' : !amt ? 'Adj meg összeget' : `Mentés · ${n} tétel`}
+          {!f.leaf ? 'Válassz ügyfelet / kategóriát' : !ready ? 'Adj meg összeget' : `Mentés · ${count} tétel${offer ? ' (ajánlat)' : ''}`}
         </button>
       </>
     );
