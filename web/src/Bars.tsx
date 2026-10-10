@@ -24,12 +24,15 @@ export function DivergingBars({
   height = 150,
   unit = 'Ft',
   markerLabel = 'terv',
+  labelOf,
 }: {
   title: string;
   points: BarPoint[];
   height?: number;
   unit?: string;
   markerLabel?: string;
+  /** a kiválasztott pont fejléc-címkéje (alapból: „2026. 10.”) */
+  labelOf?: (ym: string) => string;
 }) {
   const [hi, setHi] = useState<number | null>(null);
   const max = Math.max(1, ...points.map((p) => Math.max(Math.abs(p.v), Math.abs(p.plan ?? 0))));
@@ -50,7 +53,7 @@ export function DivergingBars({
         <span style={{ font: `600 12.5px ${FONT}`, color: C.ink, fontVariantNumeric: 'tabular-nums' }}>
           {shown ? (
             <>
-              {shown.ym.replace('-', '. ')}.:{' '}
+              {labelOf ? labelOf(shown.ym) : `${shown.ym.replace('-', '. ')}.`}:{' '}
               <b style={{ color: shown.v < 0 ? '#B04A3C' : POS }}>
                 {(shown.v > 0 ? '+' : shown.v < 0 ? '−' : '') + fmt(Math.abs(shown.v))} {unit}
               </b>

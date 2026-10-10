@@ -13,12 +13,12 @@ function cleanPayRule(v: unknown): string | null {
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames] = await env.DB.batch([
+  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
     env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
     env.DB.prepare('SELECT * FROM series'),
     env.DB.prepare(
-      'SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
+      'SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
     ),
     env.DB.prepare(
       'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
@@ -43,6 +43,13 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
        WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
     ),
+    // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
+    env.DB.prepare(
+      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at FROM deleted_entries d
+       WHERE d.tentative = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
+         AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
+       ORDER BY d.deleted_at DESC LIMIT 300`,
+    ),
   ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
@@ -60,6 +67,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     deleted: deleted.results as any,
     monthStats: monthStats.results as any,
     partnerNames: partnerNames.results as any,
+    lostOffers: lostOffers.results as any,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY) },
   };
 }
@@ -103,13 +111,14 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     const e = cleanEntry(raw);
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, date = excluded.date, leaf_id = excluded.leaf_id, name = excluded.name,
            amount = excluded.amount, series_id = excluded.series_id, done = excluded.done, tentative = excluded.tentative,
+           was_offer = MAX(entries.was_offer, excluded.was_offer),
            source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
-      ).bind(e.id, e.kind, e.date, e.leaf_id, e.name, e.amount, e.series_id, e.done, e.tentative, e.source, e.ext_ref, e.link_id, e.note, t, userId),
+      ).bind(e.id, e.kind, e.date, e.leaf_id, e.name, e.amount, e.series_id, e.done, e.tentative, e.tentative || (raw as any).was_offer ? 1 : 0, e.source, e.ext_ref, e.link_id, e.note, t, userId),
     );
   }
   // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek)
@@ -277,7 +286,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (path === '/api/settings' && req.method === 'PUT') {
     requireRole(u, 'admin');
     const b = await readJson<Record<string, unknown>>(req);
-    const allowed = ['opening_balance', 'billingo_leaf_default'];
+    const allowed = ['opening_balance', 'billingo_leaf_default', 'profit_target'];
     for (const k of allowed) if (k in b) await setSetting(env, k, b[k] == null ? null : String(b[k]).slice(0, 200));
     await audit(env, u.id, 'settings', b);
     return json({ ok: true });

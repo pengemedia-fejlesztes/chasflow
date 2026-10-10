@@ -1,8 +1,19 @@
 // Statisztikák központ: csoportosított lista (Beállítások → Statisztikák), egy kattintással a részletes nézet.
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { concentration, costStructure, liquidity, receivablesAging, revenueTrend } from '../../shared/insights';
-import { fmt, fmtM, monthLong } from '../../shared/model';
+import {
+  concentration,
+  costStructure,
+  liquidity,
+  offerConversion,
+  receivablesAging,
+  revenueTrend,
+  seasonality,
+  targetTracking,
+  taxForecast,
+} from '../../shared/insights';
+import { addMonths, buildEstimates, fmt, fmtM, monthLong, monthRange, MSL } from '../../shared/model';
+import { api } from './api';
 import { useBack } from './back';
 import { DivergingBars } from './Bars';
 import { PartnerNames, PartnersView, usePartners } from './PartnersView';
@@ -10,7 +21,20 @@ import { PlanActualView } from './PlanActualView';
 import { useStore } from './store';
 import { C, FONT, FONT_H, card } from './ui';
 
-export type StatId = 'pva' | 'trend' | 'liquidity' | 'aging' | 'partners' | 'concentration' | 'discipline' | 'names' | 'costs';
+export type StatId =
+  | 'target'
+  | 'season'
+  | 'offers'
+  | 'tax'
+  | 'pva'
+  | 'trend'
+  | 'liquidity'
+  | 'aging'
+  | 'partners'
+  | 'concentration'
+  | 'discipline'
+  | 'names'
+  | 'costs';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const dd = (d: string) => d.replace(/-/g, '.') + '.';
@@ -34,7 +58,8 @@ export function StatsHub({
   partnerKey?: string | null;
   onPartnerBack?: () => void;
 }) {
-  const { data, ix } = useStore();
+  const { data, ix, run, isAdmin } = useStore();
+  const [tInput, setTInput] = useState(data.settings.profit_target || '');
   const [open, setOpen] = useState<StatId | null>(partnerKey ? 'partners' : initial || null);
   useBack(!!open && !partnerKey, () => setOpen(null));
   const partners = usePartners();
@@ -43,6 +68,15 @@ export function StatsHub({
   const costs = useMemo(() => costStructure(ix), [ix]);
   const conc = useMemo(() => concentration(partners.map((p) => ({ name: p.name, v: p.sides.in?.last12 || 0 }))), [partners]);
   const aging = useMemo(() => receivablesAging(data.entries, ix.sectionOf, data.today), [data.entries, ix, data.today]);
+  const target = Number(data.settings.profit_target || 0);
+  const tMonths = monthRange(addMonths(ix.cur, -12), ix.cur);
+  const tt = useMemo(() => targetTracking(ix, target, tMonths), [ix, target, tMonths.join()]);
+  const offers = useMemo(() => offerConversion(data.entries, data.lostOffers || [], data.today), [data.entries, data.lostOffers, data.today]);
+  const taxMonths = monthRange(addMonths(ix.cur, 1), addMonths(ix.cur, 6));
+  const tax = useMemo(() => taxForecast(ix, buildEstimates(ix, addMonths(ix.cur, 7)), taxMonths), [ix, taxMonths.join()]);
+  const season = useMemo(() => seasonality(ix), [ix]);
+  const weakest = [...season.rows].sort((a, b) => a.index - b.index)[0];
+  const nextTax = tax.rows.reduce((s, r) => s + (r.forecast[0]?.est || 0), 0);
   const discipline = partners.filter((p) => p.avgLate !== null).sort((a, b) => (b.avgLate || 0) - (a.avgLate || 0));
 
   const groupsList: { title: string; cards: Card[] }[] = [
@@ -50,6 +84,21 @@ export function StatsHub({
       title: 'Eredmény és terv',
       cards: [
         { id: 'pva', title: 'Terv vs. tény', desc: 'Havi bevétel, kiadás, profit – terv, tény, eltérés' },
+        {
+          id: 'target',
+          title: 'Havi eredmény-cél',
+          desc: 'Elérte-e a havi eredmény a célt – riasztással',
+          value: target
+            ? `${tt.filter((t) => !t.forecast && t.ok).length} / ${tt.filter((t) => !t.forecast).length} hónap teljesült`
+            : 'cél még nincs beállítva',
+          red: !!target && tt.some((t) => !t.ok),
+        },
+        {
+          id: 'season',
+          title: 'Szezonalitás',
+          desc: 'Melyik hónap szokott erős vagy gyenge lenni',
+          value: weakest ? `leggyengébb: ${MSL[weakest.m - 1]} (${weakest.index}%)` : undefined,
+        },
         {
           id: 'trend',
           title: 'Bevétel-trend',
@@ -99,6 +148,18 @@ export function StatsHub({
       ],
     },
     {
+      title: 'Értékesítés',
+      cards: [
+        {
+          id: 'offers',
+          title: 'Ajánlatok megvalósulása',
+          desc: 'Hány ajánlatból lett bevétel – megnyert, elveszett, nyitott',
+          value: offers.rate === null ? `${offers.open.length + offers.expired.length} nyitott ajánlat` : `${pct(offers.rate)} megvalósult`,
+          red: offers.expired.length > 0,
+        },
+      ],
+    },
+    {
       title: 'Költségek',
       cards: [
         {
@@ -106,6 +167,12 @@ export function StatsHub({
           title: 'Költségszerkezet',
           desc: 'Mire megy el a pénz – csoportok és tételek, változás az előző évhez',
           value: `${fmtM(costs.total)} / 12 hó`,
+        },
+        {
+          id: 'tax',
+          title: 'ÁFA és adók előrejelzése',
+          desc: 'Várható adók a következő 6 hónapra a bevétel alapján',
+          value: `${monthLong(addMonths(ix.cur, 1)).replace(/^\d+\. /, '')}: ~${fmt(nextTax)} Ft`,
         },
       ],
     },
@@ -150,9 +217,7 @@ export function StatsHub({
               markerLabel="3 havi átlag"
               points={trend.rows.map((r) => ({ ym: r.ym, v: r.v, plan: Math.round(r.ma3) }))}
             />
-            <Note>
-              A vonal a 3 havi mozgóátlag: ha tartósan a vonal alatt vannak az oszlopok, csökken a bevétel. A becslés is ezt a 3 havi átlagot használja.
-            </Note>
+            <Note>A vonal a 3 havi mozgóátlag: ha tartósan a vonal alatt vannak az oszlopok, csökken a bevétel.</Note>
           </>
         )}
         {open === 'liquidity' && (
@@ -257,6 +322,187 @@ export function StatsHub({
               </div>
             ))}
           </div>
+        )}
+        {open === 'target' && (
+          <>
+            <div style={{ ...card, padding: '12px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ flex: '1 1 180px', font: `600 13.5px ${FONT}`, color: C.navy }}>Havi eredmény-cél (bevétel − kiadás)</span>
+              {isAdmin ? (
+                <>
+                  <input
+                    value={tInput ? fmt(Number(String(tInput).replace(/\D/g, '')) * (String(tInput).trim().startsWith('-') ? -1 : 1)) : ''}
+                    onChange={(e) => setTInput(e.target.value.replace(/[^\d-]/g, ''))}
+                    inputMode="numeric"
+                    placeholder="pl. 500 000"
+                    style={{
+                      height: 40,
+                      width: 150,
+                      border: `1.5px solid ${C.line2}`,
+                      borderRadius: 10,
+                      padding: '0 10px',
+                      font: `700 15px ${FONT_H}`,
+                      color: C.navy,
+                    }}
+                  />
+                  <button
+                    onClick={() =>
+                      run(() => api('/api/settings', { method: 'PUT', body: { profit_target: String(parseInt(String(tInput)) || 0) } }), 'Eredmény-cél mentve')
+                    }
+                    style={{
+                      height: 40,
+                      border: 0,
+                      borderRadius: 999,
+                      background: C.navy,
+                      color: '#fff',
+                      padding: '0 16px',
+                      font: `600 14px ${FONT}`,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Mentés
+                  </button>
+                </>
+              ) : (
+                <b style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>{target ? `${fmt(target)} Ft` : 'nincs beállítva'}</b>
+              )}
+            </div>
+            {target ? (
+              <>
+                <DivergingBars
+                  title="Havi eredmény a célhoz képest"
+                  markerLabel="cél"
+                  points={tt.map((t) => ({ ym: t.ym, v: t.net, plan: target, future: t.forecast, note: t.forecast ? 'várható' : undefined }))}
+                />
+                <div style={{ ...card, padding: '10px 14px' }}>
+                  {[...tt].reverse().map((t) => (
+                    <div key={t.ym} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+                      <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>
+                        {monthLong(t.ym)} {t.forecast ? <span style={{ color: C.muted, fontWeight: 500 }}>(várható)</span> : null}
+                      </span>
+                      <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(t.net)}</b>
+                      <b style={{ font: `700 12.5px ${FONT}`, minWidth: 92, textAlign: 'right', color: t.ok ? '#1A7340' : C.neg }}>
+                        {t.ok ? '✓ cél teljesült' : `${fmt(t.gap)}`}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+                <Note>Ha az előző hónap vagy a folyó hónap várható eredménye a cél alatt van, a Riasztások között is megjelenik.</Note>
+              </>
+            ) : (
+              <Note>Add meg a havi eredmény-célt (pl. 500 000 Ft). Utána a program havonta összeveti, és riaszt, ha elmarad tőle.</Note>
+            )}
+          </>
+        )}
+        {open === 'season' && (
+          <>
+            <DivergingBars
+              title={`Átlagos havi bevétel naptári hónaponként (${season.from.slice(0, 4)} óta)`}
+              markerLabel="éves átlag"
+              labelOf={(ym) => MSL[Number(ym.slice(5)) - 1]}
+              points={season.rows.map((r) => ({
+                ym: `2000-${String(r.m).padStart(2, '0')}`,
+                v: Math.round(r.inc),
+                plan: Math.round(season.avgInc),
+                note: `${r.index}% · ${r.years} év adata`,
+              }))}
+            />
+            <div style={{ ...card, padding: '10px 14px' }}>
+              {season.rows.map((r) => (
+                <div key={r.m} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+                  <span style={{ width: 90, font: `600 13.5px ${FONT}`, color: C.ink }}>{MSL[r.m - 1]}</span>
+                  <span style={{ flex: 1, font: `500 12.5px ${FONT}`, color: C.muted }}>
+                    bevétel {fmt(r.inc)} · kiadás {fmt(r.out)}
+                  </span>
+                  <b style={{ font: `700 13px ${FONT}`, minWidth: 48, textAlign: 'right', color: r.index < 85 ? C.neg : r.index > 115 ? '#1A7340' : C.navy }}>
+                    {r.index}%
+                  </b>
+                </div>
+              ))}
+            </div>
+            <Note>100% = az éves havi átlag. 85% alatt gyenge, 115% fölött erős hónap. Érdemes a gyenge hónapokra tartalékot tervezni.</Note>
+          </>
+        )}
+        {open === 'offers' && (
+          <>
+            <Kpis
+              items={[
+                ['Megvalósulási arány', offers.rate === null ? '–' : pct(offers.rate)],
+                ['Megnyert', `${offers.won.length} db · ${fmtM(offers.wonSum)}`],
+                ['Elveszett (törölt)', `${offers.lost.length} db · ${fmtM(offers.lostSum)}`],
+                ['Nyitott', `${offers.open.length + offers.expired.length} db · ${fmtM(offers.openSum)}`],
+              ]}
+            />
+            {[
+              ['30 napnál régebben lejárt – döntsd el: megnyert vagy elveszett?', offers.expired, true],
+              ['Nyitott ajánlatok', offers.open, false],
+              ['Megnyert ajánlatok', offers.won, false],
+            ].map(([title, list, red]) => (
+              <div key={title as string} style={{ ...card, padding: '10px 14px' }}>
+                <b style={{ font: `700 14px ${FONT_H}`, color: red ? C.neg : C.navy }}>
+                  {title as string} ({(list as any[]).length})
+                </b>
+                {(list as any[]).slice(0, 30).map((e: any) => (
+                  <div key={e.id} style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+                    <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, width: 84, flex: 'none' }}>{dd(e.date)}</span>
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        font: `500 13.5px ${FONT}`,
+                        color: C.ink,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {e.name || ix.leafById[e.leaf_id]?.label} <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
+                    </span>
+                    <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(e.amount))}</b>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <Note>
+              <b>Megnyert</b>: ajánlatból biztos terv lett (kivetted belőle az „ajánlat” jelölést) vagy késznek jelölted. <b>Elveszett</b>: a törölt ajánlat. A
+              követés mostantól pontos; a korábbi ajánlatoknál csak a még meglévők számítanak.
+            </Note>
+          </>
+        )}
+        {open === 'tax' && (
+          <>
+            {tax.rows.length === 0 && <Note>Nincs adófizetés az elmúlt 12 hónapban (ÁFA, KIVA, Adó, Járulékok kategóriák).</Note>}
+            {tax.rows.map((r) => (
+              <div key={r.id} style={{ ...card, padding: '10px 14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                  <b style={{ font: `700 14px ${FONT_H}`, color: C.navy }}>{r.label}</b>
+                  <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+                    12 hó: {fmt(r.paid12)} Ft · a bevétel {(r.ratio * 100).toFixed(1).replace('.', ',')}%-a
+                  </span>
+                </div>
+                {r.forecast.map((f) => (
+                  <div key={f.ym} style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+                    <span style={{ flex: 1, font: `500 13px ${FONT}`, color: C.ink }}>{monthLong(f.ym)}</span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>terv: {f.plan ? fmt(f.plan) : '–'}</span>
+                    <b
+                      style={{
+                        font: `700 13.5px ${FONT}`,
+                        minWidth: 90,
+                        textAlign: 'right',
+                        color: f.plan && Math.abs(f.plan - f.est) > Math.max(20000, f.est * 0.25) ? C.neg : C.navy,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      ~{fmt(f.est)}
+                    </b>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <Note>
+              Becslés: az elmúlt 12 hónapban befizetett adó a bevétel arányában × az előző havi (tény, terv és becsült) bevétel. Piros, ha a terv lényegesen
+              eltér a becsléstől – ilyenkor érdemes a tervet ellenőrizni. Pontos ÁFA-hoz a NAV Online Számla bekötése kell.
+            </Note>
+          </>
         )}
         {open === 'costs' && (
           <>

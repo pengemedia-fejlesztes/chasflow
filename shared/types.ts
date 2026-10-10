@@ -40,6 +40,8 @@ export interface Entry {
   series_id: string | null;
   done: number;
   tentative: number;
+  /** 1 = valaha ajánlat volt (megnyert ajánlat követéséhez) */
+  was_offer?: number;
   source: string;
   ext_ref: string | null;
   link_id: string | null;
@@ -105,6 +107,7 @@ export interface Settings {
   billingo_leaf_default?: string;
   bank_last_sync?: string;
   flags_ack?: string; // „rendben” jelölt riasztások (JSON lista)
+  profit_target?: string; // havi eredmény-cél (Ft)
 }
 
 export interface DataBundle {
@@ -125,6 +128,8 @@ export interface DataBundle {
   monthStats?: import('./planactual').MonthStat[];
   /** banki (számlázási) partnernevek kategóriánként */
   partnerNames?: { leaf_id: string; partner: string; n: number; last: string }[];
+  /** törölt (elvesztett) ajánlatok */
+  lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number }[];
 }
 
 export interface DeletedEntry extends Entry {

@@ -1,7 +1,8 @@
 // Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
 import { useMemo } from 'react';
 import { computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
-import { fmt } from '../../shared/model';
+import { addMonths, fmt, monthLong } from '../../shared/model';
+import { targetTracking } from '../../shared/insights';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { useStore } from './store';
@@ -14,8 +15,28 @@ export function useFlags(): Flag[] {
     try {
       ack = JSON.parse(data.settings.flags_ack || '[]');
     } catch {}
-    return computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack);
-  }, [data.entries, data.bankTx, data.settings.flags_ack, data.today, ix]);
+    const flags = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack);
+    // havi eredmény-cél: az előző (lezárt) hónap ténye és a folyó hónap várható eredménye
+    const target = Number(data.settings.profit_target || 0);
+    if (target) {
+      const tf: Flag[] = targetTracking(ix, target, [addMonths(ix.cur, -1), ix.cur])
+        .filter((t) => !t.ok)
+        .map((t) => ({
+          id: `tgt:${t.ym}:${Math.round(t.net / 1000)}`,
+          kind: 'target',
+          section: 'in',
+          date: t.ym + '-01',
+          name: `${monthLong(t.ym)} – ${t.forecast ? 'várható' : 'tény'} eredmény`,
+          leaf_id: '',
+          amount: t.net,
+          plan: target,
+          diff: t.gap,
+          entry_id: '',
+        }));
+      return [...tf.filter((f) => !ack.includes(f.id)), ...flags];
+    }
+    return flags;
+  }, [data.entries, data.bankTx, data.settings.flags_ack, data.settings.profit_target, data.today, ix]);
 }
 
 const ft = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n)) + ' Ft';
@@ -49,6 +70,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
     );
 
   const groups: [FlagKind, string][] = [
+    ['target', 'A havi eredmény (bevétel − kiadás) elmarad a beállított céltól.'],
     ['deviation', 'A tény más összeggel érkezett, mint a terv.'],
     ['unplanned', 'Nem volt rá terv – ellenőrizd, és ha ismétlődik, tervezd be.'],
     ['overdue', 'A terv dátuma elmúlt, de nem érkezett hozzá banki tény.'],
@@ -115,11 +137,19 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                   <div style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{f.name || cat}</span>
                     <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-                      {dot(f.date)} · {cat}
+                      {f.kind === 'target' ? 'havi eredmény-cél (Beállítások → Statisztikák)' : `${dot(f.date)} · ${cat}`}
                       {f.tx ? ` · ${f.tx.partner || f.tx.memo}` : ''}
                     </span>
                   </div>
                   <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {f.kind === 'target' && (
+                      <>
+                        <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{ft(f.diff || 0)}</span>
+                        <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                          cél {fmt(f.plan || 0)} → {fmt(f.amount)}
+                        </span>
+                      </>
+                    )}
                     {f.kind === 'deviation' && (
                       <>
                         <span style={{ font: `700 15px ${FONT}`, color: bad ? C.neg : C.blueDark }}>{ft(f.diff || 0)}</span>
@@ -187,6 +217,7 @@ export function FlagBanner({ n, kinds, onClick, mobile }: { n: number; kinds: st
     cnt('deviation') && `${cnt('deviation')} eltérés a tervtől`,
     cnt('unplanned') && `${cnt('unplanned')} nem tervezett tétel`,
     cnt('overdue') && `${cnt('overdue')} elmaradt terv`,
+    cnt('target') && 'eredmény a cél alatt',
   ].filter(Boolean);
   return (
     <button

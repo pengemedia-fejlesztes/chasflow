@@ -104,3 +104,88 @@ export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => 
   const overdue = buckets.slice(1).reduce((s, b) => s + b.sum, 0);
   return { buckets, overdue };
 }
+
+// ───────────── Havi eredmény-cél ─────────────
+/** Havi eredmény (tény; a folyó hónapban tény + nyitott terv) a célhoz képest. */
+export function targetTracking(ix: Index, target: number, months: string[]) {
+  return months.map((ym) => {
+    let net = 0;
+    for (const [, mm] of ix.actual) net += mm.get(ym) || 0;
+    const forecast = ym >= ix.cur;
+    if (forecast) for (const [, mm] of ix.openPlan) net += mm.get(ym) || 0;
+    return { ym, net, forecast, gap: net - target, ok: net >= target };
+  });
+}
+
+// ───────────── Ajánlatok megvalósulása ─────────────
+export interface OfferStats {
+  won: Entry[];
+  lost: { id: string; name: string; leaf_id: string; amount: number; date: string }[];
+  open: Entry[];
+  expired: Entry[];
+  rate: number | null;
+  wonSum: number;
+  lostSum: number;
+  openSum: number;
+}
+/** Megnyert = valaha ajánlat volt, de már biztos terv / teljesült; elveszett = törölt ajánlat; lejárt = 30 napnál régebbi nyitott ajánlat. */
+export function offerConversion(entries: Entry[], lost: OfferStats['lost'], today: string): OfferStats {
+  const won = entries.filter((e) => e.kind === 'plan' && e.was_offer && (!e.tentative || e.done));
+  const openAll = entries.filter((e) => e.kind === 'plan' && e.tentative && !e.done);
+  const expired = openAll.filter((e) => dayDiff(e.date, today) > 30);
+  const open = openAll.filter((e) => dayDiff(e.date, today) <= 30);
+  const sum = (xs: { amount: number }[]) => xs.reduce((s, e) => s + Math.abs(e.amount), 0);
+  const decided = won.length + lost.length;
+  return { won, lost, open, expired, rate: decided ? won.length / decided : null, wonSum: sum(won), lostSum: sum(lost), openSum: sum(openAll) };
+}
+
+// ───────────── ÁFA / adó előrejelzés ─────────────
+const TAX_KEYS = ['afa', 'kiva', 'ado', 'iparuzesi ado', 'jarulekok', 'szja'];
+const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+/**
+ * Adók: az elmúlt 12 hónapban befizetett adók a bevétel arányában; ezzel az aránnyal becsli a következő hónapok
+ * adóit az előző havi (tervezett + becsült) bevételből. Ahol van adóterv, azt is mutatja összevetésként.
+ */
+export function taxForecast(ix: Index, est: Map<string, Map<string, number>>, months: string[]) {
+  const l12 = monthRange(addMonths(ix.cur, -12), addMonths(ix.cur, -1));
+  const taxLeaves = ix.leaves.filter((l) => ix.sectionOf(l.id) === 'out' && TAX_KEYS.includes(norm(l.label)));
+  const inc12 = monthTotals(ix, l12, 'in').reduce((s, x) => s + x.v, 0);
+  const rows = taxLeaves
+    .map((l) => {
+      const paid12 = -sumMonths(ix.actual.get(l.id), l12);
+      const ratio = inc12 ? paid12 / inc12 : 0;
+      const forecast = months.map((ym) => {
+        // az adó jellemzően a következő hónapban fizetendő → az előző havi bevétel alapján
+        const prev = addMonths(ym, -1);
+        let inc = 0;
+        for (const [leaf, mm] of ix.actual) if (ix.sectionOf(leaf) === 'in') inc += mm.get(prev) || 0;
+        for (const [leaf, mm] of ix.openPlan) if (ix.sectionOf(leaf) === 'in') inc += mm.get(prev) || 0;
+        for (const [leaf, mm] of est) if (ix.sectionOf(leaf) === 'in') inc += mm.get(prev) || 0;
+        const plan = -(ix.openPlan.get(l.id)?.get(ym) || 0);
+        return { ym, est: Math.round(inc * ratio), plan };
+      });
+      return { id: l.id, label: l.label, paid12, ratio, forecast };
+    })
+    .filter((r) => r.paid12 > 0)
+    .sort((a, b) => b.paid12 - a.paid12);
+  return { inc12, rows };
+}
+
+// ───────────── Szezonalitás ─────────────
+/** Naptári hónaponkénti átlagos bevétel, kiadás, eredmény a teljes lezárt időszakból; index: 100 = éves havi átlag. */
+export function seasonality(ix: Index) {
+  const first = (ix.firstActual || ix.cur).slice(0, 7);
+  const all = monthRange(first, addMonths(ix.cur, -1));
+  const by = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, inc: 0, out: 0, n: 0 }));
+  const incs = monthTotals(ix, all, 'in');
+  const outs = monthTotals(ix, all, 'out');
+  all.forEach((ym, i) => {
+    const b = by[Number(ym.slice(5)) - 1];
+    b.inc += incs[i].v;
+    b.out += outs[i].v;
+    b.n++;
+  });
+  const rows = by.map((b) => ({ m: b.m, inc: b.n ? b.inc / b.n : 0, out: b.n ? b.out / b.n : 0, net: b.n ? (b.inc - b.out) / b.n : 0, years: b.n }));
+  const avgInc = rows.reduce((s, r) => s + r.inc, 0) / 12 || 1;
+  return { rows: rows.map((r) => ({ ...r, index: Math.round((r.inc / avgInc) * 100) })), avgInc, from: first };
+}

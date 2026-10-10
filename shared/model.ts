@@ -133,20 +133,20 @@ export const sumMonths = (m: Map<string, number> | undefined, months: string[]) 
 
 // ---------- becslés ----------
 /**
- * Becslés a korábbi tények alapján: az elmúlt 3 lezárt hónap átlaga azokra a kategóriákra,
- * amelyek rendszeresek (a 3 hónapból legalább 2-ben volt mozgás).
- * Csak ott becsül, ahol nincs terv: a kategória utolsó tervezett hónapja utáni hónapokra,
- * a kiválasztott időszak végéig (pl. 8 vagy 12 hónap).
+ * Becslés a korábbi tények alapján: rendszeres az a tétel, amely az elmúlt 6 lezárt hónapból legalább 5-ben előfordult;
+ * a becsült havi összeg ezekben a hónapokban mért átlaga. Csak ott becsül, ahol nincs terv:
+ * a kategória utolsó tervezett hónapja utáni hónapokra, a kiválasztott időszak végéig (pl. 8 vagy 12 hónap).
  */
-export const ESTIMATE_MONTHS = 3;
+export const ESTIMATE_MONTHS = 6;
+export const ESTIMATE_MIN_HITS = 5;
 export function buildEstimates(ix: Index, horizon: string): LeafMonth {
   const est: LeafMonth = new Map();
   const window = monthRange(addMonths(ix.cur, -ESTIMATE_MONTHS), addMonths(ix.cur, -1));
   for (const [leaf, months] of ix.actual) {
     if (ix.leafById[leaf]?.archived) continue;
-    const active = window.filter((ym) => (months.get(ym) || 0) !== 0).length;
-    if (active < 2) continue;
-    const avg = Math.round(sumMonths(months, window) / ESTIMATE_MONTHS);
+    const hits = window.filter((ym) => (months.get(ym) || 0) !== 0);
+    if (hits.length < ESTIMATE_MIN_HITS) continue;
+    const avg = Math.round(sumMonths(months, hits) / hits.length);
     if (!avg) continue;
     const lp = ix.lastPlanMonth[leaf];
     const start = addMonths(lp && lp >= ix.cur ? lp : ix.cur, 1);

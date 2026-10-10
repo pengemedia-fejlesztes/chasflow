@@ -6,7 +6,7 @@
 import type { BankTx, Entry, Section } from './types';
 import { addMonths, ymOf } from './model';
 
-export type FlagKind = 'deviation' | 'unplanned' | 'overdue';
+export type FlagKind = 'target' | 'deviation' | 'unplanned' | 'overdue';
 
 export interface Flag {
   id: string;
@@ -107,11 +107,12 @@ export function computeFlags(entries: Entry[], bankTx: BankTx[], sectionOf: (lea
       });
     }
   }
-  const order: Record<FlagKind, number> = { deviation: 0, unplanned: 1, overdue: 2 };
+  const order: Record<FlagKind, number> = { target: -1, deviation: 0, unplanned: 1, overdue: 2 };
   return out.filter((f) => !acked.has(f.id)).sort((a, b) => order[a.kind] - order[b.kind] || b.date.localeCompare(a.date));
 }
 
 export const FLAG_LABEL: Record<FlagKind, string> = {
+  target: 'Havi eredmény a cél alatt',
   deviation: 'Eltérés a tervtől',
   unplanned: 'Nem tervezett tétel',
   overdue: 'Elmaradt a tervhez képest',

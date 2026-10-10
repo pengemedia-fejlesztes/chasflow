@@ -80,3 +80,37 @@ describe('statisztikák', () => {
     expect(a.overdue).toBe(300);
   });
 });
+
+import { offerConversion, seasonality, targetTracking } from '../shared/insights';
+describe('további statisztikák', () => {
+  it('ajánlatok megvalósulása', () => {
+    const s = offerConversion(
+      [
+        E({ kind: 'plan', was_offer: 1, tentative: 0, amount: 500 }),
+        E({ kind: 'plan', was_offer: 1, tentative: 1, date: '2026-10-20', amount: 300 }),
+        E({ kind: 'plan', was_offer: 1, tentative: 1, date: '2026-06-01', amount: 100 }),
+      ],
+      [{ id: 'x', name: 'Elveszett', leaf_id: 'in', amount: 200, date: '2026-05-01' }],
+      '2026-10-09',
+    );
+    expect(s.rate).toBe(0.5);
+    expect(s.open.length).toBe(1);
+    expect(s.expired.length).toBe(1);
+    expect(s.wonSum).toBe(500);
+  });
+  it('eredmény-cél és szezonalitás', () => {
+    const ix2 = buildIndex({
+      groups,
+      leaves,
+      entries: [E({ date: '2026-09-05', amount: 300 }), E({ date: '2026-08-05', amount: 100 })],
+      accounts: [],
+      settings: {},
+      today: '2026-10-09',
+    });
+    const t = targetTracking(ix2, 200, ['2026-08', '2026-09']);
+    expect(t.map((x) => x.ok)).toEqual([false, true]);
+    const s = seasonality(ix2);
+    expect(s.rows[8].inc).toBe(300);
+    expect(s.rows[8].index).toBeGreaterThan(100);
+  });
+});
