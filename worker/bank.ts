@@ -271,6 +271,27 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
         .first<{ leaf_id: string; amount: number; done: number }>();
       if (!p || p.done || p.leaf_id !== leafId || Math.abs(tx.amount) < Math.abs(p.amount) * 0.3) planId = null;
     }
+    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel)
+    if (tx.amount > 0) {
+      const bp = await env.DB.prepare(
+        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?)) LIMIT 1",
+      )
+        .bind(tx.amount, tx.amount, tx.date, tx.date)
+        .first<{ id: string }>();
+      if (bp) {
+        stmts.push(
+          env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
+            'bank:' + tx.id,
+            tx.date,
+            t,
+            userId,
+            bp.id,
+          ),
+          env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ? WHERE id = ?").bind(bp.id, leafId, tx.id),
+        );
+        continue;
+      }
+    }
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
     const rep = it.rep === 'monthly' || it.rep === 'quarterly' ? it.rep : null;

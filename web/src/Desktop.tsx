@@ -6,7 +6,8 @@ import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { api } from './api';
 import { BankView } from './BankView';
 import { CategoryView } from './CategoryView';
-import { EntryModal, type EditTarget } from './EntryModal';
+import type { EditTarget } from './EntryModal';
+import { PartnerModal } from './PartnerModal';
 import { FilterBar, periodLabel } from './Filters';
 import { IncomeView } from './IncomeView';
 import { setCellValue } from './logic';
@@ -40,7 +41,9 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const flags = useFlags();
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
-  const groupRows = matrix.rows.filter((r) => r.type === 'group');
+  // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
+  const sideMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
+  const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   const goGroup = (id: string) => {
     setFilters({ groupId: id });
     setView('cat');
@@ -236,7 +239,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'bank' && <BankView />}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>
-      {modal && <EntryModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}
+      {modal && <PartnerModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}
       {toast && <ToastView {...toast} />}
     </div>
   );

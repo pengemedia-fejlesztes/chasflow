@@ -61,7 +61,7 @@ export function DateField(props: { value: string; onChange: (v: string) => void;
   );
 }
 
-function CalendarSheet({ value, min, onPick, onClose }: { value: string; min?: string; onPick: (v: string) => void; onClose: () => void }) {
+export function CalendarSheet({ value, min, onPick, onClose }: { value: string; min?: string; onPick: (v: string) => void; onClose: () => void }) {
   const [vy, setVy] = useState(Number(value.slice(0, 4)));
   const [vm, setVm] = useState(Number(value.slice(5, 7)));
   const mobile = typeof window !== 'undefined' && window.innerWidth < 700;

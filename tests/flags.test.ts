@@ -59,3 +59,41 @@ describe('riasztások', () => {
     expect(computeFlags([hist, bil, plan, merged], [], sec, '2026-12-03').map((x) => x.kind)).toEqual(['deviation', 'overdue']);
   });
 });
+
+import { billingFlags } from '../shared/flags';
+import { invoiceDue, payDate } from '../shared/workdays';
+
+describe('számlázás ellenőrzése', () => {
+  const p = (id: string, date: string, amount: number, extra: any = {}): any => ({
+    id,
+    kind: 'plan',
+    date,
+    leaf_id: 'L',
+    name: 'Havi díj',
+    amount,
+    done: 0,
+    tentative: 0,
+    source: 'manual',
+    ...extra,
+  });
+  const sec = () => 'in' as const;
+  it('a számlázási nap (fizetés − határidő) után számla nélkül → nincs kiszámlázva', () => {
+    const f = billingFlags([p('a', '2026-10-12', 100000), p('b', '2026-10-30', 100000)], sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['uninvoiced:a']);
+  });
+  it('ajánlat és kész terv nem riaszt; kevesebb számla riaszt, több nem', () => {
+    const es = [
+      p('o', '2026-10-01', 5000, { tentative: 1 }),
+      p('d', '2026-10-01', 5000, { done: 1 }),
+      p('lo', '2026-10-09', 90000, { source: 'billingo', plan_amount: 100000 }),
+      p('hi', '2026-10-09', 120000, { source: 'billingo', plan_amount: 100000 }),
+    ];
+    const f = billingFlags(es, sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['underbilled:lo']);
+    expect(f[0].diff).toBe(-10000);
+  });
+  it('rendszeres tétel: a hónap első munkanapja + határidő', () => {
+    expect(invoiceDue('2026-11', 8)).toBe('2026-11-10'); // nov. 2. hétfő + 8
+    expect(payDate('2026-11', 'inv:8', 1)).toBe('2026-11-10');
+  });
+});

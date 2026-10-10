@@ -65,6 +65,9 @@ export function payDate(ym: string, rule: PayRule, fallbackDay: number): string 
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   if (rule === 'first_workday') return firstWorkday(ym);
   if (rule === 'last_workday') return lastWorkday(ym);
+  // számlázás a hónap első munkanapján, fizetés N nappal később
+  const inv = rule && rule.match(/^inv:(\d{1,3})$/);
+  if (inv) return addDays(firstWorkday(ym), Number(inv[1]));
   const mm = rule && rule.match(/^day:(\d{1,2})$/);
   if (mm) {
     let d = `${ym}-${pad(Math.min(last, Math.max(1, Number(mm[1]))))}`;
@@ -79,6 +82,8 @@ export function payRuleLabel(rule: PayRule): string {
   if (rule === 'last_workday') return 'hónap utolsó munkanapja';
   const m = rule && rule.match(/^day:(\d{1,2})$/);
   if (m) return `minden hónap ${m[1]}-ig`;
+  const inv = rule && rule.match(/^inv:(\d{1,3})$/);
+  if (inv) return `számlázás a hónap első munkanapján + ${inv[1]} nap`;
   return 'nincs szabály';
 }
 
@@ -114,3 +119,10 @@ export function mondayOnOrAfter(d: string): string {
   const wd = (toD(d).getUTCDay() + 6) % 7;
   return wd === 0 ? d : addDays(d, 7 - wd);
 }
+
+/** Partner alapértelmezett fizetési határideje (nap, a számla kiállításától). */
+export const DEFAULT_PAY_DAYS = 8;
+/** Egyszeri szolgáltatás: a felviteltől ennyi nap a várható fizetés. */
+export const ONEOFF_DAYS = 14;
+/** Rendszeres tétel várható fizetése az adott hónapban: első munkanap (számlázás) + fizetési határidő. */
+export const invoiceDue = (ym: string, payDays: number) => addDays(firstWorkday(ym), payDays);

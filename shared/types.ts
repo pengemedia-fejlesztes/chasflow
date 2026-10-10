@@ -19,6 +19,8 @@ export interface Leaf {
   sort: number;
   archived: number;
   pay_rule?: string | null;
+  /** partner általános fizetési határideje (nap, a számla kiállításától) */
+  pay_days?: number | null;
 }
 
 export interface Series {
@@ -42,6 +44,8 @@ export interface Entry {
   tentative: number;
   /** 1 = valaha ajánlat volt (megnyert ajánlat követéséhez) */
   was_offer?: number;
+  /** számlához kötött terv eredeti (tervezett) összege – alulszámlázás figyeléséhez */
+  plan_amount?: number | null;
   source: string;
   ext_ref: string | null;
   link_id: string | null;

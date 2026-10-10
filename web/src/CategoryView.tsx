@@ -9,6 +9,9 @@ import { REP, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, ro
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
 
+const GOOD = '#1A7340';
+const GOOD_BG = '#E8F5EE';
+
 export function CategoryView({ groupId, openModal }: { groupId: string; openModal: (leaf: string | null, edit?: EditTarget) => void }) {
   const { ix, data, filters, commit, canEdit, run } = useStore();
   const G = ix.groupById[groupId];
@@ -27,9 +30,13 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const visibleSet = new Set(months);
   const groupEntries = data.entries.filter((e) => leafIds.has(e.leaf_id));
   const planEntries = groupEntries.filter((e) => e.kind === 'plan');
+  // a sorozaton kívüli (pl. importált, számlához kötött) terv az azonos nevű sorozat sorába kerül (pl. „Havi díj”)
+  const seriesKey = new Map<string, string>();
+  for (const e of planEntries) if (e.series_id) seriesKey.set(`${e.leaf_id}|${e.name}`, e.series_id);
+  const keyOf = (e: Entry) => e.series_id || seriesKey.get(`${e.leaf_id}|${e.name}`) || rowKey(e);
   const rowsMap = new Map<string, Entry[]>();
   for (const e of planEntries) {
-    const k = rowKey(e);
+    const k = keyOf(e);
     if (!rowsMap.has(k)) rowsMap.set(k, []);
     rowsMap.get(k)!.push(e);
   }
@@ -180,6 +187,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             <Legend bg={C.bg2} border={`1px solid ${C.line2}`} text="tervezett — ○ pipálás: kész · összegre kattintás: kijelölés" />
             <Legend bg={C.blue} text="kijelölt" />
             <Legend bg="#fff" border={`1px solid ${C.blue}`} text="✓ kész (kézzel vagy bankból)" />
+            <Legend bg={GOOD_BG} border={`1px solid ${GOOD}`} text={section === 'in' ? 'több, mint a terv' : 'kevesebb, mint a terv'} />
+            <Legend bg={C.negBg} border={`1px solid ${C.neg}`} text={section === 'in' ? 'kevesebb / lejárt' : 'több / lejárt'} />
             <Legend bg="transparent" border={`1px dashed ${C.line2}`} text="üres — kattintás: tétel ide másolása" />
           </div>
           <div style={{ ...card, overflow: 'auto' }}>
@@ -380,7 +389,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     const acts = list.map((e) => (e.done && e.link_id ? actualById.get(e.link_id) : undefined));
                     const actAmt = acts.every(Boolean) ? acts.reduce((a, x) => a + x!.amount * sign, 0) : null;
                     const dev = done && actAmt !== null && Math.abs(actAmt - amt) >= Math.max(1000, Math.abs(amt) * 0.01) ? actAmt - amt : 0;
-                    const red = overdue || dev !== 0;
+                    // terv vs tény: több bevétel (kevesebb kiadás) zöld, pontos kék, kevesebb bevétel (több kiadás) piros
+                    const better = dev !== 0 && (section === 'in' ? dev > 0 : dev < 0);
+                    const red = overdue || (dev !== 0 && !better);
+                    const green = !overdue && better;
                     return (
                       <div key={m} style={{ padding: '6px 4px' }}>
                         <div
@@ -388,8 +400,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                             width: '100%',
                             height: 30,
                             borderRadius: 8,
-                            border: `1px solid ${isSel ? C.blue : red ? C.neg : done ? C.blue : C.line2}`,
-                            background: isSel ? C.blue : red ? C.negBg : done ? '#fff' : C.bg2,
+                            border: `1px solid ${isSel ? C.blue : red ? C.neg : green ? GOOD : done ? C.blue : C.line2}`,
+                            background: isSel ? C.blue : red ? C.negBg : green ? GOOD_BG : done ? '#fff' : C.bg2,
                             display: 'flex',
                             alignItems: 'center',
                             gap: 2,
@@ -452,7 +464,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                               height: '100%',
                               border: 0,
                               background: 'transparent',
-                              color: isSel ? '#fff' : red ? C.neg : done ? C.blueDark : C.navy,
+                              color: isSel ? '#fff' : red ? C.neg : green ? GOOD : done ? C.blueDark : C.navy,
                               font: `600 12.5px ${FONT}`,
                               fontVariantNumeric: 'tabular-nums',
                               cursor: 'pointer',

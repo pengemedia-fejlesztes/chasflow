@@ -1,7 +1,8 @@
 // Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
 import { useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
-import { computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
+import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
+import { DEFAULT_PAY_DAYS } from '../../shared/workdays';
 import { addMonths, fmt, monthLong, ymOf } from '../../shared/model';
 import { unplannedHint } from '../../shared/unplanned';
 import { LeafPicker } from './LeafPicker';
@@ -34,7 +35,13 @@ export function useFlags(): Flag[] {
         entry_id: '',
         nav: n,
       }));
-    const flags = [...inv, ...bank];
+    // számlázás ellenőrzése (csak ha van Billingo): nincs kiszámlázva / kevesebb a számla
+    const bill = data.integrations.billingo
+      ? billingFlags(data.entries, ix.sectionOf, data.today, (l) => ix.leafById[l]?.pay_days ?? DEFAULT_PAY_DAYS, flagsFrom(data.entries, data.today), ack)
+      : [];
+    const notInvoiced = new Set(bill.filter((f) => f.kind === 'uninvoiced').map((f) => f.entry_id));
+    // ami nincs kiszámlázva, az nem „elmaradt befizetés” – egy riasztás elég
+    const flags = [...inv, ...bill, ...bank.filter((f) => !(f.kind === 'overdue' && notInvoiced.has(f.entry_id)))];
     // havi eredmény-cél: az előző (lezárt) hónap ténye és a folyó hónap várható eredménye
     const target = Number(data.settings.profit_target || 0);
     if (target) {
@@ -91,6 +98,8 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
 
   const groups: [FlagKind, string][] = [
     ['target', 'A havi eredmény (bevétel − kiadás) elmarad a beállított céltól.'],
+    ['uninvoiced', 'A terv szerinti számlázási nap (fizetés − fizetési határidő) elmúlt, de nincs hozzá Billingo-számla.'],
+    ['underbilled', 'A kiállított számla kevesebb, mint a terv. (Ha több, nincs riasztás.)'],
     ['invoice', 'A NAV-ba beérkezett szállítói számla, amihez nincs terv. Döntsd el: rendszeres (havonta tervbe) vagy előre nem látható költség.'],
     ['deviation', 'A tény más összeggel érkezett, mint a terv.'],
     ['unplanned', 'Nem volt rá terv. Ha ismétlődik, vedd fel havonta a tervbe; ha egyszeri, az előre nem látható költségek közé kerül.'],
@@ -175,6 +184,20 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                         </span>
                       </>
                     )}
+                    {f.kind === 'uninvoiced' && (
+                      <>
+                        <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{fmt(f.amount)} Ft</span>
+                        <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>számlázatlan terv</span>
+                      </>
+                    )}
+                    {f.kind === 'underbilled' && (
+                      <>
+                        <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{ft(f.diff || 0)}</span>
+                        <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                          terv {fmt(f.plan || 0)} → számla {fmt(f.amount)}
+                        </span>
+                      </>
+                    )}
                     {f.kind === 'deviation' && (
                       <>
                         <span style={{ font: `700 15px ${FONT}`, color: bad ? C.neg : C.blueDark }}>{ft(f.diff || 0)}</span>
@@ -211,7 +234,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                           Jövőbeli tervek is {fmt(Math.abs(f.amount))} ({fut.length})
                         </Pill>
                       )}
-                      {f.kind === 'overdue' && (
+                      {(f.kind === 'overdue' || f.kind === 'uninvoiced') && (
                         <Pill
                           small
                           kind="danger"
@@ -343,6 +366,8 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
 export function FlagBanner({ n, kinds, onClick, mobile }: { n: number; kinds: string[]; onClick: () => void; mobile?: boolean }) {
   const cnt = (k: string) => kinds.filter((x) => x === k).length;
   const parts = [
+    cnt('uninvoiced') && `${cnt('uninvoiced')} nincs kiszámlázva`,
+    cnt('underbilled') && `${cnt('underbilled')} alacsonyabb számla`,
     cnt('invoice') && `${cnt('invoice')} új számla terv nélkül`,
     cnt('deviation') && `${cnt('deviation')} eltérés a tervtől`,
     cnt('unplanned') && `${cnt('unplanned')} nem tervezett tétel`,

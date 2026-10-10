@@ -3,7 +3,8 @@ import { useRef, useState } from 'react';
 import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
-import { markDone, shiftEntries } from './logic';
+import { CalendarSheet } from './DatePicker';
+import { markDone } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, SyncPill } from './ui';
 
@@ -18,6 +19,8 @@ const BSTATUS: Record<string, [string, string]> = {
 export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
   const { ix, data, filters, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
+  // a dátumra kattintva: a várható beérkezés módosítása
+  const [pickFor, setPickFor] = useState<Entry | null>(null);
   // a fejléc dobozaira koppintva csak a hozzájuk tartozó tételek látszanak
   const [focus, setFocus] = useState<'all' | 'open' | 'overdue' | 'billingo' | 'offers'>('all');
   const listRef = useRef<HTMLDivElement>(null);
@@ -163,7 +166,16 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                   }}
                 >
                   <span
+                    role="button"
+                    title={canEdit ? 'Várható beérkezés módosítása' : undefined}
+                    onClick={(ev) => {
+                      if (!canEdit) return;
+                      ev.stopPropagation();
+                      setPickFor(e);
+                    }}
                     style={{
+                      cursor: canEdit ? 'pointer' : undefined,
+                      outline: `1px dashed ${canEdit ? (late ? C.negLight : C.line2) : 'transparent'}`,
                       width: 46,
                       flex: 'none',
                       display: 'flex',
@@ -209,9 +221,6 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                   </span>
                   {canEdit && (
                     <span style={{ display: 'flex', gap: 6 }} onClick={(ev) => ev.stopPropagation()}>
-                      <Pill small kind="light" onClick={() => commit(shiftEntries(data, [e.id], 1), `${e.name} → +1 hónap`)}>
-                        +1 hó
-                      </Pill>
                       <Pill
                         small
                         kind="dark"
@@ -228,6 +237,17 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           </div>
         </div>
       ))}
+      {pickFor && (
+        <CalendarSheet
+          value={pickFor.date}
+          onClose={() => setPickFor(null)}
+          onPick={(v) => {
+            const e = pickFor;
+            setPickFor(null);
+            if (v !== e.date) commit({ upsert: [{ ...e, date: v }] }, `${e.name || 'Tétel'}: várható beérkezés ${v.replace(/-/g, '.')}.`);
+          }}
+        />
+      )}
       {byMonth.size === 0 && (
         <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs nyitott tervezett bevétel.</div>
       )}

@@ -20,7 +20,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
       env.DB.prepare('SELECT * FROM series'),
       env.DB.prepare(
-        'SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
+        'SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
       ),
       env.DB.prepare(
         'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
@@ -282,7 +282,11 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         .run();
     if (b.group_id !== undefined) await env.DB.prepare('UPDATE leaves SET group_id = ? WHERE id = ?').bind(String(b.group_id), lm[1]).run();
     if (b.pay_rule !== undefined) await env.DB.prepare('UPDATE leaves SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), lm[1]).run();
-    if (b.group_id !== undefined || b.pay_rule !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
+    if (b.pay_days !== undefined) {
+      const n = b.pay_days === null || b.pay_days === '' ? null : Math.min(180, Math.max(0, Math.round(Number(b.pay_days)) || 0));
+      await env.DB.prepare('UPDATE leaves SET pay_days = ? WHERE id = ?').bind(n, lm[1]).run();
+    }
+    if (b.group_id !== undefined || b.pay_rule !== undefined || b.pay_days !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
     return json({ ok: true });
   }
   const gm = path.match(/^\/api\/groups\/([\w-]+)$/);

@@ -2,7 +2,7 @@
 import { partnerKey, suggestLeaf } from '../shared/match';
 import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
-import { Env, HttpError, getSetting, now, setSetting } from './util';
+import { Env, HttpError, getSetting, now, setSetting, todayHu } from './util';
 
 const BASE = 'https://api.billingo.hu/v3';
 
@@ -78,7 +78,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     env.DB.prepare("SELECT id, ext_ref, done, leaf_id, date FROM entries WHERE ext_ref LIKE 'billingo:%'"),
     env.DB.prepare('SELECT id, due_date FROM billingo_docs'),
     env.DB.prepare(
-      "SELECT id, leaf_id, date, amount FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-120 days')",
+      "SELECT id, leaf_id, date, amount, tentative FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-120 days')",
     ),
   ]);
   const leaves = leavesR.results as unknown as Leaf[];
@@ -95,29 +95,36 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   (docsR.results as any[]).forEach((d) => prevDue.set(d.id, d.due_date));
 
   // nyitott (kézi / importált) tervek, amelyekhez a számla hozzárendelhető – így nincs dupla bevétel
-  const openPlans = openR.results as unknown as { id: string; leaf_id: string; date: string; amount: number }[];
+  const openPlans = openR.results as unknown as { id: string; leaf_id: string; date: string; amount: number; tentative: number }[];
   const used = new Set<string>();
-  /** Egy terv (±3%), vagy ha a számla több tervet fed le együtt (pl. havi + negyedéves díj), azok összege. */
+  /**
+   * A partner (kategória) nyitott terve(i), amelyekhez a számla tartozik – a számla a tervhez kötődik, az összegtől függetlenül
+   * (az eltérést a riasztás jelzi). Sorrend: egy terv ±3%-kal; több tétel együtt (pl. SEO + PPC); különben a legközelebbi terv.
+   */
   const findPlan = (leaf: string, gross: number, due: string): { id: string; covered: string[] } | null => {
     const near = openPlans
       .filter((p) => !used.has(p.id) && p.leaf_id === leaf)
       .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(due)) / 86400_000 }))
-      .filter((p) => p.dd <= 20)
-      .sort((a, b) => a.dd - b.dd);
+      .filter((p) => p.dd <= 25)
+      .sort((a, b) => a.tentative - b.tentative || a.dd - b.dd);
     const close = (v: number) => Math.abs(v - gross) / Math.max(gross, 1) <= 0.03;
+    const take = (ps: typeof near) => {
+      ps.forEach((p) => used.add(p.id));
+      return { id: ps[0].id, covered: ps.slice(1).map((p) => p.id) };
+    };
     const single = near.find((p) => close(p.amount));
-    if (single) {
-      used.add(single.id);
-      return { id: single.id, covered: [] };
-    }
-    for (let i = 0; i < near.length; i++)
-      for (let j = i + 1; j < near.length; j++)
-        if (close(near[i].amount + near[j].amount)) {
-          used.add(near[i].id);
-          used.add(near[j].id);
-          return { id: near[i].id, covered: [near[j].id] };
-        }
-    return null;
+    if (single) return take([single]);
+    // ugyanabban a hónapban több tétel (2–3) együtt
+    const sameMonth = near.filter((p) => p.date.slice(0, 7) === near[0]?.date.slice(0, 7)).slice(0, 6);
+    for (let i = 0; i < sameMonth.length; i++)
+      for (let j = i + 1; j < sameMonth.length; j++) {
+        if (close(sameMonth[i].amount + sameMonth[j].amount)) return take([sameMonth[i], sameMonth[j]]);
+        for (let k = j + 1; k < sameMonth.length; k++)
+          if (close(sameMonth[i].amount + sameMonth[j].amount + sameMonth[k].amount)) return take([sameMonth[i], sameMonth[j], sameMonth[k]]);
+      }
+    // a legközelebbi biztos terv (az összeg eltérése riasztás lesz, ha kevesebb)
+    const nearest = near.find((p) => !p.tentative && p.dd <= 20);
+    return nearest ? take([nearest]) : null;
   };
 
   // partner álnevek (pl. „MAGYAR OKLEVELES ADÓSZAKÉRTŐK EGYESÜLETE” → „MOKLASZ”): a terv neve ezzel jelenik meg
@@ -126,6 +133,36 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     alias = JSON.parse((await getSetting(env, 'partner_alias')) || '{}');
   } catch {}
   const t = now();
+  const today = todayHu();
+  // a már meglévő bevételi tények (pl. xls import, banki tétel) – a Billingo „fizetve” ne duplázza meg őket
+  const actualsR = await env.DB.prepare(
+    "SELECT id, leaf_id, date, amount FROM entries WHERE kind = 'actual' AND amount > 0 AND date >= date('now', '-200 days')",
+  ).all<{ id: string; leaf_id: string; date: string; amount: number }>();
+  const linkedR = await env.DB.prepare("SELECT link_id FROM entries WHERE kind = 'plan' AND link_id IS NOT NULL").all<{ link_id: string }>();
+  const linked = new Set(linkedR.results.map((r) => r.link_id));
+  /** Billingo szerint kifizetett számla → tény (vagy a meglévő, azonos tényhez kötés) + a terv lezárása. */
+  const paidStmts = (planId: string, leaf: string, d: BillingoDocument, gross: number, partner: string): D1PreparedStatement[] => {
+    const paidOn = d.paid_date && d.paid_date <= today ? d.paid_date : today;
+    const same = actualsR.results.find(
+      (a) =>
+        !linked.has(a.id) &&
+        a.leaf_id === leaf &&
+        Math.abs(a.amount - gross) <= Math.max(500, gross * 0.01) &&
+        Math.abs(Date.parse(a.date) - Date.parse(paidOn)) <= 12 * 86400_000,
+    );
+    const aid = same?.id || 'bp' + d.id;
+    linked.add(aid);
+    const out: D1PreparedStatement[] = [];
+    if (!same)
+      out.push(
+        env.DB.prepare(
+          `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, note, updated_at)
+           VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'billingo', ?, 'Billingo: fizetve', ?) ON CONFLICT DO NOTHING`,
+        ).bind(aid, paidOn, leaf, `${partner} · ${d.invoice_number || ''}`.trim(), gross, 'bpaid:' + d.id, t),
+      );
+    out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(aid, t, planId));
+    return out;
+  };
   const stmts: D1PreparedStatement[] = [];
   let plans = 0;
   for (const d of docs) {
@@ -145,31 +182,31 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       planId = null;
     } else if (ex) {
       // meglévő terv: összeg és név frissítése; a felhasználó által áthelyezett dátumot csak akkor írjuk felül, ha a határidő változott.
-      // A „fizetve” státusz nem zárja le a tervet: a lezárás a banki jóváhagyással (vagy kézzel: „Beérkezett”) történik, így a pénz nem tűnik el az egyenlegből.
+      // Ha a Billingo szerint fizetve: a terv lezárul, tény lesz belőle (a fizetés napjára) – a későbbi banki tétel ehhez kapcsolódik.
       const dueChanged = prevDue.has(d.id) && prevDue.get(d.id) !== due;
       stmts.push(
-        env.DB.prepare('UPDATE entries SET amount = ?, name = ?, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0').bind(
-          gross,
-          `${partner} · ${d.invoice_number || ''}`.trim(),
-          dueChanged ? 1 : 0,
-          due,
-          t,
-          ex.id,
-        ),
+        // a számlából létrejött terv neve a számla; a tervhez kötött számla a terv saját nevét (pl. „Havi díj”) tartja meg
+        env.DB.prepare(
+          'UPDATE entries SET amount = ?, name = CASE WHEN ? THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
+        ).bind(gross, ex.id === 'b' + d.id ? 1 : 0, `${partner} · ${d.invoice_number || ''}`.trim(), dueChanged ? 1 : 0, due, t, ex.id),
       );
       plans++;
+      if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
     } else if (gross > 0) {
       const lid = await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts);
       const matched = findPlan(lid, gross, due);
       if (matched) {
         // a meglévő tervből „kiszámlázott” tétel lesz
         planId = matched.id;
+        // a többi lefedett tétel összege az első tervbe kerül (eredeti tervösszegként), majd törlődik
+        const coveredSum = matched.covered.reduce((a, c) => a + (openPlans.find((p) => p.id === c)?.amount || 0), 0);
         for (const c of matched.covered) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ? AND done = 0').bind(c));
         stmts.push(
           env.DB.prepare(
-            "UPDATE entries SET ext_ref = ?, source = 'billingo', amount = ?, date = ?, tentative = 0, name = ?, updated_at = ? WHERE id = ?",
-          ).bind(ext, gross, due, `${partner} · ${d.invoice_number || ''}`.trim(), t, matched.id),
+            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = ?, date = ?, tentative = 0, updated_at = ? WHERE id = ?",
+          ).bind(ext, coveredSum, gross, due, t, matched.id),
         );
+        if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
         plans++;
       } else if (OPEN_STATUSES.has(String(d.payment_status))) {
         planId = 'b' + d.id;
