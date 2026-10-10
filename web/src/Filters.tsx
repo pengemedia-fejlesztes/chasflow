@@ -1,6 +1,7 @@
 // Szűrősáv: időszak, nézet (tény/terv), szekció, ajánlatok, becslés, keresés.
 import { displayGroup } from '../../shared/categories';
 import { addMonths, monthLong, type Filters } from '../../shared/model';
+import { PeriodPicker } from './PeriodPicker';
 import { useStore } from './store';
 import { C, FONT, Seg, inputStyle } from './ui';
 
@@ -53,41 +54,7 @@ export function FilterBar({ compact }: { compact?: boolean }) {
   );
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-      <select
-        aria-label="Időszak"
-        value={active ? active.key : 'custom'}
-        onChange={(e) => {
-          const p = ps.find((x) => x.key === e.target.value);
-          if (p) setFilters(p.f);
-        }}
-        style={{ ...inputStyle, height: 36, font: `600 13px ${FONT}`, color: C.navy }}
-      >
-        {ps.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.label}
-          </option>
-        ))}
-        <option value="custom">Egyéni időszak…</option>
-      </select>
-      {(!active || !compact) && (
-        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-          <input
-            aria-label="Ettől"
-            type="month"
-            value={f.from}
-            onChange={(e) => e.target.value && setFilters({ from: e.target.value })}
-            style={{ ...inputStyle, height: 36, width: 140 }}
-          />
-          <span style={{ color: C.muted }}>–</span>
-          <input
-            aria-label="Eddig"
-            type="month"
-            value={f.to}
-            onChange={(e) => e.target.value && setFilters({ to: e.target.value })}
-            style={{ ...inputStyle, height: 36, width: 140 }}
-          />
-        </span>
-      )}
+      <PeriodPicker label={active ? active.label : periodLabel(f, ix.cur, ix.firstActual)} />
       <Seg
         small
         value={f.mode}
@@ -110,6 +77,12 @@ export function FilterBar({ compact }: { compact?: boolean }) {
       />
       {toggle(f.estimate, 'Becslés', () => setFilters({ estimate: !f.estimate }), 'A tervek után az elmúlt 12 hónap rendszeres tételeinek átlagával becsül')}
       {toggle(f.includeOffers, 'Ajánlatok', () => setFilters({ includeOffers: !f.includeOffers }), 'A még el nem fogadott ajánlatok beszámítása')}
+      {compact && (
+        <span style={{ flex: '1 1 100%', font: `400 12.5px/1.45 ${FONT}`, color: C.muted }}>
+          <b>Becslés</b>: ahol nincs terv, a rendszeres tételek (pl. havidíjak, bérek) elmúlt 12 havi átlaga. <b>Ajánlatok</b>: a tárgyalás alatt álló, még
+          bizonytalan üzletek is beszámítanak, mintha megvalósulnának.
+        </span>
+      )}
       <input
         aria-label="Keresés"
         placeholder="Keresés…"
