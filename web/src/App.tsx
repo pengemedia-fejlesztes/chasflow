@@ -29,7 +29,8 @@ type Phase =
   | { k: 'reset'; token: string }
   | { k: 'changePw'; me: Me }
   | { k: 'app'; data: DataBundle }
-  | { k: 'error'; msg: string };
+  | { k: 'error'; msg: string }
+  | { k: 'logoutFailed'; msg: string; prev: Phase };
 
 export function App() {
   const [phase, setPhase] = useState<Phase>({ k: 'loading' });
@@ -61,8 +62,13 @@ export function App() {
   }, [boot]);
 
   const doLogout = async () => {
-    await logout();
-    setPhase({ k: 'login', setup: false });
+    try {
+      await logout();
+      setPhase({ k: 'login', setup: false });
+    } catch (e: any) {
+      // a szerver nem erősítette meg: a munkamenet érvényes maradhat – nem mutatunk „kiléptél” állapotot
+      setPhase((p) => ({ k: 'logoutFailed', msg: e?.message || 'Hálózati hiba', prev: p.k === 'logoutFailed' ? p.prev : p }));
+    }
   };
 
   if (phase.k === 'loading') return <Splash>Betöltés…</Splash>;
@@ -73,6 +79,21 @@ export function App() {
           <span>{phase.msg}</span>
           <button onClick={boot} style={btn}>
             Újra
+          </button>
+        </div>
+      </Splash>
+    );
+  if (phase.k === 'logoutFailed')
+    return (
+      <Splash>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center', textAlign: 'center' }}>
+          <b>A kijelentkezés nem sikerült</b>
+          <span>A szerver nem erősítette meg ({phase.msg}), ezért a munkamenet még érvényes lehet.</span>
+          <button onClick={doLogout} style={btn}>
+            Újrapróbálás
+          </button>
+          <button onClick={() => setPhase(phase.prev)} style={{ ...btn, background: 'transparent', color: C.blueDark }}>
+            Vissza
           </button>
         </div>
       </Splash>

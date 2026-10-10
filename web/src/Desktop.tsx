@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, type Matrix } from '../../shared/model';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { BankView } from './BankView';
 import { CategoryView } from './CategoryView';
 import type { EditTarget } from './EntryModal';
@@ -763,8 +763,12 @@ function Cell(p: { h: number; bg: string; fg: string; fw: number; children: Reac
   );
 }
 
-export async function logout() {
+/** Kijelentkezés: csak akkor sikeres, ha a szerver törölte a munkamenetet (401 = már nincs érvényes munkamenet). */
+export async function logout(): Promise<void> {
   try {
     await api('/api/auth/logout', { body: {} });
-  } catch {}
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return;
+    throw e;
+  }
 }
