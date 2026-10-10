@@ -160,6 +160,19 @@ async function fetchDigests(env: Env, from: string, to: string): Promise<NavDige
 
 export async function syncNav(env: Env, opts: { from?: string } = {}): Promise<{ invoices: number; unplanned: number }> {
   if (!navEnabled(env)) throw new Error('Nincs beállítva NAV kapcsolat.');
+  try {
+    const r = await syncNavInner(env, opts);
+    await setSetting(env, 'nav_last_error', '');
+    await setSetting(env, 'nav_last_result', JSON.stringify(r));
+    return r;
+  } catch (e: any) {
+    // a hiba megmarad (Beállítások + diagnosztika), hogy utólag is látszódjon
+    await setSetting(env, 'nav_last_error', `${new Date().toISOString()} ${String(e?.message || e)}`.slice(0, 500));
+    throw e;
+  }
+}
+
+async function syncNavInner(env: Env, opts: { from?: string }): Promise<{ invoices: number; unplanned: number }> {
   const today = todayHu();
   const last = await getSetting(env, 'nav_last_date');
   const from = opts.from || (last ? addDays(last, -10) : addDays(today, -FIRST_DAYS));

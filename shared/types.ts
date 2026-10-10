@@ -126,6 +126,7 @@ export interface Settings {
   billingo_leaf_default?: string;
   bank_last_sync?: string;
   nav_last_sync?: string;
+  nav_last_error?: string;
   flags_ack?: string; // „rendben” jelölt riasztások (JSON lista)
   profit_target?: string; // havi eredmény-cél (Ft)
 }

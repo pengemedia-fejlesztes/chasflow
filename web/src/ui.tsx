@@ -1,5 +1,5 @@
 // Design tokenek (a 360 Marketing Cashflow designból) és apró közös komponensek.
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup } from '../../shared/categories';
 import type { Index } from '../../shared/model';
 
@@ -265,3 +265,53 @@ export const shortDate = (d: string) => `${d.slice(5, 7)}.${d.slice(8, 10)}.`;
 
 /** Dátum mező, ami mindig év. hó. nap sorrendben látszik; koppintásra a rendszer saját dátumválasztója nyílik. */
 export { DateField } from './DatePicker';
+
+/** Szinkron gomb: futás közben forgó jel és „Szinkronizálás…” felirat, a gomb addig nem nyomható újra. */
+export function SyncPill({
+  label,
+  onRun,
+  style,
+  kind,
+}: {
+  label: string;
+  onRun: () => Promise<unknown>;
+  style?: CSSProperties;
+  kind?: 'primary' | 'ghost' | 'light';
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Pill
+      kind={kind}
+      style={{ ...style, opacity: busy ? 0.85 : 1, cursor: busy ? 'progress' : 'pointer' }}
+      disabled={busy}
+      onClick={async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await onRun();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        {busy && (
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-block',
+              width: 14,
+              height: 14,
+              boxSizing: 'border-box',
+              borderRadius: 999,
+              border: '2px solid currentColor',
+              borderTopColor: 'transparent',
+              animation: 'spin .8s linear infinite',
+            }}
+          />
+        )}
+        {busy ? 'Szinkronizálás…' : label}
+      </span>
+    </Pill>
+  );
+}

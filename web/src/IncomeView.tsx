@@ -5,7 +5,7 @@ import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { markDone, shiftEntries } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card, eyebrow, relTime } from './ui';
+import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, SyncPill } from './ui';
 
 const BSTATUS: Record<string, [string, string]> = {
   outstanding: ['kiküldve, nyitott', C.blueDark],
@@ -76,7 +76,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
               jóváhagyva a terv lezárul és tény lesz belőle.
             </p>
           </div>
-          {canEdit && <Pill onClick={sync}>↻ Szinkron most</Pill>}
+          {canEdit && <SyncPill label="↻ Szinkron most" onRun={sync} />}
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit,minmax(${mobile ? 150 : 190}px,1fr))`, gap: 12 }}>

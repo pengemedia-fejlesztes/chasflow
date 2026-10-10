@@ -2,10 +2,11 @@
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
 import { handleBank, reapplyRules, syncAll } from './bank';
 import { handleRules } from './rules';
+import { navEnabled, syncNav } from './nav';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
-import { Env, HttpError, json, withSecurityHeaders } from './util';
+import { Env, HttpError, getSetting, json, withSecurityHeaders } from './util';
 
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -63,7 +64,17 @@ export default {
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),
     );
-    if (!SYNC_HOURS.includes(hour)) return;
+    if (!SYNC_HOURS.includes(hour)) {
+      // a NAV első szinkronja nem vár a következő szinkron-órára
+      if (navEnabled(env) && !(await getSetting(env, 'nav_last_sync')))
+        ctx.waitUntil(
+          syncNav(env).then(
+            (r) => console.log('nav first sync', JSON.stringify(r)),
+            (e) => console.error('nav first sync failed', e),
+          ),
+        );
+      return;
+    }
     ctx.waitUntil(
       syncAll(env)
         .then(

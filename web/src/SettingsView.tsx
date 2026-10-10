@@ -11,7 +11,7 @@ import { StatsHub } from './StatsHub';
 import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime } from './ui';
+import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
 
 type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules' | 'trash';
 
@@ -399,7 +399,7 @@ function Integrations() {
             {data.integrations.billingo ? '✓ API kulcs beállítva' : '✗ Nincs API kulcs'}
           </span>
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>utolsó szinkron: {relTime(data.settings.billingo_last_sync)}</span>
-          {data.integrations.billingo && <Pill onClick={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')}>↻ Szinkron most</Pill>}
+          {data.integrations.billingo && <SyncPill label="↻ Szinkron most" onRun={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')} />}
         </div>
         <Field label="Alapértelmezett kategória ismeretlen partnernél (üres = új alkategória a Projektek alatt)">
           <LeafSelect
@@ -421,8 +421,22 @@ function Integrations() {
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
             utolsó szinkron: {relTime(data.settings.nav_last_sync)} · {(data.navInvoices || []).filter((n) => n.status === 'new').length} számla terv nélkül
           </span>
-          {data.integrations.nav && <Pill onClick={() => run(() => api('/api/nav/sync', { body: {} }), 'NAV szinkron kész')}>↻ NAV szinkron most</Pill>}
+          {data.integrations.nav && (
+            <SyncPill
+              label="↻ NAV szinkron most"
+              onRun={async () => {
+                let r: { invoices: number; unplanned: number } | null = null;
+                const ok = await run(async () => {
+                  r = await api<{ invoices: number; unplanned: number }>('/api/nav/sync', { body: {} });
+                });
+                if (ok && r) showToast(`NAV szinkron kész: ${(r as any).invoices} számla a NAV-ból, ${(r as any).unplanned} terv nélkül`);
+              }}
+            />
+          )}
         </div>
+        {data.settings.nav_last_error && (
+          <span style={{ font: `600 13px/1.45 ${FONT}`, color: C.neg, wordBreak: 'break-word' }}>Utolsó hiba: {data.settings.nav_last_error}</span>
+        )}
       </Section>
       <Section
         title="Bankkapcsolat – PSD2 (BiNX, Magnet)"

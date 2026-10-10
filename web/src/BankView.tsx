@@ -5,7 +5,7 @@ import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
 import { TxCard } from './TxCard';
-import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, shortDate } from './ui';
+import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, shortDate, SyncPill } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
   const { ix, data, run, canEdit } = useStore();
@@ -50,7 +50,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
           </div>
           {canEdit && (
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Pill onClick={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')}>↻ Szinkronizálás most</Pill>
+              <SyncPill label="↻ Szinkronizálás most" onRun={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')} />
               {ready.length > 0 && (
                 <Pill kind="primary" onClick={() => approve(ready.map((t) => t.id))}>
                   Mind jóváhagyása ({ready.length})
@@ -62,9 +62,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
       )}
       {mobile && canEdit && (
         <div style={{ display: 'flex', gap: 8 }}>
-          <Pill style={{ flex: 1 }} onClick={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')}>
-            ↻ Frissítés
-          </Pill>
+          <SyncPill style={{ flex: 1 }} label="↻ Frissítés" onRun={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')} />
         </div>
       )}
 
