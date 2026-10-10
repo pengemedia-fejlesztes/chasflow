@@ -229,14 +229,16 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                   </span>
                   {canEdit && (
                     <span style={{ display: 'flex', gap: 6 }} onClick={(ev) => ev.stopPropagation()}>
-                      <Pill
-                        small
-                        kind="dark"
-                        title="Beérkezett (kézi lezárás – banki jóváhagyásnál automatikus)"
-                        onClick={() => commit(markDone(data, [e.id], true), `${e.name}: beérkezett ✓`)}
-                      >
-                        ✓ Beérkezett
-                      </Pill>
+                      {e.date <= data.today && (
+                        <Pill
+                          small
+                          kind="dark"
+                          title="Beérkezett (kézi lezárás – banki jóváhagyásnál automatikus)"
+                          onClick={() => commit(markDone(data, [e.id], true), `${e.name}: beérkezett ✓`)}
+                        >
+                          ✓ Beérkezett
+                        </Pill>
+                      )}
                     </span>
                   )}
                 </div>
