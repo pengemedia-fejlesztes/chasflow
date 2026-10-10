@@ -54,11 +54,15 @@ export async function readJson<T = any>(req: Request, maxBytes = 5_000_000): Pro
   if (len > maxBytes) throw new HttpError(413, 'Túl nagy kérés.');
   const text = await req.text();
   if (text.length > maxBytes) throw new HttpError(413, 'Túl nagy kérés.');
+  let v: unknown;
   try {
-    return JSON.parse(text || '{}');
+    v = JSON.parse(text || '{}');
   } catch {
     throw new HttpError(400, 'Hibás JSON.');
   }
+  // minden végpont JSON objektumot vár (null, tömb, szám, szöveg → 400)
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'Hibás kérés.');
+  return v as T;
 }
 
 export const now = () => Date.now();

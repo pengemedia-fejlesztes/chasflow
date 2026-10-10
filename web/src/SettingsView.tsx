@@ -142,9 +142,13 @@ function Account({ onLogout }: { onLogout: () => void }) {
               onChange={(e) => setDpw(e.target.value)}
               style={{ ...inputStyle, width: 220 }}
             />
-            <Pill kind="danger" onClick={() => run(() => api('/api/account/totp/disable', { body: { password: dpw } }), '2FA kikapcsolva')}>
-              Kikapcsolás
-            </Pill>
+            {data.me.role !== 'admin' ? (
+              <Pill kind="danger" onClick={() => run(() => api('/api/account/totp/disable', { body: { password: dpw } }), '2FA kikapcsolva')}>
+                Kikapcsolás
+              </Pill>
+            ) : (
+              <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>adminfiókon kötelező</span>
+            )}
           </div>
         ) : totp ? (
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>

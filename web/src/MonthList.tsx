@@ -119,6 +119,15 @@ export function MonthList(props: {
   );
 }
 
+/** A tétel (feladat / szolgáltatás) neve a partner nélkül: „WhitePress Kft. · Penge / 2026-000055” → „Számla Penge / 2026-000055”. */
+export function itemLabel(name: string, partner: string): string {
+  const n = (name || '').trim();
+  const inv = n.match(/^.+? · (.+\/ ?\d{4}-\d+)$/);
+  if (inv) return 'Számla ' + inv[1];
+  if (!n || n.toLowerCase() === partner.toLowerCase()) return '';
+  return n;
+}
+
 /** terv nélküli tény (a régi, importált adatoknál még nem volt terv) */
 const unplanned = (r: MonthRow) => r.kind === 'actual' && r.actual?.source !== 'import';
 
@@ -159,7 +168,9 @@ function Row(p: {
       ? 'lejárt'
       : r.kind === 'merged' && r.days
         ? `${Math.abs(r.days)} nap ${r.days > 0 ? 'késés' : 'előbb'}`
-        : ix.leafById[r.leaf_id]?.label;
+        : '';
+  const partner = ix.leafById[r.leaf_id]?.label || '';
+  const item = itemLabel(r.name, partner);
   return (
     <div
       onClick={() => {
@@ -218,9 +229,30 @@ function Row(p: {
         </span>
       </span>
       <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
-        <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {r.name || ix.leafById[r.leaf_id]?.label}
+        {/* fent a partner (cég / személy), alatta a feladat / szolgáltatás */}
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+          <span style={{ font: `700 15.5px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {partner || item}
+          </span>
+          {p.onPartner && !p.selMode && partner && (
+            <span
+              role="button"
+              title="Partner adatlapja"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                p.onPartner!(r.leaf_id);
+              }}
+              style={{ flex: 'none', font: `700 15px ${FONT}`, color: C.blueDark, padding: '0 4px' }}
+            >
+              ›
+            </span>
+          )}
         </span>
+        {partner && item && (
+          <span style={{ font: `500 13.5px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: -3 }}>
+            {item}
+          </span>
+        )}
         <span style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 6px', alignItems: 'center' }}>
           <span
             style={{
@@ -235,19 +267,9 @@ function Row(p: {
           >
             {chip}
           </span>
-          <span style={{ font: `600 12px ${FONT}`, color: red ? C.neg : C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {sub}
-          </span>
-          {p.onPartner && !p.selMode && (
-            <span
-              role="button"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                p.onPartner!(r.leaf_id);
-              }}
-              style={{ font: `600 12px ${FONT}`, color: C.blueDark, whiteSpace: 'nowrap', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
-            >
-              {sub === ix.leafById[r.leaf_id]?.label ? 'partner ›' : `${ix.leafById[r.leaf_id]?.label} ›`}
+          {sub && (
+            <span style={{ font: `600 12px ${FONT}`, color: red ? C.neg : C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {sub}
             </span>
           )}
         </span>

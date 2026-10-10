@@ -33,3 +33,16 @@ describe('TOTP', () => {
     expect(await totpCode(secret, Math.floor(1111111109 / 30))).toBe('081804');
   });
 });
+
+import { readJson } from '../worker/util';
+
+describe('kérés-törzs ellenőrzése', () => {
+  const req = (body: string) => new Request('https://x/api', { method: 'POST', body });
+  it('null, tömb, szám, szöveg → 400 (nem 500 belső hibaüzenettel)', async () => {
+    for (const b of ['null', '[]', '42', '"x"', 'nem json']) await expect(readJson(req(b))).rejects.toMatchObject({ status: 400 });
+  });
+  it('objektum és üres törzs rendben', async () => {
+    await expect(readJson(req('{"token":"a"}'))).resolves.toEqual({ token: 'a' });
+    await expect(readJson(req(''))).resolves.toEqual({});
+  });
+});

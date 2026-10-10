@@ -33,6 +33,8 @@ async function route(req: Request, env: Env): Promise<Response> {
   const acc = await handleAccount(env, req, path, u);
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
+  // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
+  if (u.role === 'admin' && !u.totp_enabled) throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
 
   for (const h of [handleUsers, handleData]) {
     const r = await h(env, req, path, u);
@@ -55,7 +57,8 @@ export default {
     } catch (e: any) {
       if (e instanceof HttpError) return withSecurityHeaders(json({ error: e.message }, e.status));
       console.error(e);
-      return withSecurityHeaders(json({ error: 'Szerverhiba: ' + (e?.message || 'ismeretlen') }, 500));
+      // a belső hiba részletei csak a naplóba kerülnek, a válaszba nem
+      return withSecurityHeaders(json({ error: 'Szerverhiba. Próbáld újra később.' }, 500));
     }
   },
 

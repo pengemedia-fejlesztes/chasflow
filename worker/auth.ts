@@ -348,6 +348,7 @@ export async function handleAccount(env: Env, req: Request, path: string, u: Use
     return json({ ok: true });
   }
   if (path === '/api/account/totp/disable' && req.method === 'POST') {
+    if (u.role === 'admin') throw new HttpError(400, 'Adminfiókon a kétlépcsős azonosítás nem kapcsolható ki.');
     const body = await readJson(req);
     if (!(await verifyPassword(u, String(body.password || '')))) throw new HttpError(400, 'Hibás jelszó.');
     await env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?').bind(u.id).run();

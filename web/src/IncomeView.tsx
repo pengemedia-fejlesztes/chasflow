@@ -4,6 +4,7 @@ import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../../s
 import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { CalendarSheet } from './DatePicker';
+import { itemLabel } from './MonthList';
 import { markDone } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, SyncPill } from './ui';
@@ -193,11 +194,18 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                     </span>
                   </span>
                   <span style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ font: `600 14.5px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {e.name || ix.leafById[e.leaf_id]?.label}
+                    {/* fent a partner, alatta a feladat / szolgáltatás */}
+                    <span style={{ font: `700 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {ix.leafById[e.leaf_id]?.label || e.name}
                     </span>
+                    {itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '') && (
+                      <span
+                        style={{ font: `500 13.5px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: -2 }}
+                      >
+                        {itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '')}
+                      </span>
+                    )}
                     <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                      <Badge>{ix.leafById[e.leaf_id]?.label}</Badge>
                       {doc && (
                         <Badge color={C.blueDark} bg={C.bg2}>
                           Billingo {doc.number}

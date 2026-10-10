@@ -30,6 +30,7 @@ type Phase =
   | { k: 'changePw'; me: Me }
   | { k: 'app'; data: DataBundle }
   | { k: 'error'; msg: string }
+  | { k: 'setup2fa'; me: Me }
   | { k: 'logoutFailed'; msg: string; prev: Phase };
 
 export function App() {
@@ -48,6 +49,7 @@ export function App() {
       mailOn = s.mailEnabled;
       if (!s.me) return setPhase({ k: 'login', setup: !s.hasUsers && s.setupAvailable });
       if (s.me.must_change_pw) return setPhase({ k: 'changePw', me: s.me });
+      if (s.me.role === 'admin' && !s.me.totp_enabled) return setPhase({ k: 'setup2fa', me: s.me });
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
     } catch (e: any) {
       setPhase({ k: 'error', msg: e.message });
@@ -100,6 +102,7 @@ export function App() {
     );
   if (phase.k === 'login') return <Login setup={phase.setup} onDone={boot} />;
   if (phase.k === 'reset') return <ResetPw token={phase.token} onDone={() => setPhase({ k: 'login', setup: false })} />;
+  if (phase.k === 'setup2fa') return <Setup2fa me={phase.me} onDone={boot} onLogout={doLogout} />;
   if (phase.k === 'changePw') return <ChangePw me={phase.me} onDone={boot} onLogout={doLogout} />;
   return (
     <StoreProvider initial={phase.data}>
@@ -276,6 +279,74 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
             {forgot ? '← Vissza a belépéshez' : mailOn ? 'Elfelejtett jelszó?' : 'Elfelejtett jelszó? Kérd az adminisztrátort.'}
           </button>
         )}
+      </form>
+    </Shell>
+  );
+}
+
+/** Adminfiókhoz kötelező 2FA: belépés után, az app előtt be kell állítani. */
+function Setup2fa({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogout: () => void }) {
+  const [t, setT] = useState<{ secret: string; url: string; qr: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api<{ secret: string; url: string }>('/api/account/totp/setup', { body: {} });
+        const QR = await import('qrcode');
+        setT({ ...r, qr: await QR.toDataURL(r.url, { margin: 1, width: 200 }) });
+      } catch (e: any) {
+        setErr(e.message);
+      }
+    })();
+  }, []);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api('/api/account/totp/enable', { body: { code: code.replace(/\s/g, '') } });
+      onDone();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+  return (
+    <Shell
+      title="Kétlépcsős azonosítás"
+      sub={`Szia ${me.name}! Adminfiókhoz kötelező a 2FA: a jelszó mellett a telefonos hitelesítő alkalmazás 6 jegyű kódja is kell (pl. iPhone Jelszavak, Google vagy Microsoft Authenticator).`}
+    >
+      <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'stretch' }}>
+        {t ? (
+          <>
+            <img src={t.qr} width={180} height={180} alt="2FA QR kód" style={{ alignSelf: 'center', borderRadius: 10, border: `1px solid ${C.line}` }} />
+            <a href={t.url} style={{ font: `600 13.5px ${FONT}`, textAlign: 'center' }}>
+              Megnyitás hitelesítő alkalmazásban (ezen a telefonon)
+            </a>
+            <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted, textAlign: 'center' }}>
+              Vagy add meg kézzel a kulcsot:{' '}
+              <code style={{ font: `600 12.5px ui-monospace,monospace`, color: C.navy, wordBreak: 'break-all' }}>{t.secret}</code>
+            </span>
+            <input
+              required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6 jegyű kód"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              style={big}
+            />
+          </>
+        ) : (
+          !err && <span style={{ font: `500 13.5px ${FONT}`, color: C.muted, textAlign: 'center' }}>Betöltés…</span>
+        )}
+        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        {t && (
+          <button type="submit" style={btn}>
+            Bekapcsolás
+          </button>
+        )}
+        <button type="button" onClick={onLogout} style={{ ...btn, background: 'transparent', color: C.blueDark }}>
+          Kilépés
+        </button>
       </form>
     </Shell>
   );
