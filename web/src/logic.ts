@@ -14,7 +14,9 @@ export function shiftDate(date: string, n: number): string {
   return dateIn(addMonths(ymOf(date), n), Number(date.slice(8)));
 }
 
-export const REP: Record<Rep, string> = { once: 'Egyszeri', monthly: 'Havonta', quarterly: 'Negyedévente' };
+export const REP: Record<Rep, string> = { once: 'Egyszeri', monthly: 'Havonta', quarterly: '3 havonta', yearly: 'Évente' };
+/** Ismétlődés lépésköze hónapban. */
+export const repStep = (r?: Rep | null) => (r === 'yearly' ? 12 : r === 'quarterly' ? 3 : 1);
 
 export function signed(section: Section, abs: number) {
   return section === 'in' ? Math.abs(abs) : -Math.abs(abs);
@@ -34,7 +36,7 @@ export function genSeries(o: {
   payRule?: string | null;
 }): EntryBatch {
   const sid = uid('s');
-  const step = o.rep === 'quarterly' ? 3 : 1;
+  const step = repStep(o.rep);
   const n = o.rep === 'once' ? 1 : Math.ceil(Math.min(o.count, 36) / step);
   const series: Series = { id: sid, leaf_id: o.leaf, name: o.name, rep: o.rep, day: o.day };
   const entries: Entry[] = [];
@@ -125,7 +127,7 @@ export function extendRows(d: DataBundle, ids: string[]): EntryBatch {
     if (!es.length) continue;
     const last = es.reduce((a, e) => (e.date > a.date ? e : a), es[0]);
     const s = d.series.find((x) => x.id === last.series_id);
-    const step = s?.rep === 'quarterly' ? 3 : 1;
+    const step = repStep(s?.rep);
     for (let i = 1; i <= Math.ceil(3 / step); i++)
       add.push({ ...last, id: uid('e'), date: shiftDate(last.date, i * step), done: 0, link_id: null, ext_ref: null, source: 'manual' });
   }

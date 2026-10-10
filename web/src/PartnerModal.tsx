@@ -8,10 +8,16 @@ import { addDays, DEFAULT_PAY_DAYS, invoiceDue, ONEOFF_DAYS } from '../../shared
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
-import { REP, genSeries, rowKey, signed } from './logic';
+import { REP, genSeries, repStep, rowKey, signed } from './logic';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
 
+const REP_OPTS: [Rep, string][] = [
+  ['once', 'Egyszeri'],
+  ['monthly', 'Havonta'],
+  ['quarterly', '3 havonta'],
+  ['yearly', 'Évente'],
+];
 const dot = (d: string) => d.replace(/-/g, '. ') + '.';
 const num = (s: string) => parseInt(String(s).replace(/\D/g, '')) || 0;
 
@@ -23,6 +29,8 @@ interface Item {
   next: Entry | null;
   tentative: boolean;
   billingo: boolean;
+  /** a következő tételhez kötött számla (Billingo / NAV) */
+  inv?: string;
 }
 
 export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; edit?: EditTarget | null; onClose: () => void }) {
@@ -65,10 +73,17 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
           next: es.find((e) => e.date >= data.today) || es[0],
           tentative: es.some((e) => e.tentative),
           billingo: es.some((e) => e.source === 'billingo'),
+          inv: (() => {
+            const ids = new Set(es.map((e) => e.id));
+            const b = data.billingo.find((d) => d.plan_id && ids.has(d.plan_id));
+            if (b) return `számla ${b.number || ''} · ${b.payment_status === 'paid' ? 'fizetve' : 'kiszámlázva, nyitott'}`;
+            const n = (data.navInvoices || []).find((d) => d.plan_id && ids.has(d.plan_id));
+            return n ? `NAV-számla ${n.invoice_number}${n.status === 'paid' ? ' · fizetve' : ''}` : undefined;
+          })(),
         };
       })
       .sort((a, b) => (a.next?.date || '').localeCompare(b.next?.date || ''));
-  }, [partner, data.entries, data.series, data.today, keyOf, L]);
+  }, [partner, data.entries, data.series, data.today, data.billingo, data.navInvoices, keyOf, L]);
 
   // fizetési fegyelem: Billingo számlák szerinti határidő és a tényleges beérkezés átlaga (nap)
   const avg = useMemo(() => {
@@ -255,10 +270,34 @@ function ItemRow({
   const [amount, setAmount] = useState(String(Math.abs(next?.amount || 0)));
   const [date, setDate] = useState(next?.date || '');
   const [tentative, setTentative] = useState(it.tentative);
+  const [rep, setRep] = useState<Rep>(it.rep);
   const amt = num(amount);
   const editable = it.open.filter((e) => e.source !== 'billingo');
   const save = () => {
     if (!amt) return alert('Adj meg összeget.');
+    if (rep !== it.rep && next) {
+      // ismétlődés váltás: a nyitott (nem kiszámlázott) tervek újragenerálódnak a következő dátumtól
+      const start = (rep === 'once' ? date : next.date) || next.date;
+      const b = genSeries({
+        leaf: next.leaf_id,
+        section,
+        name: name.trim() || it.name,
+        amount: amt,
+        startYm: ymOf(start),
+        count: rep === 'once' ? 1 : rep === 'yearly' ? 36 : 12,
+        rep,
+        day: Number(start.slice(8)) || 1,
+        tentative,
+      });
+      if (rep === 'once' && b.upsert?.[0]) {
+        b.upsert[0].date = start;
+        b.series = [];
+        b.upsert[0].series_id = null;
+      }
+      b.delete = editable.map((e) => e.id);
+      onSave(b, `${name || it.name}: ${REP[rep].toLowerCase()} · ${b.upsert!.length} tétel`);
+      return;
+    }
     const upsert = editable.map((e) => ({
       ...e,
       name: name.trim() || e.name,
@@ -293,7 +332,11 @@ function ItemRow({
             {next && <span>· következő: {dot(next.date)}</span>}
             {it.open.length > 1 && <span>· {it.open.length} nyitott</span>}
             {it.tentative && <span style={{ color: '#8A6D1C', fontWeight: 700 }}>· ajánlat</span>}
-            {it.billingo && <span style={{ color: C.blueDark, fontWeight: 700 }}>· Billingo számla</span>}
+            {it.inv ? (
+              <span style={{ color: C.blueDark, fontWeight: 700 }}>· {it.inv}</span>
+            ) : (
+              <span style={{ color: '#8A6D1C' }}>· terv (még nincs számla)</span>
+            )}
           </span>
         </span>
         <b style={{ font: `700 15px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
@@ -313,6 +356,15 @@ function ItemRow({
               <DateField value={date} onChange={setDate} style={{ width: 240 }} />
             </div>
           )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={eyebrow}>Ismétlődés</span>
+            <Seg small value={rep} onChange={setRep} options={REP_OPTS} />
+            {rep !== it.rep && (
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+                {rep === 'once' ? 'csak a következő tétel marad' : `${rep === 'yearly' ? '3 évre' : '12 hónapra'} újratervezve ${dot(next?.date || '')}-tól`}
+              </span>
+            )}
+          </div>
           {section === 'in' && <OfferToggle value={tentative} onChange={setTentative} />}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <Pill
@@ -362,7 +414,7 @@ function NewItem({
   const [count, setCount] = useState(12);
   const [tentative, setTentative] = useState(false);
   const amt = num(amount);
-  const step = rep === 'quarterly' ? 3 : 1;
+  const step = repStep(rep);
   const firstDue = rep === 'once' ? date : invoiceDue(startYm, payDays);
   const n = rep === 'once' ? 1 : Math.ceil(count / step);
   const save = () => {
@@ -406,12 +458,11 @@ function NewItem({
           <Seg
             small
             value={rep}
-            onChange={setRep}
-            options={[
-              ['once', 'Egyszeri'],
-              ['monthly', 'Havonta'],
-              ['quarterly', 'Negyedévente'],
-            ]}
+            onChange={(v) => {
+              setRep(v);
+              setCount(v === 'yearly' ? 36 : 12);
+            }}
+            options={REP_OPTS}
           />
         </div>
         {rep === 'once' ? (
@@ -431,12 +482,20 @@ function NewItem({
                 small
                 value={count}
                 onChange={setCount}
-                options={[
-                  [3, '3 hó'],
-                  [6, '6 hó'],
-                  [12, '12 hó'],
-                  [24, '24 hó'],
-                ]}
+                options={
+                  rep === 'yearly'
+                    ? [
+                        [12, '1 év'],
+                        [24, '2 év'],
+                        [36, '3 év'],
+                      ]
+                    : [
+                        [3, '3 hó'],
+                        [6, '6 hó'],
+                        [12, '12 hó'],
+                        [24, '24 hó'],
+                      ]
+                }
               />
             </div>
           </>

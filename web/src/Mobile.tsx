@@ -13,7 +13,7 @@ import { api } from './api';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
 import { IncomeView } from './IncomeView';
-import { REP, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
+import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { APP_VERSION } from './version';
@@ -793,7 +793,7 @@ function SheetView({
       if (a.length > 11) return;
       set({ amount: a });
     };
-    const step = f.rep === 'quarterly' ? 3 : 1;
+    const step = repStep(f.rep);
     const n = f.rep === 'once' ? 1 : Math.ceil(f.count / step);
     const mode = f.type === 'in' ? f.mode || 'simple' : 'simple';
     // az „Ajánlatok” csoport ügyfelénél alapból ajánlat

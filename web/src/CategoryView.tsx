@@ -55,13 +55,15 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const restore = (ds: DeletedEntry[]) =>
     run(() => api('/api/trash/restore', { body: { rids: ds.map((d) => d.rid) } }), `${ds[0].name || 'Tétel'} visszaállítva`);
   const actualById = new Map(data.entries.filter((e) => e.kind === 'actual').map((e) => [e.id, e]));
+  // a csak törölt tervekből álló sornak nincs élő tétele – a kukás tétel adja a nevét
+  const headOf = ([k, es]: [string, Entry[]]): Entry | undefined => es[0] || (delMap.get(k) || [])[0];
   const rows = [...rowsMap.entries()]
     .filter(([k, es]) => es.some((e) => visibleSet.has(ymOf(e.date))) || delMap.has(k))
     .filter(([, es]) => !filters.search || es.some((e) => (e.name + ' ' + ix.leafById[e.leaf_id]?.label).toLowerCase().includes(filters.search.toLowerCase())))
     .sort(
       (a, b) =>
-        (ix.leafById[a[1][0].leaf_id]?.label || '').localeCompare(ix.leafById[b[1][0].leaf_id]?.label || '', 'hu') ||
-        a[1][0].name.localeCompare(b[1][0].name, 'hu'),
+        (ix.leafById[headOf(a)?.leaf_id || '']?.label || '').localeCompare(ix.leafById[headOf(b)?.leaf_id || '']?.label || '', 'hu') ||
+        (headOf(a)?.name || '').localeCompare(headOf(b)?.name || '', 'hu'),
     );
 
   const rangeEnd = endOfMonth(filters.to) < data.today ? endOfMonth(filters.to) : data.today;
@@ -314,7 +316,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             {itemLabel(es[0].name, ix.leafById[es[0].leaf_id]?.label || '') || es[0].name || ix.leafById[es[0].leaf_id]?.label}
           </span>
           <span style={{ font: `400 11.5px ${FONT}`, color: C.muted }}>
-            fizetés: {inferred === 'once' ? `${monthLabel(ymOf(es[0].date))} ${day}.` : `${inferred === 'quarterly' ? 'negyedévente' : 'minden hó'} ${day}.`}
+            fizetés:{' '}
+            {inferred === 'once'
+              ? `${monthLabel(ymOf(es[0].date))} ${day}.`
+              : `${inferred === 'yearly' ? 'évente' : inferred === 'quarterly' ? '3 havonta' : 'minden hó'} ${day}.`}
           </span>
         </div>
         <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start' }}>
@@ -575,7 +580,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             options={[
               ['once', 'Egyszeri'],
               ['monthly', 'Havonta'],
-              ['quarterly', 'Negyedév'],
+              ['quarterly', '3 havonta'],
+              ['yearly', 'Évente'],
             ]}
           />
           {qa.rep !== 'once' && (

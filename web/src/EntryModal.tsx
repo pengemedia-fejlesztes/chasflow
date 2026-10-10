@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { addMonths, fmt, monthLabel, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { REP, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } from './logic';
+import { REP, repStep, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } from './logic';
 import { payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useStore } from './store';
@@ -34,7 +34,7 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
   const startDate = f.date;
   const set = (p: Partial<typeof f>) => setF((x) => ({ ...x, ...p }));
   const amt = parseInt(String(f.amount).replace(/\D/g, '')) || 0;
-  const step = f.rep === 'quarterly' ? 3 : 1;
+  const step = repStep(f.rep);
   const n = f.rep === 'once' ? 1 : Math.ceil(Math.min(f.count, 36) / step);
   const L = f.leaf ? ix.leafById[f.leaf] : null;
 

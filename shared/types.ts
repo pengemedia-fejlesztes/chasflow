@@ -2,7 +2,7 @@
 
 export type Section = 'in' | 'out';
 export type Role = 'admin' | 'member' | 'viewer';
-export type Rep = 'once' | 'monthly' | 'quarterly';
+export type Rep = 'once' | 'monthly' | 'quarterly' | 'yearly';
 
 export interface Group {
   id: string;

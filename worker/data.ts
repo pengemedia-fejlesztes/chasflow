@@ -108,7 +108,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
   const stmts: D1PreparedStatement[] = [];
   for (const s of b.series || []) {
-    const rep = ['once', 'monthly', 'quarterly'].includes(s.rep) ? s.rep : 'once';
+    const rep = ['once', 'monthly', 'quarterly', 'yearly'].includes(s.rep) ? s.rep : 'once';
     stmts.push(
       env.DB.prepare(
         'INSERT INTO series (id, leaf_id, name, rep, day) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET leaf_id = excluded.leaf_id, name = excluded.name, rep = excluded.rep, day = excluded.day',

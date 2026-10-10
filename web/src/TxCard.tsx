@@ -4,7 +4,7 @@ import { displayGroup, normalizeText } from '../../shared/categories';
 import { fmt, monthLabel, ymOf } from '../../shared/model';
 import type { BankTx, Entry, Rep } from '../../shared/types';
 import { api } from './api';
-import { shiftDate } from './logic';
+import { repStep, shiftDate } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, inputStyle, shortDate } from './ui';
 
@@ -92,7 +92,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
         .slice(0, 4)
         .map((x) => x.e);
 
-  const step = rep === 'quarterly' ? 3 : 1;
+  const step = repStep(rep);
   const n = rep === 'once' ? 0 : Math.ceil(count / step);
   const nextDates = rep === 'once' ? [] : [1, 2, 3].slice(0, n).map((i) => shiftDate(t.date, i * step));
 
