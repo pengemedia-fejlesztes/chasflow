@@ -10,6 +10,7 @@ import { RulesTab } from './RulesTab';
 import { StatsHub } from './StatsHub';
 import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
+import { readSheetRows } from './sheet';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
 
@@ -345,18 +346,20 @@ function Integrations() {
     }
   };
   const importCsv = async (file: File) => {
-    const XLSX = await import('xlsx');
-    let wb;
-    if (/\.(csv|txt)$/i.test(file.name)) {
-      // magyar netbank exportok: gyakran pontosvessző elválasztó, néha Windows-1250 kódolás
-      const buf = await file.arrayBuffer();
-      let text = new TextDecoder('utf-8').decode(buf);
-      if (text.includes('�')) text = new TextDecoder('windows-1250').decode(buf);
-      const first = text.split(/\r?\n/)[0] || '';
-      const FS = [';', '\t', ','].sort((a, b) => first.split(b).length - first.split(a).length)[0];
-      wb = XLSX.read(text, { type: 'string', FS, raw: true });
-    } else wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false, raw: false });
-    const rows: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+    let rows: any[][];
+    try {
+      if (/\.(csv|txt)$/i.test(file.name)) {
+        // magyar netbank exportok: gyakran pontosvessző elválasztó, néha Windows-1250 kódolás
+        const buf = await file.arrayBuffer();
+        let text = new TextDecoder('utf-8').decode(buf);
+        if (text.includes('�')) text = new TextDecoder('windows-1250').decode(buf);
+        const first = text.split(/\r?\n/)[0] || '';
+        const FS = [';', '\t', ','].sort((a, b) => first.split(b).length - first.split(a).length)[0];
+        rows = await readSheetRows({ kind: 'csv', text, FS });
+      } else rows = await readSheetRows({ kind: 'array', buf: await file.arrayBuffer(), raw: false });
+    } catch (e: any) {
+      return showToast({ msg: e.message, error: true });
+    }
     let parsed;
     try {
       parsed = parseBankRows(rows, file.name);
@@ -568,9 +571,7 @@ function DataTab() {
   const importXls = async (file: File, kind: 'actual' | 'plan') => {
     setBusy(kind);
     try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: true });
-      const rows: any[][] = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+      const rows = await readSheetRows({ kind: 'array', buf: await file.arrayBuffer(), raw: true });
       const hi = rows.findIndex((r) => r.some((c) => /d[aá]tum/i.test(String(c))) && r.some((c) => /kateg/i.test(String(c))));
       if (hi < 0) throw new Error('Nem találom a fejlécet (Dátum, Tétel, Kategória, Összeg).');
       const h = rows[hi].map((c) => String(c).toLowerCase());
@@ -580,6 +581,8 @@ function DataTab() {
         .slice(hi + 1)
         .map((r) => ({ date: r[cd], name: String(r[cn] ?? ''), category: String(r[cc] ?? ''), amount: Number(r[ca]) || 0 }))
         .filter((r) => r.date);
+      // üres fájl ne menjen a szerverre (tervnél a „csere” különben kiürítené a terveket)
+      if (!out.length) throw new Error('Nem találtam importálható sort a fájlban.');
       await run(
         () => api('/api/import', { body: { kind, rows: out, replacePlans: kind === 'plan' && replace } }),
         `${out.length} sor feldolgozva (${kind === 'actual' ? 'tények' : 'tervek'})`,
