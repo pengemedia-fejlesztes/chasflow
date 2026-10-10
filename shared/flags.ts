@@ -1,12 +1,13 @@
 // Riasztások („red flag”): ahol a tény eltér a havi tervtől.
 //  - eltérés: a tény tervhez kötve, de más összeggel (pl. Aranka 40 000 helyett 44 000)
 //  - nem tervezett: tény, amihez nem tartozott terv (pl. előre nem látható költség)
+//  - új számla (NAV): bejövő szállítói számla, amihez nincs terv – még a kifizetés előtt
 //  - elmaradt: lejárt, még nyitott terv (nem jött be a bevétel / nem ment ki a kiadás)
 // Csak a jelen számít: az előző hónap elejétől, de legkorábban az utolsó importált (XLS) tény utáni naptól.
-import type { BankTx, Entry, Section } from './types';
+import type { BankTx, Entry, NavInvoice, Section } from './types';
 import { addMonths, ymOf } from './model';
 
-export type FlagKind = 'target' | 'deviation' | 'unplanned' | 'overdue';
+export type FlagKind = 'target' | 'invoice' | 'deviation' | 'unplanned' | 'overdue';
 
 export interface Flag {
   id: string;
@@ -23,6 +24,8 @@ export interface Flag {
   entry_id: string;
   /** banki tétel, amiből a tény jött */
   tx?: BankTx;
+  /** NAV-számla (terv nélküli bejövő számla) */
+  nav?: NavInvoice;
 }
 
 /** Eltérés küszöb: legalább 1 000 Ft és a terv 1%-a. */
@@ -107,12 +110,13 @@ export function computeFlags(entries: Entry[], bankTx: BankTx[], sectionOf: (lea
       });
     }
   }
-  const order: Record<FlagKind, number> = { target: -1, deviation: 0, unplanned: 1, overdue: 2 };
+  const order: Record<FlagKind, number> = { target: -2, invoice: -1, deviation: 0, unplanned: 1, overdue: 2 };
   return out.filter((f) => !acked.has(f.id)).sort((a, b) => order[a.kind] - order[b.kind] || b.date.localeCompare(a.date));
 }
 
 export const FLAG_LABEL: Record<FlagKind, string> = {
   target: 'Havi eredmény a cél alatt',
+  invoice: 'Új számla, nincs rá terv',
   deviation: 'Eltérés a tervtől',
   unplanned: 'Nem tervezett tétel',
   overdue: 'Elmaradt a tervhez képest',

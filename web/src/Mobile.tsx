@@ -51,7 +51,7 @@ type Sheet =
 export function Mobile({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, commit, toast, canEdit, run } = st;
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'home'));
   const flags = useFlags();
   const [partnerKey, setPartnerKey] = useState<string | null>(null);
   const openPartner = (leaf: string) => (setPartnerKey(partnerIdOf(ix.leafById[leaf]?.label || leaf)), setTab('stats'));

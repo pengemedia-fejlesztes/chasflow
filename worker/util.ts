@@ -8,6 +8,11 @@ export interface Env {
   EB_PRIVATE_KEY?: string;
   BREVO_API_KEY?: string;
   RESEND_API_KEY?: string;
+  NAV_LOGIN?: string; // NAV Online Számla technikai felhasználó
+  NAV_PASSWORD?: string;
+  NAV_SIGN_KEY?: string; // aláírókulcs
+  NAV_TAX_NUMBER?: string; // a cég adószámának első 8 jegye
+  NAV_API_URL?: string; // csak teszteléshez (pl. https://api-test.onlineszamla.nav.gov.hu/invoiceService/v3)
   MAIL_FROM?: string; // pl. "Cashflow <laszlo.nagy@360-marketing.eu>"
 }
 

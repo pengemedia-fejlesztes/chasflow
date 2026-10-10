@@ -411,6 +411,20 @@ function Integrations() {
         </Field>
       </Section>
       <Section
+        title="NAV Online Számla"
+        sub="A cégnek kiállított (bejövő, szállítói) számlák a NAV-ból naponta 5 alkalommal szinkronizálódnak. Ha egy számlához nincs terv, riasztás jön még a kifizetés előtt, javaslattal: rendszeres (havonta tervbe) vagy előre nem látható költség. Hozzáférés: NAV technikai felhasználó (Online Számla → Felhasználók), Cloudflare titokként: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER."
+      >
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ font: `600 14px ${FONT}`, color: data.integrations.nav ? C.blueDark : C.neg }}>
+            {data.integrations.nav ? '✓ Technikai felhasználó beállítva' : '✗ Nincs beállítva'}
+          </span>
+          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
+            utolsó szinkron: {relTime(data.settings.nav_last_sync)} · {(data.navInvoices || []).filter((n) => n.status === 'new').length} számla terv nélkül
+          </span>
+          {data.integrations.nav && <Pill onClick={() => run(() => api('/api/nav/sync', { body: {} }), 'NAV szinkron kész')}>↻ NAV szinkron most</Pill>}
+        </div>
+      </Section>
+      <Section
         title="Bankkapcsolat – PSD2 (BiNX, Magnet)"
         sub="Az Enable Banking engedélyezett számlainformációs szolgáltatón keresztül csak olvasási hozzáférést adsz (egyenleg + tételek), legfeljebb 180 napra – utána újra kell engedélyezni. A banki belépés a bank saját oldalán történik."
       >

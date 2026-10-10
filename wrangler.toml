@@ -33,3 +33,4 @@ enabled = true
 #   BILLINGO_API_KEY   – Billingo v3 API kulcs
 #   EB_APP_ID          – Enable Banking alkalmazás azonosító (PSD2 bankkapcsolat)
 #   EB_PRIVATE_KEY     – Enable Banking alkalmazás privát kulcs (PEM, PKCS#8)
+#   NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER – NAV Online Számla technikai felhasználó (bejövő számlák)

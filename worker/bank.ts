@@ -6,6 +6,7 @@ import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
 import { billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
+import { navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
@@ -20,7 +21,7 @@ function pickBalance(bs: eb.EbBalance[]): { amount: number; currency: string } |
   return b ? { amount: Math.round(parseFloat(b.balance_amount.amount)), currency: b.balance_amount.currency } : null;
 }
 
-async function matchingContext(env: Env) {
+export async function matchingContext(env: Env) {
   const [leavesR, groupsR, rulesR, plansR] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM leaves'),
     env.DB.prepare('SELECT id, section FROM groups'),
@@ -44,7 +45,15 @@ async function matchingContext(env: Env) {
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
   const sectionOf = (id: string) => sec[lg[id]] || 'out';
   const unforeseen = leaves.find((l) => !l.archived && sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
-  return { leaves, sectionOf, rules, plans: plansR.results as unknown as Entry[], refs: await invoiceRefs(env), unforeseen, contains: await loadContains(env) };
+  return {
+    leaves,
+    sectionOf,
+    rules,
+    plans: plansR.results as unknown as Entry[],
+    refs: { ...(await invoiceRefs(env)), ...(await navInvoiceRefs(env)) },
+    unforeseen,
+    contains: await loadContains(env),
+  };
 }
 
 type Ctx = Awaited<ReturnType<typeof matchingContext>>;
@@ -154,6 +163,13 @@ export async function syncAll(env: Env) {
       res.bank = await syncBanks(env);
     } catch (e: any) {
       res.bankError = e.message;
+    }
+  }
+  if (navEnabled(env)) {
+    try {
+      res.nav = await syncNav(env);
+    } catch (e: any) {
+      res.navError = e.message;
     }
   }
   try {
@@ -308,6 +324,8 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   await audit(env, userId, userId ? 'bank_approve' : 'bank_auto_approve', { n: items.length });
+  // a kifizetett NAV-számlák (terv nélküliek) a banki ténnyel párosulnak
+  await rematchNav(env).catch((e) => console.error('nav rematch', e));
 }
 
 async function unapprove(env: Env, u: User, ids: string[]) {
@@ -343,6 +361,23 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (bdoc && req.method === 'GET') {
     // Billingo számlakép egy kattintással (nyilvános, időkorlátos link a Billingótól)
     return json({ url: await billingoPublicUrl(env, Number(bdoc[1])) });
+  }
+  if (path === '/api/nav/resolve' && req.method === 'POST') {
+    // NAV-számla terv nélkül: havonta tervbe / előre nem látható költség / nem kell terv
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<NavResolve>(req);
+    if (!['recurring', 'unforeseen', 'ignore', 'reopen'].includes(b.action)) throw new HttpError(400, 'Hibás művelet.');
+    await resolveNav(env, u.id, b);
+    return json({ ok: true });
+  }
+  if (path === '/api/nav/sync' && req.method === 'POST') {
+    requireRole(u, 'admin');
+    if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (Cloudflare titkok: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
+    const b = await readJson<{ from?: string }>(req).catch(() => ({}) as { from?: string });
+    const from = b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from) ? b.from : undefined;
+    const r = await syncNav(env, { from });
+    await audit(env, u.id, 'nav_sync', r);
+    return json(r);
   }
   if (!path.startsWith('/api/bank') && path !== '/api/sync') return null;
 

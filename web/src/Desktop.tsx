@@ -20,7 +20,7 @@ export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'settings
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, setFilters, toast, canEdit } = st;
-  const [view, setView] = useState<View>('overview');
+  const [view, setView] = useState<View>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'overview'));
   const [modal, setModal] = useState<{ leaf?: string | null; edit?: EditTarget | null } | null>(null);
   const matrix = useMemo(() => buildMatrix(ix, filters), [ix, filters]);
 

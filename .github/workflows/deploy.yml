@@ -1,8 +1,8 @@
 # Automatikus ellenőrzés és telepítés Cloudflare-re.
 # - Minden push / pull request: típusellenőrzés, tesztek, build.
-# - Push a main ágra: adatbázis migráció + telepítés (élesítés).
+# - Push a main vagy a fejlesztési (claude/dreamy-johnson-9ejay9) ágra: adatbázis migráció + telepítés (élesítés).
 # Szükséges GitHub Secrets (Settings → Secrets and variables → Actions):
-#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID
+#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (a D1_DATABASE_ID már a wrangler.toml-ban van)
 name: Ellenőrzés és telepítés
 
 on:
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
@@ -36,7 +36,7 @@ jobs:
 
   deploy:
     needs: check
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/dreamy-johnson-9ejay9') && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
     steps:

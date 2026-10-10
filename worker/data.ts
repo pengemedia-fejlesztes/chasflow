@@ -3,6 +3,7 @@ import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow
 import { partnerKey } from '../shared/match';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
+import { navEnabled } from './nav';
 import { refreshMonthStats } from './stats';
 import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from './util';
 
@@ -13,44 +14,50 @@ function cleanPayRule(v: unknown): string | null {
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers] = await env.DB.batch([
-    env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
-    env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
-    env.DB.prepare('SELECT * FROM series'),
-    env.DB.prepare(
-      'SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
-    ),
-    env.DB.prepare(
-      'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
-    ),
-    env.DB.prepare(
-      "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
-    ),
-    env.DB.prepare(
-      "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
-    ),
-    env.DB.prepare('SELECT key, value FROM settings'),
-    env.DB.prepare(
-      `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
+  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers, navInvoices] =
+    await env.DB.batch([
+      env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
+      env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
+      env.DB.prepare('SELECT * FROM series'),
+      env.DB.prepare(
+        'SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
+      ),
+      env.DB.prepare(
+        'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
+      ),
+      env.DB.prepare(
+        "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
+      ),
+      env.DB.prepare(
+        "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
+      ),
+      env.DB.prepare('SELECT key, value FROM settings'),
+      env.DB.prepare(
+        `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
        FROM deleted_entries d
        WHERE d.kind = 'plan' AND d.date >= date('now', '-62 days') AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.date LIMIT 2000`,
-    ),
-    env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
-    // partnerek banki (számlázási) nevei kategóriánként
-    env.DB.prepare(
-      `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
+      ),
+      env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
+      // partnerek banki (számlázási) nevei kategóriánként
+      env.DB.prepare(
+        `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
        WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
-    ),
-    // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
-    env.DB.prepare(
-      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at FROM deleted_entries d
+      ),
+      // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
+      env.DB.prepare(
+        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at FROM deleted_entries d
        WHERE d.tentative = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
-    ),
-  ]);
+      ),
+      // NAV bejövő számlák (terv nélküliek mind, a többi az elmúlt fél évből)
+      env.DB.prepare(
+        `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
+       FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
+      ),
+    ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -68,7 +75,8 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     monthStats: monthStats.results as any,
     partnerNames: partnerNames.results as any,
     lostOffers: lostOffers.results as any,
-    integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY) },
+    navInvoices: navInvoices.results as any,
+    integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }
 

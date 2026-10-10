@@ -1,7 +1,11 @@
 // Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import { normalizeText } from '../../shared/categories';
 import { computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
-import { addMonths, fmt, monthLong } from '../../shared/model';
+import { addMonths, fmt, monthLong, ymOf } from '../../shared/model';
+import { unplannedHint } from '../../shared/unplanned';
+import { LeafPicker } from './LeafPicker';
+import { genSeries } from './logic';
 import { targetTracking } from '../../shared/insights';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
@@ -15,7 +19,22 @@ export function useFlags(): Flag[] {
     try {
       ack = JSON.parse(data.settings.flags_ack || '[]');
     } catch {}
-    const flags = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack);
+    const bank = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack);
+    // NAV: bejövő számla, amihez nincs terv (még a kifizetés előtt szól)
+    const inv: Flag[] = (data.navInvoices || [])
+      .filter((n) => n.status === 'new')
+      .map((n) => ({
+        id: `inv:${n.id}`,
+        kind: 'invoice',
+        section: 'out',
+        date: n.payment_date || n.issue_date || data.today,
+        name: n.partner_name || n.invoice_number,
+        leaf_id: n.leaf_id || '',
+        amount: n.gross,
+        entry_id: '',
+        nav: n,
+      }));
+    const flags = [...inv, ...bank];
     // havi eredmény-cél: az előző (lezárt) hónap ténye és a folyó hónap várható eredménye
     const target = Number(data.settings.profit_target || 0);
     if (target) {
@@ -36,7 +55,7 @@ export function useFlags(): Flag[] {
       return [...tf.filter((f) => !ack.includes(f.id)), ...flags];
     }
     return flags;
-  }, [data.entries, data.bankTx, data.settings.flags_ack, data.settings.profit_target, data.today, ix]);
+  }, [data.entries, data.bankTx, data.navInvoices, data.settings.flags_ack, data.settings.profit_target, data.today, ix]);
 }
 
 const ft = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n)) + ' Ft';
@@ -61,6 +80,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   const flags = useFlags();
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const from = flagsFrom(data.entries, data.today);
+  const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
 
   const ack = (ids: string[], msg: string) =>
     run(
@@ -71,8 +91,9 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
 
   const groups: [FlagKind, string][] = [
     ['target', 'A havi eredmény (bevétel − kiadás) elmarad a beállított céltól.'],
+    ['invoice', 'A NAV-ba beérkezett szállítói számla, amihez nincs terv. Döntsd el: rendszeres (havonta tervbe) vagy előre nem látható költség.'],
     ['deviation', 'A tény más összeggel érkezett, mint a terv.'],
-    ['unplanned', 'Nem volt rá terv – ellenőrizd, és ha ismétlődik, tervezd be.'],
+    ['unplanned', 'Nem volt rá terv. Ha ismétlődik, vedd fel havonta a tervbe; ha egyszeri, az előre nem látható költségek közé kerül.'],
     ['overdue', 'A terv dátuma elmúlt, de nem érkezett hozzá banki tény.'],
   ];
 
@@ -102,7 +123,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                 {FLAG_LABEL[kind]} <span style={{ color: C.neg }}>({fs.length})</span>
               </span>
               <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, flex: 1 }}>{help}</span>
-              {canEdit && fs.length > 1 && (
+              {canEdit && fs.length > 1 && kind !== 'invoice' && (
                 <Pill
                   small
                   onClick={() =>
@@ -137,7 +158,11 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                   <div style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{f.name || cat}</span>
                     <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-                      {f.kind === 'target' ? 'havi eredmény-cél (Beállítások → Statisztikák)' : `${dot(f.date)} · ${cat}`}
+                      {f.kind === 'target'
+                        ? 'havi eredmény-cél (Beállítások → Statisztikák)'
+                        : f.nav
+                          ? `${f.nav.invoice_number} · kelt ${dot(f.nav.issue_date || f.date)} · fizetendő ${dot(f.date)}`
+                          : `${dot(f.date)} · ${cat}`}
                       {f.tx ? ` · ${f.tx.partner || f.tx.memo}` : ''}
                     </span>
                   </div>
@@ -158,6 +183,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                         </span>
                       </>
                     )}
+                    {f.kind === 'invoice' && <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{ft(f.amount)}</span>}
                     {f.kind === 'unplanned' && <span style={{ font: `700 15px ${FONT}`, color: f.amount < 0 ? C.neg : C.blueDark }}>{ft(f.amount)}</span>}
                     {f.kind === 'overdue' && (
                       <>
@@ -166,7 +192,8 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                       </>
                     )}
                   </div>
-                  {canEdit && (
+                  {canEdit && (f.kind === 'unplanned' || f.kind === 'invoice') && <UnplannedActions f={f} unforeseen={unforeseen} ack={ack} />}
+                  {canEdit && f.kind !== 'unplanned' && f.kind !== 'invoice' && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {f.kind === 'deviation' && fut.length > 0 && (
                         <Pill
@@ -211,9 +238,112 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   );
 }
 
+/** Terv nélküli tétel: javaslat (rendszeres → havonta tervbe, vagy előre nem látható költség) és a két gomb. */
+function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string | null; ack: (ids: string[], msg: string) => Promise<unknown> }) {
+  const { data, ix, commit, run } = useStore();
+  const e = f.entry_id ? data.entries.find((x) => x.id === f.entry_id) : undefined;
+  const hint = useMemo(
+    () => unplannedHint(data.entries, { name: f.name, amount: f.amount, date: f.date, leaf_id: f.leaf_id || null, id: f.entry_id || undefined }, unforeseen),
+    [data.entries, f, unforeseen],
+  );
+  const section = f.amount >= 0 ? 'in' : 'out';
+  const [leaf, setLeaf] = useState<string | null>(hint.leaf_id);
+  const [pick, setPick] = useState(false);
+  const monthly = Math.abs(hint.kind === 'recurring' && !f.nav ? hint.avg : f.amount);
+  const leafLabel = leaf ? ix.leafById[leaf]?.label : '';
+  const nav = f.nav;
+
+  const recurring = async () => {
+    if (!leaf) return setPick(true);
+    if (nav) {
+      await run(
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'recurring', leaf_id: leaf, months: 12 } }),
+        `${f.name}: havonta tervbe (${leafLabel}), 12 hónap`,
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'reopen' } }),
+      );
+      return;
+    }
+    const b = genSeries({
+      leaf,
+      section,
+      name: f.name,
+      amount: monthly,
+      startYm: addMonths(ymOf(f.date), 1),
+      count: 12,
+      rep: 'monthly',
+      day: Number(f.date.slice(8)) || 1,
+    });
+    // a mostani tény is a választott kategóriába kerül
+    if (e && e.leaf_id !== leaf) b.upsert = [...(b.upsert || []), { ...e, leaf_id: leaf }];
+    await commit(b, `${f.name}: havonta tervbe (${leafLabel}) · ${fmt(monthly)} Ft, 12 hónap`);
+    await ack([f.id], 'Riasztás rendben');
+  };
+  const oneoff = async () => {
+    if (nav) {
+      await run(
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'unforeseen' } }),
+        `${f.name}: előre nem látható költség`,
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'reopen' } }),
+      );
+      return;
+    }
+    if (section === 'out' && unforeseen && e && e.leaf_id !== unforeseen)
+      await commit({ upsert: [{ ...e, leaf_id: unforeseen }] }, `${f.name}: előre nem látható költség`);
+    await ack([f.id], section === 'out' ? 'Előre nem látható költség – rendben' : 'Egyszeri bevétel – rendben');
+  };
+
+  const rec = hint.kind === 'recurring';
+  const text = rec
+    ? `Az elmúlt 12 hónapból ${hint.months} hónapban volt ilyen (átlag ${fmt(Math.abs(hint.avg))} Ft/hó) → javaslat: vedd fel havonta a tervbe${leafLabel ? ` (${leafLabel})` : ''}.`
+    : hint.months
+      ? `Az elmúlt évben csak ${hint.months} hónapban fordult elő → javaslat: ${section === 'out' ? 'előre nem látható költség' : 'egyszeri bevétel'}.`
+      : `Először fordul elő → javaslat: ${section === 'out' ? 'előre nem látható költség' : 'egyszeri bevétel'}.`;
+  return (
+    <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.ink, background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>💡 {text}</span>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <Pill small kind={rec ? 'primary' : 'light'} onClick={recurring}>
+          Havonta tervbe{leafLabel ? `: ${leafLabel}` : '…'}
+        </Pill>
+        <Pill small kind={rec ? 'light' : 'primary'} onClick={oneoff}>
+          {section === 'out' ? 'Előre nem látható költség' : 'Egyszeri – rendben'}
+        </Pill>
+        <Pill small onClick={() => setPick(!pick)}>
+          {pick ? 'Kész' : 'Más kategória…'}
+        </Pill>
+        {nav && (
+          <Pill
+            small
+            onClick={() =>
+              run(
+                () => api('/api/nav/resolve', { body: { id: nav.id, action: 'ignore' } }),
+                'Számla: nem kell terv',
+                () => api('/api/nav/resolve', { body: { id: nav.id, action: 'reopen' } }),
+              )
+            }
+          >
+            Nem kell terv
+          </Pill>
+        )}
+      </div>
+      {pick && (
+        <LeafPicker
+          section={section}
+          value={leaf}
+          onChange={(id) => {
+            setLeaf(id);
+            setPick(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function FlagBanner({ n, kinds, onClick, mobile }: { n: number; kinds: string[]; onClick: () => void; mobile?: boolean }) {
   const cnt = (k: string) => kinds.filter((x) => x === k).length;
   const parts = [
+    cnt('invoice') && `${cnt('invoice')} új számla terv nélkül`,
     cnt('deviation') && `${cnt('deviation')} eltérés a tervtől`,
     cnt('unplanned') && `${cnt('unplanned')} nem tervezett tétel`,
     cnt('overdue') && `${cnt('overdue')} elmaradt terv`,

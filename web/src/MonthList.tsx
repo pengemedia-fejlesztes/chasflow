@@ -80,6 +80,7 @@ export function MonthList(props: {
   const rest = rows.filter((r) => !r.completed);
   const isOpen = !!open[m];
   const devN = done.filter((r) => r.dev).length;
+  const unpN = done.filter(unplanned).length;
   return (
     <>
       {done.length > 0 && (
@@ -101,7 +102,9 @@ export function MonthList(props: {
           <span style={{ font: `700 18px ${FONT}`, color: C.blueDark, width: 22 }}>{isOpen ? '▾' : '▸'}</span>
           <span style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>✓ Teljesült · {done.length} tétel</b>
-            <span style={{ font: `500 12px ${FONT}`, color: devN ? C.neg : C.muted }}>{devN ? `${devN} eltérés a tervtől` : 'kiszámlázva, kifizetve'}</span>
+            <span style={{ font: `500 12px ${FONT}`, color: devN ? C.neg : C.muted }}>
+              {[devN && `${devN} eltérés a tervtől`, unpN && `${unpN} nem tervezett`].filter(Boolean).join(' · ') || 'kiszámlázva, kifizetve'}
+            </span>
           </span>
           <b style={{ font: `700 15px ${FONT_H}`, color: C.blueDark, fontVariantNumeric: 'tabular-nums' }}>
             {fmt(done.reduce((a, r) => a + r.amount * sign, 0))}
@@ -115,6 +118,9 @@ export function MonthList(props: {
     </>
   );
 }
+
+/** terv nélküli tény (a régi, importált adatoknál még nem volt terv) */
+const unplanned = (r: MonthRow) => r.kind === 'actual' && r.actual?.source !== 'import';
 
 function Row(p: {
   r: MonthRow;
@@ -137,7 +143,9 @@ function Row(p: {
     r.kind === 'merged'
       ? 'Terv → Tény'
       : r.kind === 'actual'
-        ? 'Tény'
+        ? unplanned(r)
+          ? 'Nem tervezett'
+          : 'Tény'
         : r.kind === 'done'
           ? '✓ Kész'
           : r.kind === 'offer'
@@ -218,9 +226,9 @@ function Row(p: {
             style={{
               padding: '2px 8px',
               borderRadius: 999,
-              background: r.completed ? '#fff' : r.kind === 'offer' ? '#FFF6DE' : C.bg2,
-              border: r.completed ? `1px solid ${C.line2}` : 0,
-              color: r.kind === 'offer' ? '#8A6D1C' : C.blueDark,
+              background: unplanned(r) ? '#FFF6DE' : r.completed ? '#fff' : r.kind === 'offer' ? '#FFF6DE' : C.bg2,
+              border: unplanned(r) ? '1px solid #E8C770' : r.completed ? `1px solid ${C.line2}` : 0,
+              color: r.kind === 'offer' || unplanned(r) ? '#8A6D1C' : C.blueDark,
               font: `600 11px ${FONT}`,
               whiteSpace: 'nowrap',
             }}
