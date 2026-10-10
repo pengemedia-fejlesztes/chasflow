@@ -1,5 +1,5 @@
 // Tervezett bevétel: kiküldött (Billingo) számlák és tervezett bevételek, beérkezési állapottal.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
@@ -18,6 +18,14 @@ const BSTATUS: Record<string, [string, string]> = {
 export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
   const { ix, data, filters, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
+  // a fejléc dobozaira koppintva csak a hozzájuk tartozó tételek látszanak
+  const [focus, setFocus] = useState<'all' | 'open' | 'overdue' | 'billingo' | 'offers'>('all');
+  const listRef = useRef<HTMLDivElement>(null);
+  const pickFocus = (f: typeof focus) => {
+    setFocus(focus === f ? 'all' : f);
+    if (f === 'offers') setShowOffers(true);
+    setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
   const horizon = endOfMonth(filters.to > ix.cur ? filters.to : addMonths(ix.cur, 3));
   const docByPlan = new Map(data.billingo.filter((d) => d.plan_id).map((d) => [d.plan_id!, d]));
   const income = data.entries.filter((e) => e.kind === 'plan' && ix.sectionOf(e.leaf_id) === 'in');
@@ -30,8 +38,21 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
     .sort((a, b) => b.date.localeCompare(a.date));
   const billingoOpen = open.filter((e) => e.source === 'billingo');
   const sum = (es: Entry[]) => es.reduce((s, e) => s + e.amount, 0);
+  const isLate = (e: Entry) => e.date < data.today && !e.tentative;
+  const shown = open.filter((e) =>
+    focus === 'open'
+      ? !e.tentative
+      : focus === 'overdue'
+        ? isLate(e)
+        : focus === 'billingo'
+          ? e.source === 'billingo'
+          : focus === 'offers'
+            ? !!e.tentative
+            : true,
+  );
+  const FOCUS_LABEL = { all: '', open: 'Nyitott tételek', overdue: 'Lejárt, még nem érkezett be', billingo: 'Kiküldött számlák', offers: 'Ajánlatok' };
   const byMonth = new Map<string, Entry[]>();
-  open
+  shown
     .sort((a, b) => a.date.localeCompare(b.date))
     .forEach((e) => {
       const k = e.date < data.today && !e.tentative ? 'overdue' : ymOf(e.date);
@@ -61,18 +82,53 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit,minmax(${mobile ? 150 : 190}px,1fr))`, gap: 12 }}>
         <Stat
           dark
+          active={focus === 'open'}
+          onClick={() => pickFocus('open')}
           label={`Nyitott · ${monthLong(ymOf(horizon)).replace(/^\d+\. /, '')} végéig`}
           value={fmt(sum(open.filter((e) => !e.tentative)))}
           sub={`${open.filter((e) => !e.tentative).length} tétel`}
         />
-        <Stat label="Lejárt, még nem érkezett be" value={fmt(sum(overdue))} sub={`${overdue.length} tétel`} color={overdue.length ? C.neg : undefined} />
         <Stat
+          active={focus === 'overdue'}
+          onClick={() => pickFocus('overdue')}
+          label="Lejárt, még nem érkezett be"
+          value={fmt(sum(overdue))}
+          sub={`${overdue.length} tétel`}
+          color={overdue.length ? C.neg : undefined}
+        />
+        <Stat
+          active={focus === 'billingo'}
+          onClick={() => pickFocus('billingo')}
           label="Kiküldött számlák (nyitott)"
           value={fmt(sum(billingoOpen))}
           sub={data.integrations.billingo ? `Billingo · ${relTime(data.settings.billingo_last_sync)}` : 'Billingo nincs bekötve'}
         />
-        <Stat label="Ajánlatok (nem biztos)" value={fmt(sum(open.filter((e) => e.tentative)))} sub={`${open.filter((e) => e.tentative).length} ajánlat`} />
+        <Stat
+          active={focus === 'offers'}
+          onClick={() => pickFocus('offers')}
+          label="Ajánlatok (nem biztos)"
+          value={fmt(sum(open.filter((e) => e.tentative)))}
+          sub={`${open.filter((e) => e.tentative).length} ajánlat`}
+        />
       </div>
+      <div ref={listRef} style={{ scrollMarginTop: 80 }} />
+      {focus !== 'all' && (
+        <button
+          onClick={() => setFocus('all')}
+          style={{
+            alignSelf: 'flex-start',
+            border: 0,
+            borderRadius: 999,
+            background: C.navy,
+            color: '#fff',
+            padding: '8px 14px',
+            font: `600 13px ${FONT}`,
+            cursor: 'pointer',
+          }}
+        >
+          Szűrve: {FOCUS_LABEL[focus]} ({shown.length}) · mind mutatása ✕
+        </button>
+      )}
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 13px ${FONT}`, color: C.muted }}>
         <input type="checkbox" checked={showOffers} onChange={(e) => setShowOffers(e.target.checked)} style={{ accentColor: C.blue }} />
         Ajánlatok mutatása
@@ -176,7 +232,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
         <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs nyitott tervezett bevétel.</div>
       )}
 
-      <div style={{ ...card, overflow: 'hidden' }}>
+      <div style={{ ...card, overflow: 'hidden', display: focus === 'all' ? undefined : 'none' }}>
         <div style={{ padding: '14px 16px', font: `700 15px ${FONT_H}`, color: C.navy, borderBottom: `1px solid ${C.line}` }}>
           Beérkezett bevételek (előző és aktuális hónap)
         </div>
@@ -198,13 +254,30 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   );
 }
 
-function Stat(p: { label: string; value: string; sub: string; dark?: boolean; color?: string }) {
+function Stat(p: { label: string; value: string; sub: string; dark?: boolean; color?: string; active?: boolean; onClick?: () => void }) {
   return (
-    <div style={{ ...(p.dark ? { background: C.navy2 } : card), borderRadius: 14, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <button
+      type="button"
+      onClick={p.onClick}
+      style={{
+        ...(p.dark ? { background: C.navy2, border: 0 } : card),
+        outline: p.active ? `3px solid ${C.blue}` : 'none',
+        outlineOffset: 2,
+        borderRadius: 14,
+        padding: '16px 18px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 6,
+        textAlign: 'left',
+        cursor: 'pointer',
+        width: '100%',
+      }}
+    >
       <span style={{ ...eyebrow, color: p.dark ? C.muted2 : C.muted }}>{p.label}</span>
       <span style={{ font: `800 22px/1 ${FONT_H}`, color: p.color || (p.dark ? '#fff' : C.navy), fontVariantNumeric: 'tabular-nums' }}>{p.value} Ft</span>
-      <span style={{ font: `400 12.5px ${FONT}`, color: p.dark ? C.muted2 : C.muted }}>{p.sub}</span>
-    </div>
+      <span style={{ font: `400 12.5px ${FONT}`, color: p.dark ? C.muted2 : C.muted }}>{p.sub} ›</span>
+    </button>
   );
 }
 

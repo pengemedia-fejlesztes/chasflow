@@ -18,7 +18,19 @@ export interface BarPoint {
   note?: string;
 }
 
-export function DivergingBars({ title, points, height = 150, unit = 'Ft' }: { title: string; points: BarPoint[]; height?: number; unit?: string }) {
+export function DivergingBars({
+  title,
+  points,
+  height = 150,
+  unit = 'Ft',
+  markerLabel = 'terv',
+}: {
+  title: string;
+  points: BarPoint[];
+  height?: number;
+  unit?: string;
+  markerLabel?: string;
+}) {
   const [hi, setHi] = useState<number | null>(null);
   const max = Math.max(1, ...points.map((p) => Math.max(Math.abs(p.v), Math.abs(p.plan ?? 0))));
   // nullavonal: ha csak pozitív (vagy csak negatív) érték van, a teljes magasságot használja
@@ -42,7 +54,12 @@ export function DivergingBars({ title, points, height = 150, unit = 'Ft' }: { ti
               <b style={{ color: shown.v < 0 ? '#B04A3C' : POS }}>
                 {(shown.v > 0 ? '+' : shown.v < 0 ? '−' : '') + fmt(Math.abs(shown.v))} {unit}
               </b>
-              {shown.plan != null ? <span style={{ color: C.muted }}> · terv {fmt(shown.plan)}</span> : null}
+              {shown.plan != null ? (
+                <span style={{ color: C.muted }}>
+                  {' '}
+                  · {markerLabel} {fmt(shown.plan)}
+                </span>
+              ) : null}
               {shown.note ? <span style={{ color: C.muted }}> · {shown.note}</span> : null}
             </>
           ) : (
@@ -81,7 +98,7 @@ export function DivergingBars({ title, points, height = 150, unit = 'Ft' }: { ti
               />
               {p.plan != null && (
                 <div
-                  title="terv"
+                  title={markerLabel}
                   style={{
                     position: 'absolute',
                     left: '8%',
@@ -135,7 +152,7 @@ export function DivergingBars({ title, points, height = 150, unit = 'Ft' }: { ti
         {points.some((p) => p.plan != null) && (
           <span>
             <i style={{ display: 'inline-block', width: 14, borderTop: `2px solid ${C.navy}`, marginRight: 5, verticalAlign: 3 }} />
-            terv
+            {markerLabel}
           </span>
         )}
         {points.some((p) => p.future) && (

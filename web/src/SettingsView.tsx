@@ -7,17 +7,21 @@ import { payDate, payRuleLabel } from '../../shared/workdays';
 import { ruleOf } from './logic';
 import { api } from './api';
 import { RulesTab } from './RulesTab';
+import { StatsHub } from './StatsHub';
 import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime } from './ui';
 
-type Tab = 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules' | 'trash';
+type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules' | 'trash';
 
 export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobile?: boolean }) {
   const { isAdmin } = useStore();
-  const [tab, setTab] = useState<Tab>('account');
-  const tabs: [Tab, string][] = [['account', 'Fiókom']];
+  const [tab, setTab] = useState<Tab>('stats');
+  const tabs: [Tab, string][] = [
+    ['stats', 'Statisztikák'],
+    ['account', 'Fiókom'],
+  ];
   if (isAdmin) tabs.push(['users', 'Felhasználók'], ['integrations', 'Bekötések'], ['data', 'Adatok']);
   tabs.push(['rules', 'Párosítások'], ['categories', 'Kategóriák'], ['trash', 'Törölt tételek']);
   return (
@@ -29,6 +33,7 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
       <div style={{ overflowX: 'auto' }}>
         <Seg value={tab} onChange={setTab} options={tabs} />
       </div>
+      {tab === 'stats' && <StatsHub mobile={mobile} />}
       {tab === 'account' && <Account onLogout={onLogout} />}
       {tab === 'users' && isAdmin && <Users />}
       {tab === 'integrations' && isAdmin && <Integrations />}

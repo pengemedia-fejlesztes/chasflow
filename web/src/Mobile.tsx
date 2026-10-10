@@ -5,7 +5,7 @@ import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, mont
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { useBack } from './back';
-import { StatsView, type StatsTab } from './StatsView';
+import { StatsHub } from './StatsHub';
 import { partnerIdOf } from '../../shared/partners';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
@@ -34,7 +34,6 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>('home');
   const flags = useFlags();
   const [partnerKey, setPartnerKey] = useState<string | null>(null);
-  const [statsTab, setStatsTab] = useState<StatsTab>('pva');
   const openPartner = (leaf: string) => (setPartnerKey(partnerIdOf(ix.leafById[leaf]?.label || leaf)), setTab('stats'));
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
@@ -263,32 +262,6 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               </button>
             </div>
             {flags.length > 0 && <FlagBanner mobile n={flags.length} kinds={flags.map((f) => f.kind)} onClick={() => setTab('alerts')} />}
-            <div style={{ margin: '14px 16px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {(
-                [
-                  ['pva', 'Terv vs. tény', 'havonta: bevétel, kiadás, profit'],
-                  ['partners', 'Partnerek', 'statisztika, fizetési előzmények'],
-                ] as [StatsTab, string, string][]
-              ).map(([t, title, sub]) => (
-                <button
-                  key={t}
-                  onClick={() => (setPartnerKey(null), setStatsTab(t), setTab('stats'))}
-                  style={{
-                    border: `1px solid ${C.line2}`,
-                    background: '#fff',
-                    borderRadius: 14,
-                    padding: '12px 14px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 3,
-                    textAlign: 'left',
-                  }}
-                >
-                  <b style={{ font: `700 14px ${FONT}`, color: C.navy }}>{title} ›</b>
-                  <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{sub}</span>
-                </button>
-              ))}
-            </div>
             {newTx > 0 && (
               <button
                 onClick={() => setTab('bank')}
@@ -571,8 +544,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
 
         {tab === 'stats' && (
           <>
-            <MobileHeader title="Statisztika" sub="Terv vs. tény · partnerek" onBack={() => (setPartnerKey(null), setTab('home'))} />
-            <StatsView key={(partnerKey || '') + statsTab} mobile initialTab={statsTab} partnerKey={partnerKey} onPartnerBack={() => setPartnerKey(null)} />
+            <MobileHeader title="Statisztika" sub="Partner" onBack={() => (setPartnerKey(null), setTab('home'))} />
+            <div style={{ padding: '12px 16px 24px' }}>
+              <StatsHub key={partnerKey || ''} mobile partnerKey={partnerKey} onPartnerBack={() => (setPartnerKey(null), setTab('home'))} />
+            </div>
           </>
         )}
         {tab === 'alerts' && (

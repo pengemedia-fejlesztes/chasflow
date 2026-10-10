@@ -124,7 +124,7 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
   };
 }
 
-const sumMonths = (m: Map<string, number> | undefined, months: string[]) => {
+export const sumMonths = (m: Map<string, number> | undefined, months: string[]) => {
   if (!m) return 0;
   let s = 0;
   for (const ym of months) s += m.get(ym) || 0;
@@ -133,20 +133,20 @@ const sumMonths = (m: Map<string, number> | undefined, months: string[]) => {
 
 // ---------- becslés ----------
 /**
- * Becslés a korábbi tények alapján: az elmúlt 12 lezárt hónap átlaga azokra a kategóriákra,
- * amelyek rendszeresek (legalább 6 hónapban volt mozgás, és az utolsó 3 hónapban is).
- * Csak ott becsül, ahol nincs terv: a kategória utolsó tervezett hónapja utáni hónapokra.
+ * Becslés a korábbi tények alapján: az elmúlt 3 lezárt hónap átlaga azokra a kategóriákra,
+ * amelyek rendszeresek (a 3 hónapból legalább 2-ben volt mozgás).
+ * Csak ott becsül, ahol nincs terv: a kategória utolsó tervezett hónapja utáni hónapokra,
+ * a kiválasztott időszak végéig (pl. 8 vagy 12 hónap).
  */
+export const ESTIMATE_MONTHS = 3;
 export function buildEstimates(ix: Index, horizon: string): LeafMonth {
   const est: LeafMonth = new Map();
-  const last12 = monthRange(addMonths(ix.cur, -12), addMonths(ix.cur, -1));
-  const last3 = last12.slice(-3);
+  const window = monthRange(addMonths(ix.cur, -ESTIMATE_MONTHS), addMonths(ix.cur, -1));
   for (const [leaf, months] of ix.actual) {
     if (ix.leafById[leaf]?.archived) continue;
-    const active = last12.filter((ym) => (months.get(ym) || 0) !== 0).length;
-    const recent = last3.some((ym) => (months.get(ym) || 0) !== 0);
-    if (active < 6 || !recent) continue;
-    const avg = Math.round(sumMonths(months, last12) / 12);
+    const active = window.filter((ym) => (months.get(ym) || 0) !== 0).length;
+    if (active < 2) continue;
+    const avg = Math.round(sumMonths(months, window) / ESTIMATE_MONTHS);
     if (!avg) continue;
     const lp = ix.lastPlanMonth[leaf];
     const start = addMonths(lp && lp >= ix.cur ? lp : ix.cur, 1);
