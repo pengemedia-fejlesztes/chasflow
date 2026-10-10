@@ -3,6 +3,11 @@ name: Diagnosztika
 
 on:
   workflow_dispatch:
+    inputs:
+      sql:
+        description: 'Csak olvasó (SELECT) lekérdezés az éles adatbázison'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -26,3 +31,13 @@ jobs:
           npx wrangler d1 execute cashflow --remote --json --command "SELECT key, value FROM settings WHERE key IN ('nav_last_sync','nav_last_date','nav_last_error','nav_last_result')"
           npx wrangler d1 execute cashflow --remote --json --command "SELECT status, count(*) AS n FROM nav_invoices GROUP BY status"
           npx wrangler secret list
+      - name: Lekérdezés
+        if: ${{ inputs.sql != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SQL: ${{ inputs.sql }}
+        run: |
+          # csak SELECT engedett (nincs írás); több utasítás nem
+          if ! printf '%s' "$SQL" | grep -qiE '^[[:space:]]*select[[:space:]]' || printf '%s' "$SQL" | grep -q ';'; then echo "Csak egyetlen SELECT engedett."; exit 1; fi
+          npx wrangler d1 execute cashflow --remote --json --command "$SQL" | jq -c '.[0].results[]'
