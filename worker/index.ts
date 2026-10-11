@@ -9,6 +9,7 @@ import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { Env, HttpError, getSetting, json, safeEqual, withSecurityHeaders } from './util';
+import { SYNC_HOURS } from '../shared/aggreg8';
 
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -74,9 +75,6 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (b) return b;
   throw new HttpError(404, 'Nincs ilyen végpont.');
 }
-
-/** Szinkron órák (Budapest) */
-const SYNC_HOURS = [5, 9, 13, 17, 21];
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {

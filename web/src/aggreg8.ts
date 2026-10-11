@@ -53,6 +53,7 @@ export function parseAggreg8Xml(text: string): Aggreg8Account[] {
 export function guessBank(account: string): string | null {
   const code = /^HU\d{2}(\d{3})/.exec(account)?.[1] || /^(\d{3})/.exec(account)?.[1];
   if (code === '162') return 'MagNet';
+  if (code === '304') return 'BiNX';
   return null;
 }
 

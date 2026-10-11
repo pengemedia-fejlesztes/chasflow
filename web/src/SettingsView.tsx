@@ -12,6 +12,7 @@ import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { readSheetRows } from './sheet';
 import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './aggreg8';
+import { SYNC_HOURS } from '../../shared/aggreg8';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
 
@@ -969,12 +970,25 @@ function Categories() {
   );
 }
 
+type IngestStatus = {
+  active: boolean;
+  created: number | null;
+  sync_hours?: number[];
+  last: {
+    at: number;
+    source: 'xml' | 'json';
+    ok: boolean;
+    error?: string;
+    accounts: { bank?: string; rows?: number; inbox?: number; auto?: number; last_date?: string; account?: string; error?: string }[];
+  } | null;
+};
+
 /** Automatikus feltöltés a Macről: személyes kulcs + a telepítő parancsa (aggreg8 napi XML a Letöltésekből). */
 function AutoUpload() {
   const { run, showToast } = useStore();
-  const [st, setSt] = useState<{ active: boolean; created: number | null } | null>(null);
+  const [st, setSt] = useState<IngestStatus | null>(null);
   const [token, setToken] = useState('');
-  const load = () => api<{ active: boolean; created: number | null }>('/api/ingest/token').then(setSt, () => setSt(null));
+  const load = () => api<IngestStatus>('/api/ingest/token').then(setSt, () => setSt(null));
   useEffect(() => {
     load();
   }, []);
@@ -982,9 +996,24 @@ function AutoUpload() {
   const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => showToast('Vágólapra másolva'));
   return (
     <Section
-      title="Automatikus feltöltés a Macről (aggreg8)"
-      sub="A Mac naponta 7:30-kor és 16:30-kor megnyitja a saját (bejelentkezett) böngésződben az aggreg8 letöltési oldalát, letölti a napi XML-t (MagNet + BiNX), a Letöltésekbe kerülő fájlt pedig magától feltölti ide, értesítéssel. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-importra jó, bármikor visszavonható. Eltávolítás: ugyanaz a parancs --uninstall végződéssel."
+      title="Automatikus bankfeltöltés a Macről (aggreg8)"
+      sub={`A Mac-bot a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) szinkronizálja a BiNX és a MagNet számlát az aggreg8-ban, és a tranzakciókat feltölti ide – a már meglévő tételeket kiszűrjük, az újak a jóváhagyásra kerülnek. A letöltött aggreg8 XML-t a Letöltések mappából is fel tudja tölteni. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-feltöltésre jó, bármikor visszavonható.`}
     >
+      {st?.last && (
+        <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.last.ok ? C.navy : C.neg }}>
+          <b>Utolsó feltöltés: {relTime(st.last.at)}</b> ({st.last.source === 'json' ? 'Mac-bot' : 'XML'})
+          {st.last.ok
+            ? st.last.accounts.map((a, i) => (
+                <div key={i}>
+                  {a.bank
+                    ? `${a.bank}: ${a.rows} tétel, ebből új ${(a.inbox || 0) + (a.auto || 0)}${a.last_date ? ` · utolsó tétel ${a.last_date}` : ''}`
+                    : `…${a.account}: ${a.error}`}
+                </div>
+              ))
+            : ` – hiba: ${st.last.error}`}
+          {Date.now() - st.last.at > 26 * 3600_000 && <div style={{ color: C.neg }}>Több mint egy napja nem jött feltöltés – nézd meg a Macet.</div>}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ font: `600 14px ${FONT}`, color: st?.active ? C.blueDark : C.muted }}>
           {st?.active ? `✓ Kulcs aktív (${relTime(st.created)})` : 'Nincs aktív kulcs'}

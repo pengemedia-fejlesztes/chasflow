@@ -1,25 +1,50 @@
 // Automatikus kivonat-feltöltés (pl. a Mac Letöltések mappájából): személyes, visszavonható feltöltési kulccsal.
-// A kulcs csak az aggreg8 XML importra jó; a szerver csak a hash-ét tárolja.
-import { bankOfAccount, parseAggreg8 } from '../shared/aggreg8';
+// A kulcs csak az aggreg8 importra (XML vagy a Mac-bot JSON-ja) és az ütemezés lekérdezésére jó; a szerver csak a hash-ét tárolja.
+import { A8_LIMITS, SYNC_HOURS, bankOfAccount, parseAggreg8, parseAggreg8Json, type A8Account } from '../shared/aggreg8';
 import { requireRole, type User } from './auth';
 import { importManualRows } from './bank';
 import { Env, HttpError, audit, getSetting, json, now, randomId, safeEqual, setSetting, sha256 } from './util';
 
 const KEY = 'import_token';
+const LAST = 'ingest_last';
 
-export async function handleIngest(env: Env, req: Request, path: string): Promise<Response | null> {
-  if (path !== '/api/ingest/aggreg8' || req.method !== 'POST') return null;
+async function tokenUser(env: Env, req: Request): Promise<number> {
   const auth = req.headers.get('Authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   const st = JSON.parse((await getSetting(env, KEY)) || 'null') as { hash: string; user_id: number } | null;
   if (!token || !st || !safeEqual(await sha256(token), st.hash)) throw new HttpError(401, 'Érvénytelen feltöltési kulcs.');
+  return st.user_id;
+}
+
+export type IngestLast = { at: number; source: 'xml' | 'json'; ok: boolean; accounts: unknown[]; error?: string };
+
+export async function handleIngest(env: Env, req: Request, path: string): Promise<Response | null> {
+  // a Mac-bot innen olvassa, mikor kell feltöltenie (= a banki szinkron órái), és mikor sikerült utoljára
+  if (path === '/api/ingest/status' && req.method === 'GET') {
+    await tokenUser(env, req);
+    return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last: JSON.parse((await getSetting(env, LAST)) || 'null') });
+  }
+  if (path !== '/api/ingest/aggreg8' || req.method !== 'POST') return null;
+  const userId = await tokenUser(env, req);
   const len = Number(req.headers.get('Content-Length') || 0);
-  if (len > 10 * 1024 * 1024) throw new HttpError(413, 'Túl nagy fájl.');
-  let accs;
+  if (len > A8_LIMITS.maxBytes) throw new HttpError(413, 'Túl nagy fájl.');
+  const isJson = /json/i.test(req.headers.get('Content-Type') || '');
+  let accs: A8Account[];
+  let balances: Record<string, number> = {};
+  let skipped = 0;
   try {
-    accs = parseAggreg8(await req.text());
+    const text = await req.text();
+    if (text.length > A8_LIMITS.maxBytes) throw new Error('Túl nagy fájl.');
+    if (isJson) {
+      const r = parseAggreg8Json(JSON.parse(text));
+      accs = r.accounts;
+      balances = r.balances;
+      skipped = r.skipped;
+    } else accs = parseAggreg8(text);
   } catch (e: any) {
-    throw new HttpError(400, String(e?.message || e));
+    const error = String(e?.message || e).slice(0, 200);
+    await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: false, accounts: [], error } satisfies IngestLast));
+    throw new HttpError(400, error);
   }
   const manual = (
     await env.DB.prepare("SELECT bank_name, label, iban FROM bank_accounts WHERE provider = 'manual'").all<{
@@ -30,25 +55,34 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
   ).results;
   const out: unknown[] = [];
   for (const a of accs) {
-    // bank: 1) ismert számlaszám, 2) bankkód (MagNet), 3) a maradék kézi számla (pl. BiNX), ha egyértelmű
-    let m = manual.find((x) => x.iban && x.iban.replace(/\s|-/g, '') === a.account);
+    // bank: 1) ismert számlaszám, 2) bankkód (MagNet 162, BiNX 304), 3) a maradék kézi számla, ha egyértelmű
+    let m = manual.find((x) => x.iban && x.iban.replace(/\s|-/g, '').toUpperCase() === a.account.toUpperCase());
     if (!m) {
       const bn = bankOfAccount(a.account);
       if (bn) m = manual.find((x) => x.bank_name.toLowerCase() === bn.toLowerCase()) || { bank_name: bn, label: 'Üzleti számla', iban: null };
     }
     if (!m) {
-      const rest = manual.filter((x) => !x.iban && !bankOfAccount(x.bank_name) && !/magnet/i.test(x.bank_name));
+      const rest = manual.filter((x) => !x.iban && !bankOfAccount(x.bank_name) && !/magnet|binx/i.test(x.bank_name));
       if (rest.length === 1) m = rest[0];
     }
     if (!m) {
       out.push({ account: a.account.slice(-4), skipped: a.rows.length, error: 'ismeretlen számla – töltsd fel egyszer kézzel az appban' });
       continue;
     }
-    const r = await importManualRows(env, st.user_id, { bank_name: m.bank_name, label: m.label, rows: a.rows, iban: a.account });
-    out.push({ bank: r.bank, rows: r.rows, inbox: r.inbox, auto: r.auto, duplicates: r.duplicates });
+    const balance = balances[a.account.toUpperCase()];
+    const r = await importManualRows(env, userId, {
+      bank_name: m.bank_name,
+      label: m.label,
+      rows: a.rows,
+      iban: a.account,
+      ...(balance !== undefined ? { balance: String(balance) } : {}),
+    });
+    const last = a.rows.reduce((d, x) => (x.date > d ? x.date : d), '');
+    out.push({ bank: r.bank, rows: r.rows, inbox: r.inbox, auto: r.auto, duplicates: r.duplicates, last_date: last });
   }
-  await audit(env, st.user_id, 'ingest_aggreg8', out);
-  return json({ ok: true, accounts: out });
+  await audit(env, userId, 'ingest_aggreg8', { source: isJson ? 'json' : 'xml', skipped, accounts: out });
+  await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: true, accounts: out } satisfies IngestLast));
+  return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS });
 }
 
 /** Kulcs létrehozása (a régi érvényét veszti) / visszavonása – adminnak. */
@@ -68,7 +102,7 @@ export async function handleIngestToken(env: Env, req: Request, path: string, u:
   }
   if (req.method === 'GET') {
     const st = JSON.parse((await getSetting(env, KEY)) || 'null') as { created: number } | null;
-    return json({ active: !!st, created: st?.created || null });
+    return json({ active: !!st, created: st?.created || null, last: JSON.parse((await getSetting(env, LAST)) || 'null'), sync_hours: SYNC_HOURS });
   }
   return null;
 }
