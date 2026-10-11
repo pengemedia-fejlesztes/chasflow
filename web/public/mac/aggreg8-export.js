@@ -11,6 +11,9 @@
   };
   const arr = (j) => (Array.isArray(j) ? j : j && (j.data || j.items || j.results || j.transactions || j.consents)) || [];
   // lapozás: 0-tól vagy 1-től számozott oldalak; 404 → egyszer újrapróbálja, utána vége; azonosító szerint egyszer
+  // csak az új tételek: a cashflow tervező utolsó banki tétele előtti 7. naptól (window.__cf_since); üres → teljes lista
+  const since = /^\d{4}-\d{2}-\d{2}$/.test(String(window.__cf_since || '')) ? window.__cf_since : '';
+  const dayOf = (t) => String((t && (t.bookingDate || t.valueDate || t.date)) || '').slice(0, 10);
   const tx = [], seen = new Set(), pages = [];
   let tp = 0;
   for (let p = 0; p <= 80; p++) {
@@ -33,6 +36,9 @@
       fresh++;
     }
     pages.push(p + ':' + fresh);
+    // a lista a legújabbal kezdődik: ha ezen az oldalon már a határnál régebbi tétel is van, nem kell tovább lapozni
+    const days = items.map(dayOf).filter(Boolean);
+    if (since && days.length && days.some((d) => d < since)) break;
     const m = (j && j.meta) || {};
     tp = m.totalPages || m.total_pages || m.lastPage || m.pageCount || tp;
     if (!items.length || (!fresh && p > 1)) break;
@@ -60,8 +66,9 @@
     if (o && typeof o === 'object' && d < 4) for (const v of Object.values(o)) { const a = findAcc(v, d + 1); if (a) return a; }
     return null;
   };
+  const keep = since && tx.some((t) => dayOf(t)) ? tx.filter((t) => !dayOf(t) || dayOf(t) >= since) : tx;
   const out = {
-    transactions: tx.map((t) => {
+    transactions: keep.map((t) => {
       if (!t || typeof t !== 'object' || t.account) return t;
       const a = findAcc(Object.fromEntries(Object.entries(t).filter(([k]) => k !== '_id' && k !== 'id')));
       return a ? Object.assign({}, t, { account: a }) : t;
@@ -73,6 +80,6 @@
   const a = document.createElement('a');
   a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(u), 60000);
-  const dates = tx.map((t) => String((t && (t.bookingDate || t.valueDate || t.date)) || '').slice(0, 10)).filter(Boolean).sort();
-  return 'OK ' + tx.length + ' tétel (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + ', fájl: ' + name;
+  const dates = keep.map(dayOf).filter(Boolean).sort();
+  return 'OK ' + keep.length + ' tétel' + (since ? ', ' + since + ' óta' : ', teljes lista') + ' (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + ', fájl: ' + name;
 })();

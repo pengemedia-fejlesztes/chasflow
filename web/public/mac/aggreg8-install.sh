@@ -107,33 +107,33 @@ case "$R" in
   *login*) log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1 ;;
 esac
 # frissítés: a bankkapcsolatok (BinX, MagNet) szinkron gombjai egymás után, mindegyiknél megvárja az eredményt
-BTN='var q=function(){var b=[].slice.call(document.querySelectorAll("app-bac-list button.btn-sync"));if(!b.length)b=[].slice.call(document.querySelectorAll("button.btn-sync"));return b};'
-N=0
+# a gombokat a bank neve szerint keressük (a lista szinkron után újrarajzolódik, a sorrend/index nem megbízható)
+BTN='var q=function(){var b=[].slice.call(document.querySelectorAll("app-bac-list button.btn-sync"));if(!b.length)b=[].slice.call(document.querySelectorAll("button.btn-sync"));return b};var lbl=function(b){for(var e=b;e&&e!==document.body;e=e.parentElement){var t=(e.innerText||"").toLowerCase(),x=/binx/.test(t),m=/magnet/.test(t);if(x!==m)return x?"BinX":"MagNet";if(x&&m)break}return ""};var byName=function(n){return q().filter(function(b){return lbl(b)===n})[0]};'
+BANKS=""
 for i in $(seq 1 10); do
-  N=$(js "(function(){${BTN}return String(q().length)})()")
-  case "$N" in [1-9]*) break ;; esac
+  BANKS=$(js "(function(){${BTN}return q().map(lbl).filter(Boolean).join(' ')})()")
+  case "$BANKS" in *BinX*|*MagNet*) break ;; esac
   sleep 3
 done
-log "szinkron gombok: $N"
-case "$N" in [1-9]*) ;; *) N=0 ;; esac
-k=0
-while [ "$k" -lt "$N" ]; do
-  # a gomb az előző szinkron után újrarajzolódhat – megvárja (legfeljebb 60 mp)
+log "szinkron bankok: $BANKS"
+for BANK in BinX MagNet; do
+  case " $BANKS " in *" $BANK "*) ;; *) log "szinkron $BANK: nincs gomb"; continue ;; esac
+  C=""
   for w in $(seq 1 20); do
-    C=$(js "(function(){${BTN}var b=q()[$k];if(!b||b.disabled)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
+    C=$(js "(function(){${BTN}var b=byName('$BANK');if(!b||b.disabled)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
     [ "$C" = "KATT" ] && break
     sleep 3
   done
-  RES="időtúllépés"
+  RES="$C"
   if [ "$C" = "KATT" ]; then
+    RES="időtúllépés"
     for j in $(seq 1 40); do
       sleep 3
-      T=$(js '(function(){var t=document.body.innerText;if(t.split("Sikeres szinkroniz").length>window.__cf_t0)return "OK";if(/sikertelen|hiba történt|error/i.test(t))return "HIBA";return ""})()')
+      T=$(js '(function(){var t=document.body.innerText;if(t.split("Sikeres szinkroniz").length>window.__cf_t0)return "OK";if(/sikertelen|hiba történt/i.test(t))return "HIBA";return ""})()')
       case "$T" in OK|HIBA) RES="$T"; break ;; esac
     done
-  else RES="$C"; fi
-  log "szinkron $((k+1))/$N: $RES"
-  k=$((k+1))
+  fi
+  log "szinkron $BANK: $RES"
   sleep 8
 done
 goto "https://standalone.aggreg8.hu/transactions"
@@ -143,6 +143,15 @@ sleep 12
 log "lap: $(js 'location.href')"
 EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || { log "export-szkript nem tölthető le"; note "Cashflow – aggreg8" "Nem érem el a cashflow tervezőt."; exit 1; }
 EXP="${EXP%;}"
+# csak az új tételek: a cashflow tervező megmondja, mikori az utolsó banki tétele (−7 nap átfedéssel);
+# hétfő hajnalban teljes lista ellenőrzésképpen
+TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
+SINCE=""
+if [ "$(date +%u)" != "1" ] || [ "$(date +%H)" -ge 7 ]; then
+  SINCE=$(curl -s -m 30 "$URL/api/ingest/status" -H "Authorization: Bearer $TOKEN" | grep -o '"since":"[0-9-]*"' | cut -d'"' -f4)
+fi
+log "kezdő dátum: ${SINCE:-teljes lista}"
+js "window.__cf_since='$SINCE';'x'" >/dev/null
 js "window.__cf_r='fut';($EXP).then(function(r){window.__cf_r=r},function(e){window.__cf_r='HIBA '+e.message});'START'" >/dev/null
 for i in $(seq 1 60); do
   sleep 3
@@ -156,7 +165,6 @@ case "$R" in
     F="$STATE/last.json"
     js 'window.__cf_data||""' > "$F"
     js 'delete window.__cf_data;"x"' >/dev/null
-    TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
     U=$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: application/json" --data-binary @"$F")
     rm -f "$F"
     log "feltöltés: $(echo "$U" | head -c 400)"

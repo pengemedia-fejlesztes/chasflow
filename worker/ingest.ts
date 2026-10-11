@@ -22,7 +22,17 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
   // a Mac-bot innen olvassa, mikor kell feltöltenie (= a banki szinkron órái), és mikor sikerült utoljára
   if (path === '/api/ingest/status' && req.method === 'GET') {
     await tokenUser(env, req);
-    return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last: JSON.parse((await getSetting(env, LAST)) || 'null') });
+    // bankonként a legutolsó banki tétel napja; a Mac ettől 7 nappal korábbtól kéri le az új tételeket
+    // (a bankok visszamenő dátummal is könyvelnek; a duplikációt a feltöltés kiszűri)
+    const rows = (
+      await env.DB.prepare(
+        "SELECT a.bank_name AS bank, MAX(t.date) AS d FROM bank_accounts a JOIN bank_tx t ON t.account_id = a.id WHERE a.provider = 'manual' GROUP BY a.bank_name",
+      ).all<{ bank: string; d: string | null }>()
+    ).results;
+    const last_dates = Object.fromEntries(rows.filter((r) => r.d).map((r) => [r.bank, r.d]));
+    const ds = Object.values(last_dates) as string[];
+    const since = ds.length ? new Date(Date.parse(ds.reduce((a, d) => (d < a ? d : a))) - 7 * 86400_000).toISOString().slice(0, 10) : null;
+    return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last_dates, since, last: JSON.parse((await getSetting(env, LAST)) || 'null') });
   }
   if (path !== '/api/ingest/aggreg8' || req.method !== 'POST') return null;
   const userId = await tokenUser(env, req);
