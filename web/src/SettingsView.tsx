@@ -997,7 +997,7 @@ function AutoUpload() {
   return (
     <Section
       title="Automatikus bankfeltöltés a Macről (aggreg8)"
-      sub={`A Mac-bot a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) szinkronizálja a BiNX és a MagNet számlát az aggreg8-ban, és a tranzakciókat feltölti ide – a már meglévő tételeket kiszűrjük, az újak a jóváhagyásra kerülnek. A letöltött aggreg8 XML-t a Letöltések mappából is fel tudja tölteni. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-feltöltésre jó, bármikor visszavonható.`}
+      sub={`A Claude ügynök (Claude asztali app + Claude in Chrome) a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) frissíti a BiNX és a MagNet számlát az aggreg8-ban, és letölti a tranzakciókat; a Mac a Letöltésekből magától feltölti ide – a már meglévő tételeket kiszűrjük, az újak a jóváhagyásra kerülnek. Beállítás: 1) feltöltési kulcs (csak a kivonat-feltöltésre jó, bármikor visszavonható), 2) a Mac-telepítő, 3) az ügynök feladata ütemezett feladatként a Claude appban.`}
     >
       {st?.last && (
         <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.last.ok ? C.navy : C.neg }}>
@@ -1038,6 +1038,21 @@ function AutoUpload() {
             Visszavonás
           </Pill>
         )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Pill small onClick={() => copy(cmd)}>
+          Mac-telepítő parancs másolása
+        </Pill>
+        <Pill
+          small
+          onClick={() =>
+            fetch('/mac/claude-ugynok.txt')
+              .then((r) => r.text())
+              .then(copy)
+          }
+        >
+          Claude ügynök feladat másolása
+        </Pill>
       </div>
       {token && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: 12, background: C.bg }}>

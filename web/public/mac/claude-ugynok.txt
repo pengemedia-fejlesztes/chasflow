@@ -1,0 +1,89 @@
+FELADAT: aggreg8 banki tételek frissítése és betöltése a Cashflow tervezőbe
+Futás: minden nap 5:00, 9:00, 13:00, 17:00 és 21:00 (Europe/Budapest) – ez a Cashflow tervező banki szinkronjának ideje.
+Eszköz: Claude in Chrome (a saját, bejelentkezett Chrome-om). Mindig új lapon dolgozz, a meglévő lapjaimat ne zárd be.
+
+1. FRISSÍTÉS
+- Nyisd meg: https://standalone.aggreg8.hu/synchronizations
+- Ha a bejelentkező oldalra (/login) kerülsz: NE próbálj belépni. Állj meg, és írd meg nekem: „Az aggreg8-ba be kell jelentkezni (Google), utána újra lefuttatom.”
+- Két bankkapcsolat van: BinX és MagNet. Mindkettőnél kattints a szinkronizálás gombra (button.btn-sync), és várd meg a „Sikeres szinkronizálás!” üzenetet (legfeljebb 2 percig). Ha valamelyik hibát ír, jegyezd fel a szövegét, és menj tovább.
+- Ha a „Meghosszabbítás” melletti lejárat 14 napon belül van, jelezd az összefoglalóban (melyik bank, melyik nap).
+- Más gombot (törlés, visszavonás, meghosszabbítás) ne nyomj meg.
+
+2. LETÖLTÉS
+- Nyisd meg: https://standalone.aggreg8.hu/transactions és várd meg, amíg a lista betölt.
+- Ezen a lapon futtasd le az alábbi JavaScriptet változtatás nélkül (javascript eszközzel). A szkript a lap saját bejelentkezésével lekéri az összes tranzakciót, és letölt egy aggreg8-tranzakciok-….json fájlt a Letöltések mappába; csak egy rövid összegzést ad vissza.
+- A localStorage tartalmát, a tokent és a tranzakciók adatait soha ne írd ki, ne olvasd ki és ne naplózd – csak a szkript visszatérési szövegét használd.
+- Ha a szkript „LOGIN”-t vagy LOGIN hibát ad: ugyanaz, mint fent (be kell jelentkezni). Más hibánál írd meg a hibaszöveget.
+- Ha a Chrome rákérdez, hogy engedélyezi-e a letöltést, engedélyezd (csak aggreg8-tranzakciok-….json fájlnál).
+
+----- SZKRIPT ELEJE -----
+(async () => {
+  const tk = localStorage.getItem('token');
+  if (!tk) return 'LOGIN';
+  const B = 'https://standalone-backend.aggreg8.hu';
+  const get = async (p) => {
+    const r = await fetch(B + p, { headers: { Authorization: 'Bearer ' + tk } });
+    if (r.status === 401) throw new Error('LOGIN');
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + p);
+    return r.json();
+  };
+  const arr = (j) => (Array.isArray(j) ? j : j && (j.data || j.items || j.results || j.transactions || j.consents)) || [];
+  let tx = [], p = 1, tp = 1;
+  do {
+    const j = await get('/transactions?page=' + p);
+    tx = tx.concat(arr(j));
+    tp = (j && j.meta && (j.meta.totalPages || j.meta.total_pages)) || 1;
+    p++;
+  } while (p <= tp && p <= 80);
+  let cons = [];
+  try { cons = arr(await get('/bank-access-consents')); } catch (e) {}
+  const IB = /^HU\d{2}[0-9 ]{20,34}$/;
+  const ibansIn = (o, d = 0, out = []) => {
+    if (typeof o === 'string') { if (IB.test(o.trim())) out.push(o.replace(/\s/g, '')); }
+    else if (o && typeof o === 'object' && d < 6) Object.values(o).forEach((v) => ibansIn(v, d + 1, out));
+    return out;
+  };
+  // azonosító → saját IBAN (a bankkapcsolatokból); csak ahol egyértelmű
+  const map = {};
+  const mapIds = (o, d = 0) => {
+    if (!o || typeof o !== 'object' || d > 5) return;
+    const ib = [...new Set(ibansIn(o))];
+    if (ib.length === 1) ['_id', 'id', 'accountId', 'consentId', 'resourceId'].forEach((k) => { if (typeof o[k] === 'string' || typeof o[k] === 'number') map[String(o[k])] = ib[0]; });
+    Object.values(o).forEach((v) => mapIds(v, d + 1));
+  };
+  cons.forEach((c) => mapIds(c));
+  const findAcc = (o, d = 0) => {
+    if ((typeof o === 'string' || typeof o === 'number') && map[String(o)]) return map[String(o)];
+    if (o && typeof o === 'object' && d < 4) for (const v of Object.values(o)) { const a = findAcc(v, d + 1); if (a) return a; }
+    return null;
+  };
+  const out = {
+    transactions: tx.map((t) => {
+      if (!t || typeof t !== 'object' || t.account) return t;
+      const a = findAcc(Object.fromEntries(Object.entries(t).filter(([k]) => k !== '_id' && k !== 'id')));
+      return a ? Object.assign({}, t, { account: a }) : t;
+    }),
+  };
+  const name = 'aggreg8-tranzakciok-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.json';
+  const u = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+  const dates = tx.map((t) => String((t && (t.bookingDate || t.valueDate || t.date)) || '').slice(0, 10)).filter(Boolean).sort();
+  return 'OK ' + tx.length + ' tétel (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, fájl: ' + name;
+})();
+----- SZKRIPT VÉGE -----
+
+3. ELLENŐRZÉS A CASHFLOW TERVEZŐBEN
+- A letöltött fájlt a Mac magától feltölti (a Letöltések-figyelő), és utána törli. Várj 60 másodpercet.
+- Nyisd meg új lapon: https://cashflow-tervezo.pengemedia.workers.dev/api/ingest/token
+  A válasz „last” része mutatja az utolsó feltöltést: at (időbélyeg ms), ok, és bankonként rows / inbox (új, jóváhagyásra) / auto / duplicates / last_date.
+- Ha a „last.at” nem az elmúlt 5 percből való: a feltöltés nem ment végbe – írd meg, hogy nézzem meg a Macen a ~/Library/Application Support/cashflow-aggreg8/upload.log naplót, vagy futtassam újra a telepítőt.
+- Ha a bejelentkező oldalra kerülsz a cashflow tervezőben: ne lépj be, csak jelezd.
+
+4. ÖSSZEFOGLALÓ (röviden, magyarul)
+- Szinkronizálás: BinX / MagNet – sikeres vagy hiba.
+- Letöltés: hány tétel, milyen időszak.
+- Cashflow tervező: bankonként hány új tétel került jóváhagyásra, hány volt már meg, utolsó tétel dátuma.
+- Figyelmeztetések: lejáró bankkapcsolat, „ismeretlen számla”, hiba.
+Pénzt ne utalj, semmit ne hagyj jóvá és ne törölj – ez a feladat csak frissít, letölt és ellenőriz.
