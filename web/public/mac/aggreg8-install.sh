@@ -85,18 +85,19 @@ STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 LOG="$STATE/download.log"
 note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
-# JavaScript futtatása az aggreg8 lapon (Chrome)
-js() {
+# saját lap a Chrome-ban (azonosító alapján vezéreljük, nem URL alapján)
+TAB=$(osascript -e 'tell application "Google Chrome"' -e 'activate' -e 'if (count of windows) = 0 then make new window' \
+  -e 'set t to make new tab at end of tabs of window 1 with properties {URL:"https://standalone.aggreg8.hu/synchronizations"}' \
+  -e 'return id of t' -e 'end tell' 2>&1)
+log "lap azonosító: $TAB"
+case "$TAB" in ''|*[!0-9]*) note "Cashflow – engedély kell" "A Terminál nem vezérelheti a Chrome-ot: Rendszerbeállítások → Adatvédelem → Automatizálás"; exit 1 ;; esac
+tabdo() {
   osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
-    -e 'if URL of t contains "standalone.aggreg8.hu" then return (execute t javascript (item 1 of argv))' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$1" 2>&1
+    -e 'if (id of t as text) is (item 1 of argv) then' -e "$2" -e 'end if' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$TAB" "$1" 2>&1
 }
-goto() {
-  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
-    -e 'if URL of t contains "standalone.aggreg8.hu" then' -e 'set URL of t to (item 1 of argv)' -e 'return "OK"' -e 'end if' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$1" >/dev/null 2>&1
-}
-open -a "Google Chrome" "https://standalone.aggreg8.hu/synchronizations"
+js() { tabdo "$1" 'return (execute t javascript (item 2 of argv))'; }
+goto() { tabdo "$1" 'set URL of t to (item 2 of argv)' >/dev/null; }
 sleep 10
 R=$(js 'location.href')
 log "lap: $R"
@@ -126,6 +127,8 @@ for i in $(seq 1 60); do
   case "$R" in fut) ;; *) break ;; esac
 done
 log "letöltés: $R"
+# a saját lapot bezárja (a többi lapodhoz nem nyúl)
+case "$R" in OK*) sleep 5; tabdo "" 'close t' >/dev/null ;; esac
 case "$R" in
   OK*) note "Cashflow – aggreg8" "Letöltve a Letöltésekbe: ${R#OK }" ;;
   *LOGIN*) note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google)." ;;
