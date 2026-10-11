@@ -72,10 +72,10 @@ launchctl load "$PLIST"
 if [ -d "/Applications/Google Chrome.app" ]; then BROWSER="Google Chrome"; else BROWSER="Safari"; fi
 cat > "$DSCRIPT" <<'SH'
 #!/bin/bash
-# Az aggreg8 „info-sharing” oldal megnyitása a böngészőben és az XML export letöltése
+# Az aggreg8 „Tranzakciók” oldal megnyitása a böngészőben és az XML export letöltése
 # (a feltöltést a Letöltések-figyelő végzi). Eltávolítás: a telepítő --uninstall kapcsolójával.
 BROWSER="__BROWSER__"
-PAGE="https://standalone.aggreg8.hu/info-sharing"
+PAGE="https://standalone.aggreg8.hu/transactions"
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
 JS='(function(){var t=function(e){return (e.innerText||e.textContent||"").replace(/\s+/g," ").trim()};if(document.querySelector("input[type=password]"))return "LOGIN";var els=[].slice.call(document.querySelectorAll("button,a,[role=button],[role=menuitem],mat-option"));var vis=function(e){return e.offsetParent!==null};var x=els.filter(function(e){return /xml/i.test(t(e))&&vis(e)})[0]||els.filter(function(e){return /let(ö|o)lt|export|download/i.test(t(e))&&vis(e)})[0];if(!x)return "NOBUTTON:"+els.map(t).filter(Boolean).slice(0,40).join(" | ");x.click();return "CLICKED:"+t(x)})()'
