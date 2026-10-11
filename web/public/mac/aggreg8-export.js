@@ -10,12 +10,19 @@
     return r.json();
   };
   const arr = (j) => (Array.isArray(j) ? j : j && (j.data || j.items || j.results || j.transactions || j.consents)) || [];
-  // lapozás: a következő oldal 404/üres → vége; azonosító szerint egyszer
-  let tx = [], p = 1, tp = 1;
-  const seen = new Set();
-  do {
-    const j = await get('/transactions?page=' + p, p > 1);
-    if (!j) break;
+  // lapozás: 0-tól vagy 1-től számozott oldalak; 404 → egyszer újrapróbálja, utána vége; azonosító szerint egyszer
+  const tx = [], seen = new Set(), pages = [];
+  let tp = 0;
+  for (let p = 0; p <= 80; p++) {
+    let j = await get('/transactions?page=' + p, true);
+    if (!j && p > 0 && (!tp || p <= tp)) {
+      await new Promise((r) => setTimeout(r, 2000));
+      j = await get('/transactions?page=' + p, true);
+    }
+    if (!j) {
+      if (p === 0) continue;
+      break;
+    }
     const items = arr(j);
     let fresh = 0;
     for (const t of items) {
@@ -25,10 +32,12 @@
       tx.push(t);
       fresh++;
     }
-    if (!items.length || !fresh) break;
-    tp = (j && j.meta && (j.meta.totalPages || j.meta.total_pages || j.meta.lastPage || j.meta.pageCount)) || 1;
-    p++;
-  } while (p <= tp && p <= 80);
+    pages.push(p + ':' + fresh);
+    const m = (j && j.meta) || {};
+    tp = m.totalPages || m.total_pages || m.lastPage || m.pageCount || tp;
+    if (!items.length || (!fresh && p > 1)) break;
+    if (tp && p >= tp) break;
+  }
   let cons = [];
   try { cons = arr(await get('/bank-access-consents')); } catch (e) {}
   const IB = /^HU\d{2}[0-9 ]{20,34}$/;
@@ -64,5 +73,5 @@
   a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(u), 60000);
   const dates = tx.map((t) => String((t && (t.bookingDate || t.valueDate || t.date)) || '').slice(0, 10)).filter(Boolean).sort();
-  return 'OK ' + tx.length + ' tétel (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, fájl: ' + name;
+  return 'OK ' + tx.length + ' tétel (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + ', fájl: ' + name;
 })();
