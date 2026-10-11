@@ -997,7 +997,7 @@ function AutoUpload() {
   return (
     <Section
       title="Automatikus bankfeltöltés a Macről (aggreg8)"
-      sub={`A Claude ügynök (Claude asztali app + Claude in Chrome) a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) frissíti a BiNX és a MagNet számlát az aggreg8-ban, és letölti a tranzakciókat; a Mac a Letöltésekből magától feltölti ide – a már meglévő tételeket kiszűrjük, az újak a jóváhagyásra kerülnek. Beállítás: 1) feltöltési kulcs (csak a kivonat-feltöltésre jó, bármikor visszavonható), 2) a Mac-telepítő, 3) az ügynök feladata ütemezett feladatként a Claude appban.`}
+      sub={`A Mac a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) a saját, bejelentkezett Chrome-odban megnyitja az aggreg8-at, frissíti a BiNX és a MagNet számlát, és a Letöltésekbe menti a tranzakciókat; a fájlt magától feltölti ide (a meglévő tételeket kiszűrjük). Beállítás: feltöltési kulcs, majd a Mac-telepítő parancs a Terminálban.`}
     >
       {st?.last && (
         <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.last.ok ? C.navy : C.neg }}>

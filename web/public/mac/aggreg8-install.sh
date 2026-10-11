@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cashflow tervező – aggreg8 banki tételek automatikus feltöltése a Letöltések mappából (macOS).
-# A letöltést a Claude ügynök végzi a böngészőben (aggreg8-tranzakciok-*.json), vagy kézzel letöltött XML (aggreg8-bank-tranzakciok-*.xml).
+# 5, 9, 13, 17, 21 órakor a saját Chrome-ban megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-*.json).
 # Telepítés:  bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh)
 # Eltávolítás: bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh) --uninstall
 set -e
@@ -8,15 +8,14 @@ URL="https://cashflow-tervezo.pengemedia.workers.dev"
 LABEL="hu.pengemedia.cashflow-aggreg8"
 SCRIPT="$HOME/Library/Scripts/cashflow-aggreg8.sh"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-# a korábbi (gombra kattintó) letöltő – már nem kell
-DPLIST="$HOME/Library/LaunchAgents/hu.pengemedia.cashflow-aggreg8-download.plist"
+DLABEL="hu.pengemedia.cashflow-aggreg8-download"
 DSCRIPT="$HOME/Library/Scripts/cashflow-aggreg8-download.sh"
+DPLIST="$HOME/Library/LaunchAgents/$DLABEL.plist"
 launchctl unload "$DPLIST" 2>/dev/null || true
-rm -f "$DPLIST" "$DSCRIPT"
 
 if [ "$1" = "--uninstall" ]; then
   launchctl unload "$PLIST" 2>/dev/null || true
-  rm -f "$PLIST" "$SCRIPT"
+  rm -f "$PLIST" "$SCRIPT" "$DPLIST" "$DSCRIPT"
   security delete-generic-password -s cashflow-import >/dev/null 2>&1 || true
   echo "Eltávolítva."
   exit 0
@@ -35,7 +34,7 @@ fi
 mkdir -p "$HOME/Library/Scripts" "$HOME/Library/LaunchAgents"
 cat > "$SCRIPT" <<SH
 #!/bin/bash
-# Új aggreg8 export a Letöltésekben → feltöltés a Cashflow tervezőbe (egy fájlt egyszer; a Claude ügynök JSON-ját utána törli).
+# Új aggreg8 export a Letöltésekben → feltöltés a Cashflow tervezőbe (egy fájlt egyszer).
 STATE="\$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "\$STATE"; touch "\$STATE/done"
 note() { osascript -e "display notification \"\$2\" with title \"\$1\"" >/dev/null 2>&1; }
 if ! ls "\$HOME/Downloads" >/dev/null 2>&1; then
@@ -53,7 +52,6 @@ for F in "\$HOME"/Downloads/aggreg8-bank-tranzakciok-*.xml "\$HOME"/Downloads/ag
   R=\$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer \$TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: \$CT" --data-binary @"\$F")
   if echo "\$R" | grep -q '"ok":true'; then
     echo "\$SUM" >> "\$STATE/done"
-    case "\$F" in *.json) rm -f "\$F" ;; esac
     N=\$(echo "\$R" | grep -o '"inbox":[0-9-]*' | cut -d: -f2 | awk '{s+=\$1} END {print s+0}')
     D=\$(echo "\$R" | grep -o '"duplicates":[0-9-]*' | cut -d: -f2 | awk '{s+=\$1} END {print s+0}')
     note "Cashflow – banki tételek feltöltve" "\$N új tétel jóváhagyásra, \$D már megvolt"
@@ -79,6 +77,79 @@ PL
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
 
+# --- letöltés: a saját, bejelentkezett Chrome-ban megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat ---
+cat > "$DSCRIPT" <<'SH'
+#!/bin/bash
+URL="https://cashflow-tervezo.pengemedia.workers.dev"
+STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
+LOG="$STATE/download.log"
+note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+# JavaScript futtatása az aggreg8 lapon (Chrome)
+js() {
+  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
+    -e 'if URL of t contains "standalone.aggreg8.hu" then return (execute t javascript (item 1 of argv))' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$1" 2>&1
+}
+goto() {
+  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
+    -e 'if URL of t contains "standalone.aggreg8.hu" then' -e 'set URL of t to (item 1 of argv)' -e 'return "OK"' -e 'end if' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$1" >/dev/null 2>&1
+}
+loggedin() { case "$(js 'location.pathname.indexOf("login")<0 && !!localStorage.getItem("token") ? "IN" : "OUT"')" in IN) return 0 ;; *) return 1 ;; esac; }
+
+open -g -a "Google Chrome" "https://standalone.aggreg8.hu/synchronizations"
+sleep 12
+R=$(js '1')
+case "$R" in
+  *-1743*|*"Apple Events"*|*JavaScript*) log "nincs engedély: $R"; note "Cashflow – engedély kell" "Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből"; exit 1 ;;
+  NOTAB) log "nincs aggreg8 lap"; note "Cashflow – aggreg8" "Nem nyílt meg az aggreg8 a Chrome-ban."; exit 1 ;;
+esac
+if ! loggedin; then log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1; fi
+# frissítés: a bankkapcsolatok szinkron gombjai
+log "szinkron: $(js '(function(){var b=[].slice.call(document.querySelectorAll("button.btn-sync")).filter(function(x){return !x.disabled});b.forEach(function(x){x.click()});return "SYNC "+b.length})()')"
+sleep 60
+goto "https://standalone.aggreg8.hu/transactions"
+sleep 12
+EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || { log "export-szkript nem tölthető le"; note "Cashflow – aggreg8" "Nem érem el a cashflow tervezőt."; exit 1; }
+EXP="${EXP%;}"
+js "window.__cf_r='fut';($EXP).then(function(r){window.__cf_r=r},function(e){window.__cf_r='HIBA '+e.message});'START'" >/dev/null
+for i in $(seq 1 60); do
+  sleep 3
+  R=$(js 'String(window.__cf_r)')
+  case "$R" in fut) ;; *) break ;; esac
+done
+log "letöltés: $R"
+case "$R" in
+  OK*) note "Cashflow – aggreg8" "Letöltve a Letöltésekbe: ${R#OK }" ;;
+  *LOGIN*) note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google)." ;;
+  *) note "Cashflow – aggreg8 hiba" "$(echo "$R" | head -c 120)" ;;
+esac
+SH
+chmod 700 "$DSCRIPT"
+cat > "$DPLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$DLABEL</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DSCRIPT</string></array>
+  <key>StartCalendarInterval</key><array>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+</dict></plist>
+PL
+launchctl load "$DPLIST"
+
 echo ""
-echo "Kész. A Letöltésekbe kerülő aggreg8 fájlokat (a Claude ügynök JSON-ja és a kézi XML) a Mac magától feltölti, értesítéssel."
-echo "Napló: ~/Library/Application Support/cashflow-aggreg8/upload.log"
+echo "Kész. 5, 9, 13, 17 és 21 órakor a Chrome megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-….json);"
+echo "a fájlt a Mac feltölti a cashflow tervezőbe. Napló: ~/Library/Application Support/cashflow-aggreg8/"
+echo ""
+echo "EGYSZER a Chrome-ban: Nézet → Fejlesztő → „JavaScript engedélyezése az Apple Events eseményekből” legyen bepipálva."
+echo "Ha a Mac rákérdez, hogy a Terminál/bash vezérelheti-e a Chrome-ot: Engedélyezés."
+printf "Ha be vagy jelentkezve az aggreg8-ba a Chrome-ban, nyomj Entert az azonnali próbához (Ctrl+C: kihagyás)… "
+read -r _
+/bin/bash "$DSCRIPT"; echo "Eredmény: $(tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log")"
