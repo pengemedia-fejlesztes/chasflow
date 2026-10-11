@@ -6,7 +6,7 @@ import { navEnabled, syncNav } from './nav';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
-import { Env, HttpError, getSetting, json, withSecurityHeaders } from './util';
+import { Env, HttpError, getSetting, json, safeEqual, withSecurityHeaders } from './util';
 
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -19,6 +19,19 @@ async function route(req: Request, env: Env): Promise<Response> {
     const origin = req.headers.get('Origin');
     if (origin && origin !== url.origin) throw new HttpError(403, 'Tiltott eredet.');
     if (req.headers.get('X-Requested-With') !== 'cashflow') throw new HttpError(403, 'Hiányzó kliens fejléc.');
+  }
+
+  // diagnosztika (GitHub Actions): egyszer használatos, véletlen DIAG_TOKEN-nel – a NAV szinkron lefuttatása, csak állapotot ad vissza
+  if (path === '/api/diag/nav' && req.method === 'POST') {
+    const t = req.headers.get('X-Diag-Token') || '';
+    if (!env.DIAG_TOKEN || env.DIAG_TOKEN.length < 32 || !safeEqual(t, env.DIAG_TOKEN)) throw new HttpError(404, 'Nincs ilyen végpont.');
+    if (!navEnabled(env)) return json({ ok: false, error: 'NAV nincs beállítva' });
+    try {
+      const r = await syncNav(env);
+      return json({ ok: true, ...r });
+    } catch (e: any) {
+      return json({ ok: false, error: String(e?.message || e).slice(0, 300) });
+    }
   }
 
   const auth = await handleAuth(env, req, path);

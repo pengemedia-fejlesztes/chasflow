@@ -13,6 +13,7 @@ export interface Env {
   NAV_SIGN_KEY?: string; // aláírókulcs
   NAV_TAX_NUMBER?: string; // a cég adószámának első 8 jegye
   NAV_API_URL?: string; // csak teszteléshez (pl. https://api-test.onlineszamla.nav.gov.hu/invoiceService/v3)
+  DIAG_TOKEN?: string; // csak a diagnosztika futása idejére (GitHub Actions állítja be és törli)
   MAIL_FROM?: string; // pl. "Cashflow <laszlo.nagy@360-marketing.eu>"
 }
 
