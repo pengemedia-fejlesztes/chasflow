@@ -24,7 +24,7 @@ export async function jwt(env: Env): Promise<string> {
   if (!env.EB_APP_ID || !env.EB_PRIVATE_KEY) throw new Error('Az Enable Banking nincs beállítva (EB_APP_ID, EB_PRIVATE_KEY).');
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)));
   const iat = Math.floor(Date.now() / 1000);
-  const head = enc({ typ: 'JWT', alg: 'RS256', kid: env.EB_APP_ID });
+  const head = enc({ typ: 'JWT', alg: 'RS256', kid: String(env.EB_APP_ID).trim() });
   const body = enc({ iss: 'enablebanking.com', aud: 'api.enablebanking.com', iat, exp: iat + 3600 });
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', await importKey(env.EB_PRIVATE_KEY), new TextEncoder().encode(head + '.' + body));
   return head + '.' + body + '.' + b64url(sig);
