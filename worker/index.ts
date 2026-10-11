@@ -31,7 +31,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (env.EB_APP_ID && env.EB_PRIVATE_KEY) {
       try {
         const names = (await eb.listAspsps(env)).map((a) => a.name);
-        bank = { ok: true, banks: names.length, binx: names.filter((n) => /binx/i.test(n)), magnet: names.filter((n) => /magnet/i.test(n)) };
+        bank = { ok: true, banks: names.length, names };
       } catch (e: any) {
         bank = { ok: false, error: String(e?.message || e).slice(0, 300) };
       }
