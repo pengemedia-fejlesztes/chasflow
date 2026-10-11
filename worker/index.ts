@@ -1,6 +1,7 @@
 // Cashflow tervező – Cloudflare Worker belépési pont (API + ütemezett szinkron).
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
 import { handleBank, reapplyRules, syncAll } from './bank';
+import * as eb from './enablebanking';
 import { handleRules } from './rules';
 import { navEnabled, syncNav } from './nav';
 import { notifyUnplanned } from './notify';
@@ -25,12 +26,22 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path === '/api/diag/nav' && req.method === 'POST') {
     const t = req.headers.get('X-Diag-Token') || '';
     if (!env.DIAG_TOKEN || env.DIAG_TOKEN.length < 32 || !safeEqual(t, env.DIAG_TOKEN)) throw new HttpError(404, 'Nincs ilyen végpont.');
-    if (!navEnabled(env)) return json({ ok: false, error: 'NAV nincs beállítva' });
+    // Enable Banking: hitelesítés + elérhető magyar bankok (csak nevek)
+    let bank: unknown = 'nincs beállítva';
+    if (env.EB_APP_ID && env.EB_PRIVATE_KEY) {
+      try {
+        const names = (await eb.listAspsps(env)).map((a) => a.name);
+        bank = { ok: true, banks: names.length, binx: names.filter((n) => /binx/i.test(n)), magnet: names.filter((n) => /magnet/i.test(n)) };
+      } catch (e: any) {
+        bank = { ok: false, error: String(e?.message || e).slice(0, 300) };
+      }
+    }
+    if (!navEnabled(env)) return json({ ok: false, error: 'NAV nincs beállítva', bank });
     try {
       const r = await syncNav(env);
-      return json({ ok: true, ...r });
+      return json({ ok: true, ...r, bank });
     } catch (e: any) {
-      return json({ ok: false, error: String(e?.message || e).slice(0, 300) });
+      return json({ ok: false, error: String(e?.message || e).slice(0, 300), bank });
     }
   }
 

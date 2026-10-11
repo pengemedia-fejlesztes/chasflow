@@ -55,5 +55,5 @@ jobs:
           echo "::add-mask::$T"
           printf '%s' "$T" | npx wrangler secret put DIAG_TOKEN --name cashflow-tervezo >/dev/null
           sleep 20
-          curl -s -X POST https://cashflow-tervezo.pengemedia.workers.dev/api/diag/nav -H "X-Requested-With: cashflow" -H "X-Diag-Token: $T" | jq -c '{ok, invoices, unplanned, error}' || true
+          curl -s -X POST https://cashflow-tervezo.pengemedia.workers.dev/api/diag/nav -H "X-Requested-With: cashflow" -H "X-Diag-Token: $T" | jq -c '{ok, invoices, unplanned, error, bank}' || true
           npx wrangler secret delete DIAG_TOKEN --name cashflow-tervezo >/dev/null <<< 'y' || true
