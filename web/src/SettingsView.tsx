@@ -983,7 +983,7 @@ function AutoUpload() {
   return (
     <Section
       title="Automatikus feltöltés a Macről (aggreg8)"
-      sub="Ha az aggreg8-ból letöltött napi XML (aggreg8-bank-tranzakciok-….xml) a Mac Letöltések mappájába kerül, a gép magától feltölti ide, és értesítést küld. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-importra jó, bármikor visszavonható."
+      sub="A Mac naponta 7:30-kor és 16:30-kor megnyitja a saját (bejelentkezett) böngésződben az aggreg8 letöltési oldalát, letölti a napi XML-t (MagNet + BiNX), a Letöltésekbe kerülő fájlt pedig magától feltölti ide, értesítéssel. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-importra jó, bármikor visszavonható. Eltávolítás: ugyanaz a parancs --uninstall végződéssel."
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ font: `600 14px ${FONT}`, color: st?.active ? C.blueDark : C.muted }}>
