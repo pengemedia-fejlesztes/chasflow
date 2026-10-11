@@ -96,21 +96,27 @@ goto() {
     -e 'if URL of t contains "standalone.aggreg8.hu" then' -e 'set URL of t to (item 1 of argv)' -e 'return "OK"' -e 'end if' \
     -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$1" >/dev/null 2>&1
 }
-loggedin() { case "$(js 'location.pathname.indexOf("login")<0 && !!localStorage.getItem("token") ? "IN" : "OUT"')" in IN) return 0 ;; *) return 1 ;; esac; }
-
-open -g -a "Google Chrome" "https://standalone.aggreg8.hu/synchronizations"
-sleep 12
-R=$(js '1')
+open -a "Google Chrome" "https://standalone.aggreg8.hu/synchronizations"
+sleep 10
+R=$(js 'location.href')
+log "lap: $R"
 case "$R" in
-  *-1743*|*"Apple Events"*|*JavaScript*) log "nincs engedély: $R"; note "Cashflow – engedély kell" "Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből"; exit 1 ;;
+  *-1743*|*"Apple Events"*|*JavaScript*|*execution\ error*) log "nincs engedély: $R"; note "Cashflow – engedély kell" "Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből; Rendszerbeállítások → Adatvédelem → Automatizálás → Terminál → Google Chrome"; exit 1 ;;
   NOTAB) log "nincs aggreg8 lap"; note "Cashflow – aggreg8" "Nem nyílt meg az aggreg8 a Chrome-ban."; exit 1 ;;
+  *login*) log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1 ;;
 esac
-if ! loggedin; then log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1; fi
-# frissítés: a bankkapcsolatok szinkron gombjai
-log "szinkron: $(js '(function(){var b=[].slice.call(document.querySelectorAll("button.btn-sync")).filter(function(x){return !x.disabled});b.forEach(function(x){x.click()});return "SYNC "+b.length})()')"
-sleep 60
+# frissítés: a bankkapcsolatok szinkron gombjai (megvárja, amíg megjelennek)
+S=""
+for i in $(seq 1 10); do
+  S=$(js '(function(){var b=[].slice.call(document.querySelectorAll("button.btn-sync, button[class*=sync]")).filter(function(x){return !x.disabled&&x.offsetParent!==null});if(!b.length)return "NINCS";b.forEach(function(x){x.click()});return "SYNC "+b.length})()')
+  [ "$S" != "NINCS" ] && break
+  sleep 3
+done
+log "szinkron: $S"
+[ "$S" != "NINCS" ] && sleep 60
 goto "https://standalone.aggreg8.hu/transactions"
 sleep 12
+log "lap: $(js 'location.href')"
 EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || { log "export-szkript nem tölthető le"; note "Cashflow – aggreg8" "Nem érem el a cashflow tervezőt."; exit 1; }
 EXP="${EXP%;}"
 js "window.__cf_r='fut';($EXP).then(function(r){window.__cf_r=r},function(e){window.__cf_r='HIBA '+e.message});'START'" >/dev/null
