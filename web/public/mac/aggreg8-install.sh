@@ -208,5 +208,5 @@ read -r _
 # ugyanúgy indítjuk, ahogy ütemezve fut (launchd) – így az engedélykérések most jönnek fel, nem hajnalban
 launchctl kickstart -k "gui/$(id -u)/$DLABEL"
 echo "Fut… (ha a Mac engedélyt kér a Chrome vezérléséhez: OK)"
-for i in $(seq 1 60); do sleep 5; tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log" | grep -q "feltöltés:\|hiba\|nincs\|HIBA" && break; done
-tail -4 "$HOME/Library/Application Support/cashflow-aggreg8/download.log"
+for i in $(seq 1 60); do sleep 5; tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log" | grep -q "feltöltés:\|letöltés: [^O]\|nincs bejelentkezve\|nincs aggreg8\|nincs engedély" && break; done
+tail -9 "$HOME/Library/Application Support/cashflow-aggreg8/download.log"
