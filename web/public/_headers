@@ -7,3 +7,12 @@
   Cross-Origin-Opener-Policy: same-origin
   X-Robots-Tag: noindex, nofollow
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+
+/mac/*.txt
+  Content-Type: text/plain; charset=utf-8
+
+/mac/*.sh
+  Content-Type: text/plain; charset=utf-8
+
+/mac/*.js
+  Content-Type: text/javascript; charset=utf-8

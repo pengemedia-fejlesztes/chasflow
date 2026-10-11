@@ -1,4 +1,4 @@
-FELADAT: aggreg8 banki tételek frissítése és betöltése a Cashflow tervezőbe
+﻿FELADAT: aggreg8 banki tételek frissítése és betöltése a Cashflow tervezőbe
 Futás: minden nap 5:00, 9:00, 13:00, 17:00 és 21:00 (Europe/Budapest) – ez a Cashflow tervező banki szinkronjának ideje.
 Eszköz: Claude in Chrome (a saját, bejelentkezett Chrome-om). Mindig új lapon dolgozz, a meglévő lapjaimat ne zárd be.
 
@@ -75,7 +75,7 @@ Eszköz: Claude in Chrome (a saját, bejelentkezett Chrome-om). Mindig új lapon
 ----- SZKRIPT VÉGE -----
 
 3. ELLENŐRZÉS A CASHFLOW TERVEZŐBEN
-- A letöltött fájlt a Mac magától feltölti (a Letöltések-figyelő), és utána törli. Várj 60 másodpercet.
+- A letöltött fájlt a Mac magától feltölti (a Letöltések-figyelő). Várj 60 másodpercet.
 - Nyisd meg új lapon: https://cashflow-tervezo.pengemedia.workers.dev/api/ingest/token
   A válasz „last” része mutatja az utolsó feltöltést: at (időbélyeg ms), ok, és bankonként rows / inbox (új, jóváhagyásra) / auto / duplicates / last_date.
 - Ha a „last.at” nem az elmúlt 5 percből való: a feltöltés nem ment végbe – írd meg, hogy nézzem meg a Macen a ~/Library/Application Support/cashflow-aggreg8/upload.log naplót, vagy futtassam újra a telepítőt.
