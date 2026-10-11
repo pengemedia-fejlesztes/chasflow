@@ -206,7 +206,8 @@ echo "Ha a Mac rákérdez, hogy a Terminál/bash vezérelheti-e a Chrome-ot: Eng
 printf "Ha be vagy jelentkezve az aggreg8-ba a Chrome-ban, nyomj Entert az azonnali próbához (Ctrl+C: kihagyás)… "
 read -r _
 # ugyanúgy indítjuk, ahogy ütemezve fut (launchd) – így az engedélykérések most jönnek fel, nem hajnalban
+L="$HOME/Library/Application Support/cashflow-aggreg8/download.log"; touch "$L"; N0=$(wc -l < "$L")
 launchctl kickstart -k "gui/$(id -u)/$DLABEL"
 echo "Fut… (ha a Mac engedélyt kér a Chrome vezérléséhez: OK)"
-for i in $(seq 1 60); do sleep 5; tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log" | grep -q "feltöltés:\|letöltés: [^O]\|nincs bejelentkezve\|nincs aggreg8\|nincs engedély" && break; done
-tail -9 "$HOME/Library/Application Support/cashflow-aggreg8/download.log"
+for i in $(seq 1 60); do sleep 5; tail -n +$((N0+1)) "$L" | tail -1 | grep -q "feltöltés:\|letöltés: [^O]\|nincs bejelentkezve\|nincs aggreg8\|nincs engedély" && break; done
+tail -n +$((N0+1)) "$L"
