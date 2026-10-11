@@ -118,7 +118,12 @@ log "szinkron gombok: $N"
 case "$N" in [1-9]*) ;; *) N=0 ;; esac
 k=0
 while [ "$k" -lt "$N" ]; do
-  C=$(js "(function(){${BTN}var b=q()[$k];if(!b)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
+  # a gomb az előző szinkron után újrarajzolódhat – megvárja (legfeljebb 60 mp)
+  for w in $(seq 1 20); do
+    C=$(js "(function(){${BTN}var b=q()[$k];if(!b||b.disabled)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
+    [ "$C" = "KATT" ] && break
+    sleep 3
+  done
   RES="időtúllépés"
   if [ "$C" = "KATT" ]; then
     for j in $(seq 1 40); do
