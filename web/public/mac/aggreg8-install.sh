@@ -42,7 +42,7 @@ if ! ls "\$HOME/Downloads" >/dev/null 2>&1; then
   exit 0
 fi
 TOKEN=\$(security find-generic-password -s cashflow-import -w 2>/dev/null) || exit 0
-for F in "\$HOME"/Downloads/aggreg8-bank-tranzakciok-*.xml "\$HOME"/Downloads/aggreg8-tranzakciok-*.json; do
+for F in "\$HOME"/Downloads/aggreg8-bank-tranzakciok-*.xml; do
   [ -f "\$F" ] || continue
   case "\$F" in *.json) CT=application/json ;; *) CT=application/xml ;; esac
   # a böngésző még írja a fájlt
@@ -145,10 +145,23 @@ for i in $(seq 1 60); do
   case "$R" in fut) ;; *) break ;; esac
 done
 log "letöltés: $R"
-# a saját lapot bezárja (a többi lapodhoz nem nyúl)
-case "$R" in OK*) sleep 5; tabdo "" 'close t' >/dev/null ;; esac
 case "$R" in
-  OK*) note "Cashflow – aggreg8" "Letöltve a Letöltésekbe: ${R#OK }" ;;
+  OK*)
+    # feltöltés közvetlenül a böngészőből átvett adattal (nem kell hozzá a Letöltések mappa elérése)
+    F="$STATE/last.json"
+    js 'window.__cf_data||""' > "$F"
+    js 'delete window.__cf_data;"x"' >/dev/null
+    TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
+    U=$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: application/json" --data-binary @"$F")
+    rm -f "$F"
+    log "feltöltés: $(echo "$U" | head -c 400)"
+    if echo "$U" | grep -q '"ok":true'; then
+      N=$(echo "$U" | grep -o '"inbox":[0-9-]*' | cut -d: -f2 | awk '{s+=$1} END {print s+0}')
+      note "Cashflow – bank frissítve" "Letöltve és feltöltve, $N új tétel jóváhagyásra."
+    else
+      note "Cashflow – feltöltési hiba" "$(echo "$U" | head -c 120)"
+    fi
+    sleep 3; tabdo "" 'close t' >/dev/null ;;
   *LOGIN*) note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google)." ;;
   *) note "Cashflow – aggreg8 hiba" "$(echo "$R" | head -c 120)" ;;
 esac
@@ -179,4 +192,8 @@ echo "EGYSZER a Chrome-ban: Nézet → Fejlesztő → „JavaScript engedélyez�
 echo "Ha a Mac rákérdez, hogy a Terminál/bash vezérelheti-e a Chrome-ot: Engedélyezés."
 printf "Ha be vagy jelentkezve az aggreg8-ba a Chrome-ban, nyomj Entert az azonnali próbához (Ctrl+C: kihagyás)… "
 read -r _
-/bin/bash "$DSCRIPT"; echo "Eredmény: $(tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log")"
+# ugyanúgy indítjuk, ahogy ütemezve fut (launchd) – így az engedélykérések most jönnek fel, nem hajnalban
+launchctl kickstart -k "gui/$(id -u)/$DLABEL"
+echo "Fut… (ha a Mac engedélyt kér a Chrome vezérléséhez: OK)"
+for i in $(seq 1 60); do sleep 5; tail -1 "$HOME/Library/Application Support/cashflow-aggreg8/download.log" | grep -q "feltöltés:\|hiba\|nincs\|HIBA" && break; done
+tail -4 "$HOME/Library/Application Support/cashflow-aggreg8/download.log"

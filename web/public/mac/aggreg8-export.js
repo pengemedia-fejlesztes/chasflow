@@ -68,7 +68,8 @@
     }),
   };
   const name = 'aggreg8-tranzakciok-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.json';
-  const u = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+  window.__cf_data = JSON.stringify(out);
+  const u = URL.createObjectURL(new Blob([window.__cf_data], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(u), 60000);
