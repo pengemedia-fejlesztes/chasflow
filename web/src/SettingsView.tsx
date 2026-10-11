@@ -554,6 +554,7 @@ function Integrations() {
           </div>
         ))}
       </Section>
+      <AutoUpload />
       <Section
         title="Banki kivonat import (CSV / XLSX / aggreg8 XML)"
         sub="Ha a bank nem érhető el PSD2-n, töltsd le a netbankból a számlakivonatot (CSV vagy Excel), és töltsd fel ide. A tételek a Bankszinkronba kerülnek jóváhagyásra; a duplikációkat a rendszer kiszűri."
@@ -965,5 +966,71 @@ function Categories() {
         </Section>
       ))}
     </>
+  );
+}
+
+/** Automatikus feltöltés a Macről: személyes kulcs + a telepítő parancsa (aggreg8 napi XML a Letöltésekből). */
+function AutoUpload() {
+  const { run, showToast } = useStore();
+  const [st, setSt] = useState<{ active: boolean; created: number | null } | null>(null);
+  const [token, setToken] = useState('');
+  const load = () => api<{ active: boolean; created: number | null }>('/api/ingest/token').then(setSt, () => setSt(null));
+  useEffect(() => {
+    load();
+  }, []);
+  const cmd = 'bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh)';
+  const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => showToast('Vágólapra másolva'));
+  return (
+    <Section
+      title="Automatikus feltöltés a Macről (aggreg8)"
+      sub="Ha az aggreg8-ból letöltött napi XML (aggreg8-bank-tranzakciok-….xml) a Mac Letöltések mappájába kerül, a gép magától feltölti ide, és értesítést küld. Ehhez egy személyes feltöltési kulcs kell – csak a kivonat-importra jó, bármikor visszavonható."
+    >
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ font: `600 14px ${FONT}`, color: st?.active ? C.blueDark : C.muted }}>
+          {st?.active ? `✓ Kulcs aktív (${relTime(st.created)})` : 'Nincs aktív kulcs'}
+        </span>
+        <Pill
+          kind="primary"
+          onClick={async () => {
+            if (st?.active && !confirm('Új kulcs: a régi érvényét veszti (a Macen újra kell futtatni a telepítőt). Folytatod?')) return;
+            try {
+              const r = await api<{ token: string }>('/api/ingest/token', { body: {} });
+              setToken(r.token);
+              load();
+            } catch (e: any) {
+              showToast({ msg: e.message, error: true });
+            }
+          }}
+        >
+          {st?.active ? 'Új kulcs' : 'Kulcs létrehozása'}
+        </Pill>
+        {st?.active && (
+          <Pill kind="danger" onClick={() => run(() => api('/api/ingest/token', { method: 'DELETE' }), 'Feltöltési kulcs visszavonva').then(load)}>
+            Visszavonás
+          </Pill>
+        )}
+      </div>
+      {token && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: 12, background: C.bg }}>
+          <span style={{ font: `600 13px ${FONT}`, color: C.navy }}>1. Másold ki a kulcsot (csak most látszik):</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <code style={{ font: `600 12.5px ui-monospace,monospace`, color: C.navy, wordBreak: 'break-all' }}>{token}</code>
+            <Pill small onClick={() => copy(token)}>
+              Másolás
+            </Pill>
+          </div>
+          <span style={{ font: `600 13px ${FONT}`, color: C.navy }}>2. A Mac Termináljában futtasd, és amikor kéri, illeszd be a kulcsot:</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <code style={{ font: `600 12.5px ui-monospace,monospace`, color: C.navy, wordBreak: 'break-all' }}>{cmd}</code>
+            <Pill small onClick={() => copy(cmd)}>
+              Másolás
+            </Pill>
+          </div>
+          <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted }}>
+            Ha a Mac értesítésben hozzáférést kér a Letöltésekhez: Rendszerbeállítások → Adatvédelem és biztonság → Teljes lemezhozzáférés → „+” → /bin/bash.
+          </span>
+        </div>
+      )}
+    </Section>
   );
 }

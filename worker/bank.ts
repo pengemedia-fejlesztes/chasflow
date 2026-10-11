@@ -540,102 +540,109 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   // Kézi kivonat import (ha a PSD2 kapcsolat nem elérhető az adott banknál)
   if (path === '/api/bank/import' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
-    const b = await readJson<{
-      bank_name: string;
-      label: string;
-      balance?: string;
-      rows: { date: unknown; amount: unknown; partner?: string; memo?: string; ext?: string }[];
-    }>(req, 10_000_000);
-    const bank = String(b.bank_name || '')
-      .trim()
-      .slice(0, 60);
-    if (!bank) throw new HttpError(400, 'Add meg a bank nevét.');
-    const label = String(b.label || bank).slice(0, 80);
-    let acc = await env.DB.prepare("SELECT id FROM bank_accounts WHERE provider = 'manual' AND bank_name = ? AND label = ?")
-      .bind(bank, label)
-      .first<{ id: string }>();
-    if (!acc) {
-      acc = { id: randomId('acc') };
-      await env.DB.prepare("INSERT INTO bank_accounts (id, provider, bank_name, label) VALUES (?, 'manual', ?, ?)").bind(acc.id, bank, label).run();
-    }
-    const ctx = await matchingContext(env);
-    // A TÉNYEK importban már szereplő időszak tételei csak archívumba kerülnek (duplikáció-szűréshez).
-    // Kivétel: az utolsó 45 nap olyan banki tételei, amelyeknek nincs párja a tények között (pl. még nem rögzített
-    // befizetések) – ezek jóváhagyásra mennek, és párosulnak a nyitott tervekkel.
-    const cut = await env.DB.prepare("SELECT MAX(date) AS d FROM entries WHERE kind = 'actual' AND source = 'import'").first<{ d: string | null }>();
-    const cutoff = cut?.d || '';
-    const recentFrom = cutoff ? new Date(Date.parse(cutoff) - 45 * 86400_000).toISOString().slice(0, 10) : '';
-    const facts = cutoff
-      ? (
-          await env.DB.prepare("SELECT date, amount FROM entries WHERE kind = 'actual' AND date >= ?")
-            .bind(new Date(Date.parse(recentFrom) - 8 * 86400_000).toISOString().slice(0, 10))
-            .all<{ date: string; amount: number }>()
-        ).results.map((f) => ({ ...f, used: false }))
-      : [];
-    const statusFor = (date: string, amount: number): 'new' | 'ignored' => {
-      if (!cutoff || date > cutoff) return 'new';
-      if (date < recentFrom) return 'ignored';
-      const f = facts.find((x) => !x.used && x.amount === amount && Math.abs(Date.parse(x.date) - Date.parse(date)) <= 7 * 86400_000);
-      if (f) {
-        f.used = true;
-        return 'ignored';
-      }
-      return 'new';
-    };
-    const count = () =>
-      env.DB.prepare('SELECT status, COUNT(*) AS n FROM bank_tx WHERE account_id = ? GROUP BY status').bind(acc!.id).all<{ status: string; n: number }>();
-    const before = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
-    const stmts: D1PreparedStatement[] = [];
-    const seen: Record<string, number> = {};
-    let n = 0;
-    // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne
-    const inRows = (b.rows || []).slice(0, 30000);
-    const dates = inRows.map((r) => parseDate(r.date)).filter(Boolean) as string[];
-    const have: Record<string, number> = {};
-    const haveExt = new Set<string>();
-    if (dates.length) {
-      const ex = await env.DB.prepare('SELECT date, amount, ext_id FROM bank_tx WHERE account_id = ? AND date >= ? AND date <= ?')
-        .bind(
-          acc.id,
-          dates.reduce((a, d) => (d < a ? d : a)),
-          dates.reduce((a, d) => (d > a ? d : a)),
-        )
-        .all<{ date: string; amount: number; ext_id: string }>();
-      ex.results.forEach((t) => {
-        haveExt.add(t.ext_id);
-        have[`${t.date}|${t.amount}`] = (have[`${t.date}|${t.amount}`] || 0) + 1;
-      });
-    }
-    for (const r of inRows) {
-      const date = parseDate(r.date);
-      const amount = parseAmount(r.amount);
-      if (!date || !amount) continue;
-      const partner = String(r.partner || '').trim();
-      const memo = String(r.memo || '').trim();
-      let ext = r.ext ? String(r.ext).slice(0, 200) : '';
-      if (!ext) {
-        const base = `${date}|${amount}|${partner}|${memo}`;
-        seen[base] = (seen[base] || 0) + 1;
-        ext = base + '|' + seen[base];
-      }
-      n++;
-      if (haveExt.has(ext)) continue;
-      const k = `${date}|${amount}`;
-      if (have[k]) {
-        have[k]--;
-        continue;
-      }
-      stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
-    }
-    if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
-      stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));
-    stmts.push(env.DB.prepare('UPDATE bank_accounts SET last_sync = ? WHERE id = ?').bind(now(), acc.id));
-    for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
-    const after = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
-    const auto = await autoApprove(env, approve);
-    const added = { inbox: (after.new || 0) - (before.new || 0) - auto, archived: (after.ignored || 0) - (before.ignored || 0), auto };
-    await audit(env, u.id, 'bank_csv_import', { bank, rows: n, ...added });
-    return json({ ok: true, rows: n, ...added, duplicates: n - added.inbox - added.archived, cutoff });
+    const b = await readJson<{ bank_name: string; label: string; balance?: string; rows: ImportRowIn[] }>(req, 10_000_000);
+    return json(await importManualRows(env, u.id, b));
   }
   return null;
+}
+
+export type ImportRowIn = { date: unknown; amount: unknown; partner?: string; memo?: string; ext?: string };
+
+/** Kivonat-tételek importja egy kézi (kivonatos) bankszámlára – duplikáció-szűréssel, tervpárosítással. */
+export async function importManualRows(
+  env: Env,
+  userId: number,
+  b: { bank_name: string; label: string; balance?: string; rows: ImportRowIn[]; iban?: string | null },
+) {
+  const bank = String(b.bank_name || '')
+    .trim()
+    .slice(0, 60);
+  if (!bank) throw new HttpError(400, 'Add meg a bank nevét.');
+  const label = String(b.label || bank).slice(0, 80);
+  let acc = await env.DB.prepare("SELECT id FROM bank_accounts WHERE provider = 'manual' AND bank_name = ? AND label = ?")
+    .bind(bank, label)
+    .first<{ id: string }>();
+  if (!acc) {
+    acc = { id: randomId('acc') };
+    await env.DB.prepare("INSERT INTO bank_accounts (id, provider, bank_name, label) VALUES (?, 'manual', ?, ?)").bind(acc.id, bank, label).run();
+  }
+  const ctx = await matchingContext(env);
+  // A TÉNYEK importban már szereplő időszak tételei csak archívumba kerülnek (duplikáció-szűréshez).
+  // Kivétel: az utolsó 45 nap olyan banki tételei, amelyeknek nincs párja a tények között (pl. még nem rögzített
+  // befizetések) – ezek jóváhagyásra mennek, és párosulnak a nyitott tervekkel.
+  const cut = await env.DB.prepare("SELECT MAX(date) AS d FROM entries WHERE kind = 'actual' AND source = 'import'").first<{ d: string | null }>();
+  const cutoff = cut?.d || '';
+  const recentFrom = cutoff ? new Date(Date.parse(cutoff) - 45 * 86400_000).toISOString().slice(0, 10) : '';
+  const facts = cutoff
+    ? (
+        await env.DB.prepare("SELECT date, amount FROM entries WHERE kind = 'actual' AND date >= ?")
+          .bind(new Date(Date.parse(recentFrom) - 8 * 86400_000).toISOString().slice(0, 10))
+          .all<{ date: string; amount: number }>()
+      ).results.map((f) => ({ ...f, used: false }))
+    : [];
+  const statusFor = (date: string, amount: number): 'new' | 'ignored' => {
+    if (!cutoff || date > cutoff) return 'new';
+    if (date < recentFrom) return 'ignored';
+    const f = facts.find((x) => !x.used && x.amount === amount && Math.abs(Date.parse(x.date) - Date.parse(date)) <= 7 * 86400_000);
+    if (f) {
+      f.used = true;
+      return 'ignored';
+    }
+    return 'new';
+  };
+  const count = () =>
+    env.DB.prepare('SELECT status, COUNT(*) AS n FROM bank_tx WHERE account_id = ? GROUP BY status').bind(acc!.id).all<{ status: string; n: number }>();
+  const before = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
+  const stmts: D1PreparedStatement[] = [];
+  const seen: Record<string, number> = {};
+  let n = 0;
+  // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne
+  const inRows = (b.rows || []).slice(0, 30000);
+  const dates = inRows.map((r) => parseDate(r.date)).filter(Boolean) as string[];
+  const have: Record<string, number> = {};
+  const haveExt = new Set<string>();
+  if (dates.length) {
+    const ex = await env.DB.prepare('SELECT date, amount, ext_id FROM bank_tx WHERE account_id = ? AND date >= ? AND date <= ?')
+      .bind(
+        acc.id,
+        dates.reduce((a, d) => (d < a ? d : a)),
+        dates.reduce((a, d) => (d > a ? d : a)),
+      )
+      .all<{ date: string; amount: number; ext_id: string }>();
+    ex.results.forEach((t) => {
+      haveExt.add(t.ext_id);
+      have[`${t.date}|${t.amount}`] = (have[`${t.date}|${t.amount}`] || 0) + 1;
+    });
+  }
+  for (const r of inRows) {
+    const date = parseDate(r.date);
+    const amount = parseAmount(r.amount);
+    if (!date || !amount) continue;
+    const partner = String(r.partner || '').trim();
+    const memo = String(r.memo || '').trim();
+    let ext = r.ext ? String(r.ext).slice(0, 200) : '';
+    if (!ext) {
+      const base = `${date}|${amount}|${partner}|${memo}`;
+      seen[base] = (seen[base] || 0) + 1;
+      ext = base + '|' + seen[base];
+    }
+    n++;
+    if (haveExt.has(ext)) continue;
+    const k = `${date}|${amount}`;
+    if (have[k]) {
+      have[k]--;
+      continue;
+    }
+    stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
+  }
+  if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
+    stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));
+  stmts.push(env.DB.prepare('UPDATE bank_accounts SET last_sync = ? WHERE id = ?').bind(now(), acc.id));
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  const after = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
+  const auto = await autoApprove(env, approve);
+  const added = { inbox: (after.new || 0) - (before.new || 0) - auto, archived: (after.ignored || 0) - (before.ignored || 0), auto };
+  await audit(env, userId, 'bank_csv_import', { bank, rows: n, ...added });
+  if (b.iban) await env.DB.prepare('UPDATE bank_accounts SET iban = ? WHERE id = ? AND iban IS NULL').bind(b.iban, acc.id).run();
+  return { ok: true, bank, rows: n, ...added, duplicates: n - added.inbox - added.archived, cutoff };
 }
