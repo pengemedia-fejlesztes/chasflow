@@ -106,16 +106,34 @@ case "$R" in
   NOTAB) log "nincs aggreg8 lap"; note "Cashflow – aggreg8" "Nem nyílt meg az aggreg8 a Chrome-ban."; exit 1 ;;
   *login*) log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1 ;;
 esac
-# frissítés: a bankkapcsolatok szinkron gombjai (megvárja, amíg megjelennek)
-S=""
+# frissítés: a bankkapcsolatok (BinX, MagNet) szinkron gombjai egymás után, mindegyiknél megvárja az eredményt
+BTN='var q=function(){var b=[].slice.call(document.querySelectorAll("app-bac-list button.btn-sync"));if(!b.length)b=[].slice.call(document.querySelectorAll("button.btn-sync"));return b};'
+N=0
 for i in $(seq 1 10); do
-  S=$(js '(function(){var b=[].slice.call(document.querySelectorAll("button.btn-sync, button[class*=sync]")).filter(function(x){return !x.disabled&&x.offsetParent!==null});if(!b.length)return "NINCS";b.forEach(function(x){x.click()});return "SYNC "+b.length})()')
-  [ "$S" != "NINCS" ] && break
+  N=$(js "(function(){${BTN}return String(q().length)})()")
+  case "$N" in [1-9]*) break ;; esac
   sleep 3
 done
-log "szinkron: $S"
-[ "$S" != "NINCS" ] && sleep 60
+log "szinkron gombok: $N"
+case "$N" in [1-9]*) ;; *) N=0 ;; esac
+k=0
+while [ "$k" -lt "$N" ]; do
+  C=$(js "(function(){${BTN}var b=q()[$k];if(!b)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
+  RES="időtúllépés"
+  if [ "$C" = "KATT" ]; then
+    for j in $(seq 1 40); do
+      sleep 3
+      T=$(js '(function(){var t=document.body.innerText;if(t.split("Sikeres szinkroniz").length>window.__cf_t0)return "OK";if(/sikertelen|hiba történt|error/i.test(t))return "HIBA";return ""})()')
+      case "$T" in OK|HIBA) RES="$T"; break ;; esac
+    done
+  else RES="$C"; fi
+  log "szinkron $((k+1))/$N: $RES"
+  k=$((k+1))
+  sleep 8
+done
 goto "https://standalone.aggreg8.hu/transactions"
+sleep 3
+case "$(js 'location.pathname')" in */transactions*) ;; *) js 'location.href="https://standalone.aggreg8.hu/transactions";"OK"' >/dev/null ;; esac
 sleep 12
 log "lap: $(js 'location.href')"
 EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || { log "export-szkript nem tölthető le"; note "Cashflow – aggreg8" "Nem érem el a cashflow tervezőt."; exit 1; }

@@ -2,18 +2,31 @@
   const tk = localStorage.getItem('token');
   if (!tk) return 'LOGIN';
   const B = 'https://standalone-backend.aggreg8.hu';
-  const get = async (p) => {
+  const get = async (p, soft) => {
     const r = await fetch(B + p, { headers: { Authorization: 'Bearer ' + tk } });
     if (r.status === 401) throw new Error('LOGIN');
+    if (soft && (r.status === 404 || r.status === 400)) return null;
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + p);
     return r.json();
   };
   const arr = (j) => (Array.isArray(j) ? j : j && (j.data || j.items || j.results || j.transactions || j.consents)) || [];
+  // lapozás: a következő oldal 404/üres → vége; azonosító szerint egyszer
   let tx = [], p = 1, tp = 1;
+  const seen = new Set();
   do {
-    const j = await get('/transactions?page=' + p);
-    tx = tx.concat(arr(j));
-    tp = (j && j.meta && (j.meta.totalPages || j.meta.total_pages)) || 1;
+    const j = await get('/transactions?page=' + p, p > 1);
+    if (!j) break;
+    const items = arr(j);
+    let fresh = 0;
+    for (const t of items) {
+      const id = t && (t._id || t.id);
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      tx.push(t);
+      fresh++;
+    }
+    if (!items.length || !fresh) break;
+    tp = (j && j.meta && (j.meta.totalPages || j.meta.total_pages || j.meta.lastPage || j.meta.pageCount)) || 1;
     p++;
   } while (p <= tp && p <= 80);
   let cons = [];
