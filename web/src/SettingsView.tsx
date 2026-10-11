@@ -11,6 +11,7 @@ import { StatsHub } from './StatsHub';
 import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { readSheetRows } from './sheet';
+import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './aggreg8';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
 
@@ -349,7 +350,39 @@ function Integrations() {
       showToast({ msg: e.message, error: true });
     }
   };
+  /** aggreg8 XML: több saját számla egy fájlban – számlánként a meglévő (MagNet / BiNX) kivonat-számlához */
+  const importAggreg8 = async (file: File) => {
+    let accs: Aggreg8Account[];
+    try {
+      accs = parseAggreg8Xml(await file.text());
+    } catch (e: any) {
+      return showToast({ msg: e.message, error: true });
+    }
+    if (!accs.length) return showToast({ msg: 'Nem találtam tételeket.', error: true });
+    const manual = data.accounts.filter((a) => a.provider === 'manual');
+    const results: string[] = [];
+    for (const a of accs) {
+      const known = manual.find((m) => m.iban && m.iban.replace(/\s|-/g, '') === a.account);
+      const guess = known?.bank_name || guessBank(a.account) || (accs.length === 2 && manual.some((m) => /binx/i.test(m.bank_name)) ? 'BiNX' : '');
+      const bank = (
+        prompt(
+          `${maskAccount(a.account)} számla · ${a.rows.length} tétel (${a.from} – ${a.to}), összesen ${fmt(a.sum)} Ft\n\nMelyik bank ez? (pl. MagNet vagy BiNX – üresen hagyva kihagyom)`,
+          guess,
+        ) || ''
+      ).trim();
+      if (!bank) continue;
+      const label = known?.label || manual.find((m) => m.bank_name.toLowerCase() === bank.toLowerCase())?.label || 'Üzleti számla';
+      let res: any = null;
+      await run(async () => {
+        res = await api('/api/bank/import', { body: { bank_name: bank, label, rows: a.rows } });
+      });
+      if (res) results.push(`${bank}: ${res.inbox} új, ${res.auto || 0} automatikus, ${res.duplicates} már megvolt`);
+    }
+    if (results.length) showToast(results.join(' · '));
+  };
+
   const importCsv = async (file: File) => {
+    if (/\.xml$/i.test(file.name)) return importAggreg8(file);
     let rows: any[][];
     try {
       if (/\.(csv|txt)$/i.test(file.name)) {
@@ -522,7 +555,7 @@ function Integrations() {
         ))}
       </Section>
       <Section
-        title="Banki kivonat import (CSV / XLSX)"
+        title="Banki kivonat import (CSV / XLSX / aggreg8 XML)"
         sub="Ha a bank nem érhető el PSD2-n, töltsd le a netbankból a számlakivonatot (CSV vagy Excel), és töltsd fel ide. A tételek a Bankszinkronba kerülnek jóváhagyásra; a duplikációkat a rendszer kiszűri."
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10, alignItems: 'end' }}>
@@ -555,7 +588,7 @@ function Integrations() {
             Fájl kiválasztása…
             <input
               type="file"
-              accept=".csv,.xlsx,.xls,.txt"
+              accept=".csv,.xlsx,.xls,.txt,.xml"
               style={{ display: 'none' }}
               onChange={(e) => e.target.files?.[0] && importCsv(e.target.files[0])}
             />

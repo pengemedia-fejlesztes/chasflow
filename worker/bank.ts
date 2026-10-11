@@ -588,7 +588,25 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     const stmts: D1PreparedStatement[] = [];
     const seen: Record<string, number> = {};
     let n = 0;
-    for (const r of (b.rows || []).slice(0, 30000)) {
+    // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne
+    const inRows = (b.rows || []).slice(0, 30000);
+    const dates = inRows.map((r) => parseDate(r.date)).filter(Boolean) as string[];
+    const have: Record<string, number> = {};
+    const haveExt = new Set<string>();
+    if (dates.length) {
+      const ex = await env.DB.prepare('SELECT date, amount, ext_id FROM bank_tx WHERE account_id = ? AND date >= ? AND date <= ?')
+        .bind(
+          acc.id,
+          dates.reduce((a, d) => (d < a ? d : a)),
+          dates.reduce((a, d) => (d > a ? d : a)),
+        )
+        .all<{ date: string; amount: number; ext_id: string }>();
+      ex.results.forEach((t) => {
+        haveExt.add(t.ext_id);
+        have[`${t.date}|${t.amount}`] = (have[`${t.date}|${t.amount}`] || 0) + 1;
+      });
+    }
+    for (const r of inRows) {
       const date = parseDate(r.date);
       const amount = parseAmount(r.amount);
       if (!date || !amount) continue;
@@ -600,8 +618,14 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
         seen[base] = (seen[base] || 0) + 1;
         ext = base + '|' + seen[base];
       }
-      stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
       n++;
+      if (haveExt.has(ext)) continue;
+      const k = `${date}|${amount}`;
+      if (have[k]) {
+        have[k]--;
+        continue;
+      }
+      stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
     }
     if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
       stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));
