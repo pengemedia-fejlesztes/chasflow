@@ -525,7 +525,7 @@ function Integrations() {
               </span>
               <span style={{ font: `400 12.5px ${FONT}`, color: a.last_error ? C.neg : C.muted }}>
                 {a.provider === 'manual' ? 'kézi kivonat' : 'PSD2'} · {a.iban || ''} · egyenleg: {a.balance != null ? fmt(a.balance) + ' Ft' : '—'} ·{' '}
-                {a.last_error || 'szinkron ' + relTime(a.last_sync)}
+                {a.last_error || 'utolsó szinkron: ' + (a.last_sync ? `${dateTime(a.last_sync)} (${relTime(a.last_sync)})` : 'még nem')}
                 {a.valid_until ? ' · hozzájárulás lejár: ' + a.valid_until.slice(0, 10) : ''}
               </span>
             </span>
@@ -970,6 +970,15 @@ function Categories() {
   );
 }
 
+const dateTime = (ms: number | string) =>
+  new Date(Number(ms)).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+/** A következő ütemezett banki szinkron (budapesti idő). */
+function nextSync(hours: number[]) {
+  const h = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+  const n = hours.find((x) => x > h);
+  return n !== undefined ? `ma ${n}:00` : `holnap ${hours[0]}:00`;
+}
+
 type IngestStatus = {
   active: boolean;
   created: number | null;
@@ -1001,7 +1010,10 @@ function AutoUpload() {
     >
       {st?.last && (
         <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.last.ok ? C.navy : C.neg }}>
-          <b>Utolsó feltöltés: {relTime(st.last.at)}</b> ({st.last.source === 'json' ? 'Mac-bot' : 'XML'})
+          <b>
+            Utolsó szinkronizáció: {dateTime(st.last.at)} ({relTime(st.last.at)})
+          </b>{' '}
+          · {st.last.source === 'json' ? 'automatikus (Mac)' : 'XML'} · következő: {nextSync(st.sync_hours || SYNC_HOURS)}
           {st.last.ok
             ? st.last.accounts.map((a, i) => (
                 <div key={i}>
