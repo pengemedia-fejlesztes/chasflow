@@ -7,6 +7,24 @@ import { Env, HttpError, audit, getSetting, json, now, randomId, safeEqual, setS
 
 const KEY = 'import_token';
 const LAST = 'ingest_last';
+const REQ = 'ingest_request'; // kézi „szinkronizálj most” kérés időpontja (app, robot, Claude)
+const REPORT = 'ingest_report'; // a Mac legutóbbi futásának jelentése (siker vagy hiba)
+
+const budapestHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+
+/** Szinkron kérése: a Mac 5 percen belül elindítja. */
+export async function requestSync(env: Env, by: string) {
+  await setSetting(env, REQ, JSON.stringify({ at: now(), by }));
+}
+
+async function ingestState(env: Env) {
+  const [last, req, report] = await Promise.all([getSetting(env, LAST), getSetting(env, REQ), getSetting(env, REPORT)]);
+  return {
+    last: JSON.parse(last || 'null') as IngestLast | null,
+    request: JSON.parse(req || 'null') as { at: number; by: string } | null,
+    report: JSON.parse(report || 'null') as { at: number; ok: boolean; msg: string } | null,
+  };
+}
 
 async function tokenUser(env: Env, req: Request): Promise<number> {
   const auth = req.headers.get('Authorization') || '';
@@ -32,7 +50,25 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     const last_dates = Object.fromEntries(rows.filter((r) => r.d).map((r) => [r.bank, r.d]));
     const ds = Object.values(last_dates) as string[];
     const since = ds.length ? new Date(Date.parse(ds.reduce((a, d) => (d < a ? d : a))) - 7 * 86400_000).toISOString().slice(0, 10) : null;
-    return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last_dates, since, last: JSON.parse((await getSetting(env, LAST)) || 'null') });
+    const st = await ingestState(env);
+    // pótlás: ha napközben 4,5 óránál régebben volt sikeres feltöltés (pl. aludt a Mac), a Mac magától újrafuttatja
+    const h = budapestHour();
+    const due = h >= SYNC_HOURS[0] && h < 23 && (!st.last?.ok || now() - st.last.at > 4.5 * 3600_000);
+    return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last_dates, since, ...st, requested_at: st.request?.at || 0, due });
+  }
+  // szinkron kérése a feltöltési kulccsal (pl. a Marveen robotból)
+  if (path === '/api/ingest/request' && req.method === 'POST' && (req.headers.get('Authorization') || '').startsWith('Bearer ')) {
+    await tokenUser(env, req);
+    await requestSync(env, 'robot');
+    return json({ ok: true });
+  }
+  // a Mac jelentése minden futás végén (siker vagy hiba) – a felületen és a diagnosztikában látszik
+  if (path === '/api/ingest/report' && req.method === 'POST') {
+    await tokenUser(env, req);
+    const ok = new URL(req.url).searchParams.get('ok') === '1';
+    const msg = (await req.text()).replace(/\s+/g, ' ').trim().slice(0, 600);
+    await setSetting(env, REPORT, JSON.stringify({ at: now(), ok, msg }));
+    return json({ ok: true });
   }
   if (path !== '/api/ingest/aggreg8' || req.method !== 'POST') return null;
   const userId = await tokenUser(env, req);
@@ -97,6 +133,11 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
 
 /** Kulcs létrehozása (a régi érvényét veszti) / visszavonása – adminnak. */
 export async function handleIngestToken(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
+  if (path === '/api/ingest/request' && req.method === 'POST') {
+    requireRole(u, 'admin', 'member');
+    await requestSync(env, u.email);
+    return json({ ok: true });
+  }
   if (path !== '/api/ingest/token') return null;
   requireRole(u, 'admin');
   if (req.method === 'POST') {
@@ -112,7 +153,7 @@ export async function handleIngestToken(env: Env, req: Request, path: string, u:
   }
   if (req.method === 'GET') {
     const st = JSON.parse((await getSetting(env, KEY)) || 'null') as { created: number } | null;
-    return json({ active: !!st, created: st?.created || null, last: JSON.parse((await getSetting(env, LAST)) || 'null'), sync_hours: SYNC_HOURS });
+    return json({ active: !!st, created: st?.created || null, ...(await ingestState(env)), sync_hours: SYNC_HOURS });
   }
   return null;
 }

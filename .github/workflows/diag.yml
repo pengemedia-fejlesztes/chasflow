@@ -41,7 +41,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           # csak időpont, darabszámok és az utolsó tétel dátuma – tételadat nélkül
-          npx wrangler d1 execute cashflow --remote --json --command "SELECT key, value FROM settings WHERE key = 'ingest_last'" | jq -c '.[0].results[]'
+          npx wrangler d1 execute cashflow --remote --json --command "SELECT key, value FROM settings WHERE key IN ('ingest_last', 'ingest_report', 'ingest_request')" | jq -c '.[0].results[]'
           npx wrangler d1 execute cashflow --remote --json --command "SELECT bank_name, provider, datetime(last_sync/1000,'unixepoch') AS last_sync, (SELECT MAX(date) FROM bank_tx t WHERE t.account_id = a.id) AS last_tx FROM bank_accounts a" | jq -c '.[0].results[]'
       - name: Lekérdezés
         if: ${{ inputs.sql != '' }}

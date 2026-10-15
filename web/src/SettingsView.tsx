@@ -983,6 +983,8 @@ type IngestStatus = {
   active: boolean;
   created: number | null;
   sync_hours?: number[];
+  request?: { at: number; by: string } | null;
+  report?: { at: number; ok: boolean; msg: string } | null;
   last: {
     at: number;
     source: 'xml' | 'json';
@@ -1008,6 +1010,24 @@ function AutoUpload() {
       title="Automatikus bankfeltöltés a Macről (aggreg8)"
       sub={`A Mac a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) a saját, bejelentkezett Chrome-odban megnyitja az aggreg8-at, frissíti a BiNX és a MagNet számlát, és a Letöltésekbe menti a tranzakciókat; a fájlt magától feltölti ide (a meglévő tételeket kiszűrjük). Beállítás: feltöltési kulcs, majd a Mac-telepítő parancs a Terminálban.`}
     >
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Pill kind="primary" onClick={() => run(() => api('/api/ingest/request', { body: {} }), 'Szinkron kérve – a Mac 5 percen belül elindítja').then(load)}>
+          Bankszinkron most
+        </Pill>
+        {st?.request && st.request.at > (st.report?.at || 0) && (
+          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
+            kérve {relTime(st.request.at)} – a Mac 5 percen belül elindítja (ha be van kapcsolva)
+          </span>
+        )}
+      </div>
+      {st?.report && (
+        <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.report.ok ? C.navy : C.neg }}>
+          <b>
+            A Mac utolsó jelentése: {dateTime(st.report.at)} ({relTime(st.report.at)}) – {st.report.ok ? 'sikeres' : 'HIBA'}
+          </b>
+          <div>{st.report.msg}</div>
+        </div>
+      )}
       {st?.last && (
         <div style={{ font: `400 13px/1.5 ${FONT}`, color: st.last.ok ? C.navy : C.neg }}>
           <b>

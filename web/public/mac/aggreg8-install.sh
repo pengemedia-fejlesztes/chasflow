@@ -15,7 +15,8 @@ launchctl unload "$DPLIST" 2>/dev/null || true
 
 if [ "$1" = "--uninstall" ]; then
   launchctl unload "$PLIST" 2>/dev/null || true
-  rm -f "$PLIST" "$SCRIPT" "$DPLIST" "$DSCRIPT"
+  launchctl unload "$HOME/Library/LaunchAgents/hu.pengemedia.cashflow-aggreg8-poll.plist" 2>/dev/null || true
+  rm -f "$PLIST" "$SCRIPT" "$DPLIST" "$DSCRIPT" "$HOME/Library/LaunchAgents/hu.pengemedia.cashflow-aggreg8-poll.plist" "$HOME/Library/Scripts/cashflow-aggreg8-poll.sh"
   security delete-generic-password -s cashflow-import >/dev/null 2>&1 || true
   echo "Eltávolítva."
   exit 0
@@ -85,12 +86,24 @@ STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 LOG="$STATE/download.log"
 note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
+# jelentés a cashflow tervezőnek (siker vagy hiba) – az appban és a diagnosztikában látszik
+report() { curl -s -m 20 -X POST "$URL/api/ingest/report?ok=$1" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: text/plain; charset=utf-8" --data-binary "$2" >/dev/null 2>&1; }
+fail() { log "HIBA: $1"; note "Cashflow – bankszinkron hiba" "$1"; report 0 "$1"; exit 1; }
+# egyszerre csak egy futás (a beragadt zárat 20 perc után elengedi)
+LOCK="$STATE/run.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +20 2>/dev/null)" ]; then rm -rf "$LOCK"; mkdir "$LOCK"; else log "már fut egy szinkron"; exit 0; fi
+fi
+trap 'rm -rf "$LOCK"' EXIT
+date +%s > "$STATE/last_try"
+log "indul ($1)"
 # saját lap a Chrome-ban (azonosító alapján vezéreljük, nem URL alapján)
 TAB=$(osascript -e 'tell application "Google Chrome"' -e 'activate' -e 'if (count of windows) = 0 then make new window' \
   -e 'set t to make new tab at end of tabs of window 1 with properties {URL:"https://standalone.aggreg8.hu/synchronizations"}' \
   -e 'return id of t' -e 'end tell' 2>&1)
 log "lap azonosító: $TAB"
-case "$TAB" in ''|*[!0-9]*) note "Cashflow – engedély kell" "A Terminál nem vezérelheti a Chrome-ot: Rendszerbeállítások → Adatvédelem → Automatizálás"; exit 1 ;; esac
+case "$TAB" in ''|*[!0-9]*) fail "A Mac nem vezérelheti a Chrome-ot (Rendszerbeállítások → Adatvédelem → Automatizálás): $TAB" ;; esac
 tabdo() {
   osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
     -e 'if (id of t as text) is (item 1 of argv) then' -e "$2" -e 'end if' \
@@ -102,14 +115,15 @@ sleep 10
 R=$(js 'location.href')
 log "lap: $R"
 case "$R" in
-  *-1743*|*"Apple Events"*|*JavaScript*|*execution\ error*) log "nincs engedély: $R"; note "Cashflow – engedély kell" "Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből; Rendszerbeállítások → Adatvédelem → Automatizálás → Terminál → Google Chrome"; exit 1 ;;
-  NOTAB) log "nincs aggreg8 lap"; note "Cashflow – aggreg8" "Nem nyílt meg az aggreg8 a Chrome-ban."; exit 1 ;;
-  *login*) log "nincs bejelentkezve"; note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google), utána magától megy."; exit 1 ;;
+  *-1743*|*"Apple Events"*|*JavaScript*|*execution\ error*) fail "Nincs engedély a Chrome vezérlésére (Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből): $R" ;;
+  NOTAB) fail "Nem nyílt meg az aggreg8 a Chrome-ban." ;;
+  *login*) fail "Az aggreg8-ból kiléptetett – jelentkezz be a Chrome-ban (Google), utána magától megy." ;;
 esac
 # frissítés: a bankkapcsolatok (BinX, MagNet) szinkron gombjai egymás után, mindegyiknél megvárja az eredményt
 # a gombokat a bank neve szerint keressük (a lista szinkron után újrarajzolódik, a sorrend/index nem megbízható)
 BTN='var q=function(){var b=[].slice.call(document.querySelectorAll("app-bac-list button.btn-sync"));if(!b.length)b=[].slice.call(document.querySelectorAll("button.btn-sync"));return b};var lbl=function(b){for(var e=b;e&&e!==document.body;e=e.parentElement){var t=(e.innerText||"").toLowerCase(),x=/binx/.test(t),m=/magnet/.test(t);if(x!==m)return x?"BinX":"MagNet";if(x&&m)break}return ""};var byName=function(n){return q().filter(function(b){return lbl(b)===n})[0]};'
 BANKS=""
+SYNCRES=""
 for i in $(seq 1 10); do
   BANKS=$(js "(function(){${BTN}return q().map(lbl).filter(Boolean).join(' ')})()")
   case "$BANKS" in *BinX*|*MagNet*) break ;; esac
@@ -134,6 +148,7 @@ for BANK in BinX MagNet; do
     done
   fi
   log "szinkron $BANK: $RES"
+  SYNCRES="$SYNCRES $BANK: $RES;"
   sleep 8
 done
 goto "https://standalone.aggreg8.hu/transactions"
@@ -141,11 +156,10 @@ sleep 3
 case "$(js 'location.pathname')" in */transactions*) ;; *) js 'location.href="https://standalone.aggreg8.hu/transactions";"OK"' >/dev/null ;; esac
 sleep 12
 log "lap: $(js 'location.href')"
-EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || { log "export-szkript nem tölthető le"; note "Cashflow – aggreg8" "Nem érem el a cashflow tervezőt."; exit 1; }
+EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || fail "Nem érem el a cashflow tervezőt (nincs internet?)."
 EXP="${EXP%;}"
 # csak az új tételek: a cashflow tervező megmondja, mikori az utolsó banki tétele (−7 nap átfedéssel);
 # hétfő hajnalban teljes lista ellenőrzésképpen
-TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
 SINCE=""
 if [ "$(date +%u)" != "1" ] || [ "$(date +%H)" -ge 7 ]; then
   SINCE=$(curl -s -m 30 "$URL/api/ingest/status" -H "Authorization: Bearer $TOKEN" | grep -o '"since":"[0-9-]*"' | cut -d'"' -f4)
@@ -168,15 +182,16 @@ case "$R" in
     U=$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: application/json" --data-binary @"$F")
     rm -f "$F"
     log "feltöltés: $(echo "$U" | head -c 400)"
+    sleep 3; tabdo "" 'close t' >/dev/null
     if echo "$U" | grep -q '"ok":true'; then
       N=$(echo "$U" | grep -o '"inbox":[0-9-]*' | cut -d: -f2 | awk '{s+=$1} END {print s+0}')
       note "Cashflow – bank frissítve" "Letöltve és feltöltve, $N új tétel jóváhagyásra."
+      report 1 "Szinkron:${SYNCRES:- nem futott} Letöltés: ${R#OK } Új tétel: $N."
     else
-      note "Cashflow – feltöltési hiba" "$(echo "$U" | head -c 120)"
-    fi
-    sleep 3; tabdo "" 'close t' >/dev/null ;;
-  *LOGIN*) note "Cashflow – aggreg8" "Jelentkezz be az aggreg8-ba a Chrome-ban (Google)." ;;
-  *) note "Cashflow – aggreg8 hiba" "$(echo "$R" | head -c 120)" ;;
+      fail "Feltöltési hiba: $(echo "$U" | head -c 200)"
+    fi ;;
+  *LOGIN*) fail "Az aggreg8-ból kiléptetett – jelentkezz be a Chrome-ban (Google)." ;;
+  *) fail "Letöltési hiba: $(echo "$R" | head -c 200) (szinkron:$SYNCRES)" ;;
 esac
 SH
 chmod 700 "$DSCRIPT"
@@ -185,7 +200,7 @@ cat > "$DPLIST" <<PL
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>$DLABEL</string>
-  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DSCRIPT</string></array>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DSCRIPT</string><string>ütemezett</string></array>
   <key>StartCalendarInterval</key><array>
     <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
@@ -196,6 +211,41 @@ cat > "$DPLIST" <<PL
 </dict></plist>
 PL
 launchctl load "$DPLIST"
+
+# --- figyelő: 5 percenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
+PLABEL="hu.pengemedia.cashflow-aggreg8-poll"
+PSCRIPT="$HOME/Library/Scripts/cashflow-aggreg8-poll.sh"
+PPLIST="$HOME/Library/LaunchAgents/$PLABEL.plist"
+cat > "$PSCRIPT" <<'SH'
+#!/bin/bash
+URL="https://cashflow-tervezo.pengemedia.workers.dev"
+STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
+TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null) || exit 0
+S=$(curl -s -m 20 "$URL/api/ingest/status" -H "Authorization: Bearer $TOKEN") || exit 0
+REQ=$(echo "$S" | grep -o '"requested_at":[0-9]*' | cut -d: -f2)
+DONE=$(cat "$STATE/request_done" 2>/dev/null || echo 0)
+GO=""
+if [ -n "$REQ" ] && [ "$REQ" -gt "$DONE" ]; then echo "$REQ" > "$STATE/request_done"; GO="kérésre"; fi
+# pótlás (pl. a Mac aludt az ütemezett időpontban): legfeljebb óránként egy próbálkozás
+if [ -z "$GO" ] && echo "$S" | grep -q '"due":true'; then
+  LT=$(cat "$STATE/last_try" 2>/dev/null || echo 0)
+  [ $(( $(date +%s) - LT )) -gt 3600 ] && GO="pótlás"
+fi
+[ -n "$GO" ] && /bin/bash "$HOME/Library/Scripts/cashflow-aggreg8-download.sh" "$GO"
+exit 0
+SH
+chmod 700 "$PSCRIPT"
+cat > "$PPLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$PLABEL</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$PSCRIPT</string></array>
+  <key>StartInterval</key><integer>300</integer>
+</dict></plist>
+PL
+launchctl unload "$PPLIST" 2>/dev/null || true
+launchctl load "$PPLIST"
 
 echo ""
 echo "Kész. 5, 9, 13, 17 és 21 órakor a Chrome megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-….json);"
