@@ -74,6 +74,7 @@ autologin() {
     front_tab; sleep 0.5
     open -g -W "$APP"
     log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
+    sleep 3; log "belépés: lapok: $(cr urls | cut -c1-200)"
     for i in $(seq 1 10); do
       sleep 3
       case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
