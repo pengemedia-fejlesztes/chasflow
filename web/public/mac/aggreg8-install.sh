@@ -336,8 +336,7 @@ echo "a fájlt a Mac feltölti a cashflow tervezőbe. Napló: ~/Library/Applicat
 echo ""
 echo "EGYSZER a Chrome-ban: Nézet → Fejlesztő → „JavaScript engedélyezése az Apple Events eseményekből” legyen bepipálva."
 echo "Ha a Mac rákérdez, hogy a Terminál/bash vezérelheti-e a Chrome-ot: Engedélyezés."
-printf "Ha be vagy jelentkezve az aggreg8-ba a Chrome-ban, nyomj Entert az azonnali próbához (Ctrl+C: kihagyás)… "
-read -r _
+echo "Próbafutás indul (a belépést is a rendszer intézi)…"
 # ugyanúgy indítjuk, ahogy ütemezve fut (launchd) – így az engedélykérések most jönnek fel, nem hajnalban
 L="$HOME/Library/Application Support/cashflow-aggreg8/download.log"; touch "$L"; N0=$(wc -l < "$L")
 launchctl kickstart -k "gui/$(id -u)/$DLABEL"
