@@ -111,9 +111,43 @@ tabdo() {
 }
 js() { tabdo "$1" 'return (execute t javascript (item 2 of argv))'; }
 goto() { tabdo "$1" 'set URL of t to (item 2 of argv)' >/dev/null; }
+# JavaScript a Google bejelentkező lapon (lehet felugró ablak is)
+gjs() {
+  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
+    -e 'if URL of t contains "accounts.google.com" then return (execute t javascript (item 1 of argv))' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOGOOGLE"' -e 'end run' "$1" 2>&1
+}
+# automatikus belépés: „Google-lal” gomb + fiókválasztás – jelszót nem ad meg (ha a Google jelszót/kódot kér, szól)
+autologin() {
+  WANT=$(tr -d ' \n' < "$STATE/google_account" 2>/dev/null | tr 'A-Z' 'a-z')
+  B=$(js '(function(){var b=[].slice.call(document.querySelectorAll("button,a,[role=button],div[role=button]")).filter(function(e){return /google/i.test((e.innerText||"")+" "+(e.getAttribute("aria-label")||"")+" "+(e.className||""))&&e.offsetParent!==null})[0];if(!b)return "NINCS";b.click();return "KATT"})()')
+  log "belépés: Google gomb: $B"
+  [ "$B" = "KATT" ] || return 1
+  for i in $(seq 1 15); do
+    sleep 3
+    case "$(js 'location.href')" in *standalone.aggreg8.hu*login*|*accounts.google.com*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
+    G=$(gjs "(function(){var want='$WANT';if(document.querySelector('input[type=password]')&&document.querySelector('input[type=password]').offsetParent)return 'JELSZO';var a=[].slice.call(document.querySelectorAll('[data-identifier],[data-email]'));var id=function(e){return (e.getAttribute('data-identifier')||e.getAttribute('data-email')||'').toLowerCase()};var x=a.filter(function(e){return want&&id(e)===want})[0]||(a.length===1?a[0]:null);if(x){x.click();return 'FIOK '+id(x)}if(a.length>1)return 'TOBB';var c=[].slice.call(document.querySelectorAll('button,[role=button]')).filter(function(e){return /^(folytatás|tovább|continue|allow|engedélyezés)$/i.test((e.innerText||'').trim())})[0];if(c){c.click();return 'TOVABB'}return ''})()")
+    case "$G" in
+      JELSZO) log "belépés: a Google jelszót/kódot kér"; return 1 ;;
+      TOBB) log "belépés: több Google-fiók – írd a használtat ide: $STATE/google_account"; return 1 ;;
+      NOGOOGLE|'') ;;
+      *) log "belépés: $G" ;;
+    esac
+  done
+  case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) return 1 ;; *standalone.aggreg8.hu*) return 0 ;; esac
+  return 1
+}
 sleep 10
 R=$(js 'location.href')
 log "lap: $R"
+case "$R" in
+  *standalone.aggreg8.hu*login*)
+    if autologin; then
+      goto "https://standalone.aggreg8.hu/synchronizations"; sleep 10; R=$(js 'location.href'); log "lap: $R"
+    else
+      fail "Az aggreg8-ból kiléptetett, és automatikusan nem tudtam visszalépni (a Google jelszót vagy kódot kér). Jelentkezz be egyszer a Chrome-ban, utána megint magától megy."
+    fi ;;
+esac
 case "$R" in
   *-1743*|*"Apple Events"*|*JavaScript*|*execution\ error*) fail "Nincs engedély a Chrome vezérlésére (Chrome: Nézet → Fejlesztő → JavaScript engedélyezése az Apple Events eseményekből): $R" ;;
   NOTAB) fail "Nem nyílt meg az aggreg8 a Chrome-ban." ;;
