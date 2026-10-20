@@ -16,6 +16,7 @@ launchctl unload "$DPLIST" 2>/dev/null || true
 if [ "$1" = "--uninstall" ]; then
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl unload "$HOME/Library/LaunchAgents/hu.pengemedia.cashflow-aggreg8-poll.plist" 2>/dev/null || true
+  rm -rf "$HOME/Applications/Cashflow Kattintó.app"
   rm -f "$PLIST" "$SCRIPT" "$DPLIST" "$DSCRIPT" "$HOME/Library/LaunchAgents/hu.pengemedia.cashflow-aggreg8-poll.plist" "$HOME/Library/Scripts/cashflow-aggreg8-poll.sh"
   security delete-generic-password -s cashflow-import >/dev/null 2>&1 || true
   echo "Eltávolítva."
@@ -117,24 +118,38 @@ gjs() {
     -e 'if URL of t contains "accounts.google.com" then return (execute t javascript (item 1 of argv))' \
     -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOGOOGLE"' -e 'end run' "$1" 2>&1
 }
-# automatikus belépés: „Google-lal” gomb + fiókválasztás – jelszót nem ad meg (ha a Google jelszót/kódot kér, szól)
+# automatikus belépés: a „Bejelentkezés mint …” Google-gomb egy beágyazott Google-elem (iframe), ezért valódi
+# egérkattintással nyomjuk meg (a „Cashflow Kattintó” segédprogrammal, a felhasználó jóváhagyásával); jelszót nem ad meg
+APP="$HOME/Applications/Cashflow Kattintó.app"
+front_tab() {
+  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'activate' -e 'repeat with w in windows' -e 'set i to 0' -e 'repeat with t in tabs of w' -e 'set i to i + 1' \
+    -e 'if (id of t as text) is (item 1 of argv) then' -e 'set active tab index of w to i' -e 'set index of w to 1' -e 'return "OK"' -e 'end if' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$TAB" >/dev/null 2>&1
+}
 autologin() {
   WANT=$(tr -d ' \n' < "$STATE/google_account" 2>/dev/null | tr 'A-Z' 'a-z')
-  B=$(js '(function(){var b=[].slice.call(document.querySelectorAll("button,a,[role=button],div[role=button]")).filter(function(e){return /google/i.test((e.innerText||"")+" "+(e.getAttribute("aria-label")||"")+" "+(e.className||""))&&e.offsetParent!==null})[0];if(!b)return "NINCS";b.click();return "KATT"})()')
-  log "belépés: Google gomb: $B"
-  [ "$B" = "KATT" ] || return 1
-  for i in $(seq 1 15); do
-    sleep 3
-    case "$(js 'location.href')" in *standalone.aggreg8.hu*login*|*accounts.google.com*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
-    G=$(gjs "(function(){var want='$WANT';if(document.querySelector('input[type=password]')&&document.querySelector('input[type=password]').offsetParent)return 'JELSZO';var a=[].slice.call(document.querySelectorAll('[data-identifier],[data-email]'));var id=function(e){return (e.getAttribute('data-identifier')||e.getAttribute('data-email')||'').toLowerCase()};var x=a.filter(function(e){return want&&id(e)===want})[0]||(a.length===1?a[0]:null);if(x){x.click();return 'FIOK '+id(x)}if(a.length>1)return 'TOBB';var c=[].slice.call(document.querySelectorAll('button,[role=button]')).filter(function(e){return /^(folytatás|tovább|continue|allow|engedélyezés)$/i.test((e.innerText||'').trim())})[0];if(c){c.click();return 'TOVABB'}return ''})()")
-    case "$G" in
-      JELSZO) log "belépés: a Google jelszót/kódot kér"; return 1 ;;
-      TOBB) log "belépés: több Google-fiók – írd a használtat ide: $STATE/google_account"; return 1 ;;
-      NOGOOGLE|'') ;;
-      *) log "belépés: $G" ;;
-    esac
+  for attempt in 1 2 3; do
+    front_tab; sleep 2
+    P=$(js '(function(){var f=[].slice.call(document.querySelectorAll("iframe")).filter(function(e){return /accounts\.google\.com\/gsi/.test(e.src)&&e.offsetParent!==null})[0];if(!f)return "NINCS";f.scrollIntoView({block:"center"});var r=f.getBoundingClientRect();return Math.round(window.screenX+r.left+Math.min(r.width/2,120))+","+Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2)})()')
+    log "belépés: Google gomb helye: $P"
+    case "$P" in [0-9]*,[0-9]*) ;; *) return 1 ;; esac
+    [ -d "$APP" ] || { log "belépés: nincs telepítve a Cashflow Kattintó"; return 1; }
+    rm -f "$STATE/click.result"
+    echo "$P" > "$STATE/click.txt"
+    open -W "$APP"
+    log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
+    for i in $(seq 1 10); do
+      sleep 3
+      case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
+      # felugró Google-ablak: fiókválasztás / Folytatás
+      G=$(gjs "(function(){var want='$WANT';var pw=document.querySelector('input[type=password]');if(pw&&pw.offsetParent)return 'JELSZO';var a=[].slice.call(document.querySelectorAll('[data-identifier],[data-email]'));var id=function(e){return (e.getAttribute('data-identifier')||e.getAttribute('data-email')||'').toLowerCase()};var x=a.filter(function(e){return want&&id(e)===want})[0]||(a.length===1?a[0]:null);if(x){x.click();return 'FIOK '+id(x)}var c=[].slice.call(document.querySelectorAll('button,[role=button]')).filter(function(e){return /^(folytatás|tovább|continue|allow|engedélyezés|confirm|megerősítés)$/i.test((e.innerText||'').trim())})[0];if(c){c.click();return 'TOVABB'}return ''})()")
+      case "$G" in
+        JELSZO) log "belépés: a Google jelszót/kódot kér"; return 1 ;;
+        NOGOOGLE|'') ;;
+        *) log "belépés: $G" ;;
+      esac
+    done
   done
-  case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) return 1 ;; *standalone.aggreg8.hu*) return 0 ;; esac
   return 1
 }
 sleep 10
@@ -145,7 +160,7 @@ case "$R" in
     if autologin; then
       goto "https://standalone.aggreg8.hu/synchronizations"; sleep 10; R=$(js 'location.href'); log "lap: $R"
     else
-      fail "Az aggreg8-ból kiléptetett, és automatikusan nem tudtam visszalépni (a Google jelszót vagy kódot kér). Jelentkezz be egyszer a Chrome-ban, utána megint magától megy."
+      fail "Az aggreg8-ból kiléptetett, és nem tudtam automatikusan visszalépni – részletek a Mac naplójában (belépés: …). Ha a képernyő zárolva volt, a következő futás újrapróbálja."
     fi ;;
 esac
 case "$R" in
@@ -245,6 +260,40 @@ cat > "$DPLIST" <<PL
 </dict></plist>
 PL
 launchctl load "$DPLIST"
+
+# --- „Cashflow Kattintó”: valódi egérkattintás a Google belépőgombra (csak ez a kis program kap Kisegítő hozzáférést) ---
+mkdir -p "$HOME/Applications" "$HOME/Library/Application Support/cashflow-aggreg8"
+rm -rf "$HOME/Applications/Cashflow Kattintó.app"
+KJS="$(mktemp -d)/kattinto.js"
+cat > "$KJS" <<'JS'
+ObjC.import('Foundation');
+ObjC.import('CoreGraphics');
+ObjC.import('ApplicationServices');
+function run() {
+  var dir = $('~/Library/Application Support/cashflow-aggreg8').stringByExpandingTildeInPath.js;
+  var write = function (t) { $(t).writeToFileAtomicallyEncodingError(dir + '/click.result', true, $.NSUTF8StringEncoding, null); };
+  var trusted = $.AXIsProcessTrustedWithOptions($({ AXTrustedCheckOptionPrompt: true }));
+  if (!trusted) { write('NINCS ENGEDÉLY (Kisegítő lehetőségek → Cashflow Kattintó)'); return; }
+  var s = $.NSString.stringWithContentsOfFileEncodingError(dir + '/click.txt', $.NSUTF8StringEncoding, null);
+  if (!s || !s.js || s.js.indexOf(',') < 0) { write('ENGEDÉLY OK'); return; }
+  var p = s.js.trim().split(',');
+  var pt = $.CGPointMake(Number(p[0]), Number(p[1]));
+  [5, 1, 2].forEach(function (type) {
+    $.CGEventPost(0, $.CGEventCreateMouseEvent(null, type, pt, 0));
+    delay(0.08);
+  });
+  $.NSFileManager.defaultManager.removeItemAtPathError(dir + '/click.txt', null);
+  write('KATT ' + p.join(','));
+}
+JS
+osacompile -l JavaScript -o "$HOME/Applications/Cashflow Kattintó.app" "$KJS"
+rm -rf "$(dirname "$KJS")"
+rm -f "$HOME/Library/Application Support/cashflow-aggreg8/click.txt"
+echo ""
+echo "A Google belépőgomb megnyomásához a „Cashflow Kattintó” programnak egyszer engedély kell:"
+echo "Rendszerbeállítások → Adatvédelem és biztonság → Kisegítő lehetőségek → Cashflow Kattintó: BE."
+open -W "$HOME/Applications/Cashflow Kattintó.app"
+echo "Állapot: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
 
 # --- figyelő: 5 percenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
 PLABEL="hu.pengemedia.cashflow-aggreg8-poll"
