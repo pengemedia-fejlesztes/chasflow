@@ -43,6 +43,11 @@ function run(argv) {
         return /aggreg8\.hu|google\.com/.test(x.url) && a1.indexOf(',' + x.id + ',') < 0;
       })[0];
       return n ? n.id : '';
+    case 'findgoogle':
+      var gg = tabs.filter(function (x) {
+        return /accounts\.google\.com/.test(x.url) && a1.indexOf(',' + x.id + ',') < 0;
+      });
+      return gg.length ? gg[gg.length - 1].id : '';
     case 'js':
       var x = find(a1);
       return x ? exec(x.t, a2) : 'NOTAB';

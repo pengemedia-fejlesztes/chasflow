@@ -60,30 +60,37 @@ gjs() { cr gjs "" "$1"; }
 # egérkattintással nyomjuk meg (a „Cashflow Kattintó” segédprogrammal, a felhasználó jóváhagyásával); jelszót nem ad meg
 APP="$HOME/Applications/Cashflow Kattintó.app"
 front_tab() { cr front "$TAB" >/dev/null; }
+# kattintás valódi egérrel a Kattintóval (a megadott lapot előre hozva)
+realclick() { # $1 = lap azonosító, $2 = "x,y"
+  rm -f "$STATE/click.result"; echo "$2" > "$STATE/click.txt"
+  cr front "$1" >/dev/null; sleep 0.5
+  open -g -W "$APP"
+  log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
+}
+# a Google felugró ablakában a teendő elem képernyő-koordinátája: a fiókod, vagy a Folytatás/Tovább gomb
+GPICK='(function(){var want=WANT;var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};var pw=document.querySelector("input[type=password]");if(pw&&vis(pw))return "JELSZO";var pt=function(e,lab){e.scrollIntoView({block:"center"});var r=e.getBoundingClientRect();return "PT "+Math.round(window.screenX+r.left+r.width/2)+","+Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2)+" "+lab};var all=[].slice.call(document.querySelectorAll("[data-identifier],[data-email]")).filter(vis);var id=function(e){return (e.getAttribute("data-identifier")||e.getAttribute("data-email")||"").toLowerCase()};var x=all.filter(function(e){return want&&id(e)===want})[0]||(all.length===1?all[0]:null);if(x)return pt(x,"fiók "+id(x));var bs=[].slice.call(document.querySelectorAll("button,[role=button],a")).filter(vis);var c=bs.filter(function(e){return /^(folytatás|tovább|continue|bejelentkezés|sign in|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText||"").trim())})[0];if(c)return pt(c,"gomb "+(c.innerText||"").trim().slice(0,30));if(want){var el=[].slice.call(document.querySelectorAll("div,li,span")).filter(function(e){return vis(e)&&(e.innerText||"").trim().toLowerCase()===want})[0];if(el)return pt(el,"fiók szöveg")}return "SEMMI: "+(document.body.innerText||"").replace(/\s+/g," ").slice(0,160)})()'
 autologin() {
   WANT=$(tr -d ' \n' < "$STATE/google_account" 2>/dev/null | tr 'A-Z' 'a-z')
+  [ -z "$WANT" ] && WANT=$(osascript -l JavaScript -e 'ObjC.import("Foundation");var p=$("~/Library/Application Support/Google/Chrome/Local State").stringByExpandingTildeInPath.js;var s=$.NSString.stringWithContentsOfFileEncodingError(p,$.NSUTF8StringEncoding,null);var c=s?JSON.parse(s.js).profile.info_cache:{};var i=c["'"${PROFILE:-Default}"'"]||{};(i.user_name||"").toLowerCase()' 2>/dev/null)
+  log "belépés: fiók: ${WANT:-?}"
+  GBEFORE=",$(cr ids),"
   for attempt in 1 2 3; do
-    front_tab; sleep 2
+    case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
+    front_tab; sleep 1
     P=$(js '(function(){var f=[].slice.call(document.querySelectorAll("iframe")).filter(function(e){return /accounts\.google\.com\/gsi/.test(e.src)&&e.offsetParent!==null})[0];if(!f)return "NINCS";f.scrollIntoView({block:"center"});var r=f.getBoundingClientRect();return Math.round(window.screenX+r.left+Math.min(r.width/2,120))+","+Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2)})()')
     log "belépés: Google gomb helye: $P"
-    case "$P" in [0-9]*,[0-9]*) ;; *) return 1 ;; esac
     [ -d "$APP" ] || { log "belépés: nincs telepítve a Cashflow Kattintó"; return 1; }
-    rm -f "$STATE/click.result"
-    echo "$P" > "$STATE/click.txt"
-    # a segédprogram a háttérben indul (-g), hogy a Chrome maradjon előtérben – különben az első kattintás csak aktiválná az ablakot
-    front_tab; sleep 0.5
-    open -g -W "$APP"
-    log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
-    sleep 3; log "belépés: lapok: $(cr urls | cut -c1-200)"
-    for i in $(seq 1 10); do
-      sleep 3
+    case "$P" in [0-9]*,[0-9]*) realclick "$TAB" "$P" ;; esac
+    for i in $(seq 1 12); do
+      sleep 2
       case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
-      # felugró Google-ablak: fiókválasztás / Folytatás
-      G=$(gjs "(function(){var want='$WANT';var pw=document.querySelector('input[type=password]');if(pw&&pw.offsetParent)return 'JELSZO';var a=[].slice.call(document.querySelectorAll('[data-identifier],[data-email]'));var id=function(e){return (e.getAttribute('data-identifier')||e.getAttribute('data-email')||'').toLowerCase()};var x=a.filter(function(e){return want&&id(e)===want})[0]||(a.length===1?a[0]:null);if(x){x.click();return 'FIOK '+id(x)}var c=[].slice.call(document.querySelectorAll('button,[role=button]')).filter(function(e){return /^(folytatás|tovább|continue|allow|engedélyezés|confirm|megerősítés)$/i.test((e.innerText||'').trim())})[0];if(c){c.click();return 'TOVABB'}return ''})()")
+      GT=$(cr findgoogle "$GBEFORE")
+      [ -n "$GT" ] || continue
+      G=$(cr js "$GT" "${GPICK/WANT/\"$WANT\"}")
+      log "belépés: Google ablak: $(echo "$G" | cut -c1-200)"
       case "$G" in
         JELSZO) log "belépés: a Google jelszót/kódot kér"; return 1 ;;
-        NOGOOGLE|'') ;;
-        *) log "belépés: $G" ;;
+        "PT "*) XY=$(echo "$G" | cut -d' ' -f2); realclick "$GT" "$XY"; sleep 2 ;;
       esac
     done
   done
