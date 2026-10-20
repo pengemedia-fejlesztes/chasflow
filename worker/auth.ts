@@ -7,7 +7,7 @@ const COOKIE = '__Host-cf_session';
 const SESSION_TTL = 30 * 86400_000; // abszolút lejárat
 const IDLE_TTL = 7 * 86400_000; // inaktivitás után kilép
 const PBKDF2_ITER = 100_000; // a Workers futtatókörnyezet maximuma
-const MAX_IP_ATTEMPTS = 20; // 15 percen belül
+const MAX_IP_ATTEMPTS = 20; // 1fél percen belül
 const MAX_USER_FAILS = 5;
 const LOCK_MS = 15 * 60_000;
 

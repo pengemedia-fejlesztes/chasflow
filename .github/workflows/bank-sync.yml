@@ -1,4 +1,4 @@
-# Bankszinkron kérése (kézi indítás, pl. Claude-tól): a Mac 5 percen belül lefuttatja az aggreg8 frissítést és feltöltést.
+# Bankszinkron kérése (kézi indítás, pl. Claude-tól): a Mac fél percen belül lefuttatja az aggreg8 frissítést és feltöltést.
 name: Bankszinkron kérése
 
 on:
@@ -28,4 +28,4 @@ jobs:
         run: |
           AT=$(( $(date +%s) * 1000 ))
           npx wrangler d1 execute cashflow --remote --command "INSERT INTO settings (key, value) VALUES ('ingest_request', '{\"at\":$AT,\"by\":\"claude\"}') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-          echo "Kérve: $AT – a Mac 5 percen belül indítja. Állapot: Diagnosztika workflow."
+          echo "Kérve: $AT – a Mac fél percen belül indítja. Állapot: Diagnosztika workflow."

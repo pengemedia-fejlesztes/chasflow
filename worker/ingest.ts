@@ -12,7 +12,7 @@ const REPORT = 'ingest_report'; // a Mac legutóbbi futásának jelentése (sike
 
 const budapestHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
 
-/** Szinkron kérése: a Mac 5 percen belül elindítja. */
+/** Szinkron kérése: a Mac fél percen belül elindítja. */
 export async function requestSync(env: Env, by: string) {
   await setSetting(env, REQ, JSON.stringify({ at: now(), by }));
 }

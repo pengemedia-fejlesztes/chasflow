@@ -295,7 +295,7 @@ echo "Rendszerbeállítások → Adatvédelem és biztonság → Kisegítő lehe
 open -W "$HOME/Applications/Cashflow Kattintó.app"
 echo "Állapot: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
 
-# --- figyelő: 5 percenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
+# --- figyelő: 30 másodpercenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
 PLABEL="hu.pengemedia.cashflow-aggreg8-poll"
 PSCRIPT="$HOME/Library/Scripts/cashflow-aggreg8-poll.sh"
 PPLIST="$HOME/Library/LaunchAgents/$PLABEL.plist"
@@ -324,7 +324,7 @@ cat > "$PPLIST" <<PL
 <plist version="1.0"><dict>
   <key>Label</key><string>$PLABEL</string>
   <key>ProgramArguments</key><array><string>/bin/bash</string><string>$PSCRIPT</string></array>
-  <key>StartInterval</key><integer>300</integer>
+  <key>StartInterval</key><integer>30</integer>
 </dict></plist>
 PL
 launchctl unload "$PPLIST" 2>/dev/null || true

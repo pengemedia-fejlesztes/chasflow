@@ -1011,12 +1011,12 @@ function AutoUpload() {
       sub={`A Mac a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) a saját, bejelentkezett Chrome-odban megnyitja az aggreg8-at, frissíti a BiNX és a MagNet számlát, és a Letöltésekbe menti a tranzakciókat; a fájlt magától feltölti ide (a meglévő tételeket kiszűrjük). Beállítás: feltöltési kulcs, majd a Mac-telepítő parancs a Terminálban.`}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Pill kind="primary" onClick={() => run(() => api('/api/ingest/request', { body: {} }), 'Szinkron kérve – a Mac 5 percen belül elindítja').then(load)}>
+        <Pill kind="primary" onClick={() => run(() => api('/api/ingest/request', { body: {} }), 'Szinkron kérve – a Mac fél percen belül elindítja').then(load)}>
           Bankszinkron most
         </Pill>
         {st?.request && st.request.at > (st.report?.at || 0) && (
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
-            kérve {relTime(st.request.at)} – a Mac 5 percen belül elindítja (ha be van kapcsolva)
+            kérve {relTime(st.request.at)} – a Mac fél percen belül elindítja (ha be van kapcsolva)
           </span>
         )}
       </div>
