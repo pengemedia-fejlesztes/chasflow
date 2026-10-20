@@ -70,7 +70,9 @@ autologin() {
     [ -d "$APP" ] || { log "belépés: nincs telepítve a Cashflow Kattintó"; return 1; }
     rm -f "$STATE/click.result"
     echo "$P" > "$STATE/click.txt"
-    open -W "$APP"
+    # a segédprogram a háttérben indul (-g), hogy a Chrome maradjon előtérben – különben az első kattintás csak aktiválná az ablakot
+    front_tab; sleep 0.5
+    open -g -W "$APP"
     log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
     for i in $(seq 1 10); do
       sleep 3
