@@ -90,7 +90,9 @@ log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
 # jelentés a cashflow tervezőnek (siker vagy hiba) – az appban és a diagnosztikában látszik
 report() { curl -s -m 20 -X POST "$URL/api/ingest/report?ok=$1" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: text/plain; charset=utf-8" --data-binary "$2" >/dev/null 2>&1; }
-fail() { log "HIBA: $1"; note "Cashflow – bankszinkron hiba" "$1"; report 0 "$1"; exit 1; }
+LOG0=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+# a hibajelentésbe az aktuális futás belépési/szinkron lépései is bekerülnek (diagnosztikához)
+fail() { log "HIBA: $1"; note "Cashflow – bankszinkron hiba" "$1"; report 0 "$1 | $(tail -n +$((LOG0+1)) "$LOG" | grep -v 'HIBA:' | cut -c12- | tr '\n' ' ' | tail -c 400)"; exit 1; }
 # egyszerre csak egy futás (a beragadt zárat 20 perc után elengedi)
 LOCK="$STATE/run.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then
