@@ -71,13 +71,17 @@ autologin() {
   done
   return 1
 }
-sleep 10
+# megvárja, amíg az oldal betölt (legfeljebb 20 mp)
+for i in $(seq 1 20); do sleep 1; case "$(js 'document.readyState')" in complete) break ;; esac; done
+sleep 1
 R=$(js 'location.href')
 log "lap: $R"
 case "$R" in
   *standalone.aggreg8.hu*login*)
     if autologin; then
-      goto "https://standalone.aggreg8.hu/synchronizations"; sleep 10; R=$(js 'location.href'); log "lap: $R"
+      goto "https://standalone.aggreg8.hu/synchronizations"; sleep 2
+      for i in $(seq 1 20); do sleep 1; case "$(js 'document.readyState')" in complete) break ;; esac; done
+      R=$(js 'location.href'); log "lap: $R"
     else
       fail "Az aggreg8-ból kiléptetett, és nem tudtam automatikusan visszalépni – részletek a Mac naplójában (belépés: …). Ha a képernyő zárolva volt, a következő futás újrapróbálja."
     fi ;;
@@ -92,37 +96,39 @@ esac
 BTN='var q=function(){var b=[].slice.call(document.querySelectorAll("app-bac-list button.btn-sync"));if(!b.length)b=[].slice.call(document.querySelectorAll("button.btn-sync"));return b};var lbl=function(b){for(var e=b;e&&e!==document.body;e=e.parentElement){var t=(e.innerText||"").toLowerCase(),x=/binx/.test(t),m=/magnet/.test(t);if(x!==m)return x?"BinX":"MagNet";if(x&&m)break}return ""};var byName=function(n){return q().filter(function(b){return lbl(b)===n})[0]};'
 BANKS=""
 SYNCRES=""
-for i in $(seq 1 10); do
+for i in $(seq 1 20); do
   BANKS=$(js "(function(){${BTN}return q().map(lbl).filter(Boolean).join(' ')})()")
-  case "$BANKS" in *BinX*|*MagNet*) break ;; esac
-  sleep 3
+  case "$BANKS" in *BinX*MagNet*|*MagNet*BinX*) break ;; esac
+  sleep 1
 done
 log "szinkron bankok: $BANKS"
 for BANK in BinX MagNet; do
   case " $BANKS " in *" $BANK "*) ;; *) log "szinkron $BANK: nincs gomb"; continue ;; esac
   C=""
-  for w in $(seq 1 20); do
-    C=$(js "(function(){${BTN}var b=byName('$BANK');if(!b||b.disabled)return 'NINCS';window.__cf_t0=document.body.innerText.split('Sikeres szinkroniz').length;b.scrollIntoView();b.click();return 'KATT'})()")
+  for w in $(seq 1 30); do
+    C=$(js "(function(){${BTN}var b=byName('$BANK');if(!b||b.disabled)return 'NINCS';var n=function(){return document.body.innerText.split('Sikeres szinkroniz').length};var t0=n();window.__cf_ok='';if(window.__cf_mo)window.__cf_mo.disconnect();window.__cf_mo=new MutationObserver(function(){if(window.__cf_ok)return;var t=document.body.innerText;if(n()>t0)window.__cf_ok='OK';else if(/sikertelen|hiba történt/i.test(t))window.__cf_ok='HIBA'});window.__cf_mo.observe(document.body,{childList:true,subtree:true,characterData:true});b.scrollIntoView();b.click();return 'KATT'})()")
     [ "$C" = "KATT" ] && break
-    sleep 3
+    sleep 2
   done
   RES="$C"
   if [ "$C" = "KATT" ]; then
     RES="időtúllépés"
-    for j in $(seq 1 40); do
-      sleep 3
-      T=$(js '(function(){var t=document.body.innerText;if(t.split("Sikeres szinkroniz").length>window.__cf_t0)return "OK";if(/sikertelen|hiba történt/i.test(t))return "HIBA";return ""})()')
+    # az üzenetet az oldalba tett figyelő azonnal elkapja (a felugró üzenet gyorsan eltűnik) – másodpercenként nézzük
+    for j in $(seq 1 90); do
+      sleep 1
+      T=$(js 'String(window.__cf_ok||"")')
       case "$T" in OK|HIBA) RES="$T"; break ;; esac
     done
   fi
   log "szinkron $BANK: $RES"
   SYNCRES="$SYNCRES $BANK: $RES;"
-  sleep 8
+  sleep 1
 done
 goto "https://standalone.aggreg8.hu/transactions"
-sleep 3
+sleep 2
 case "$(js 'location.pathname')" in */transactions*) ;; *) js 'location.href="https://standalone.aggreg8.hu/transactions";"OK"' >/dev/null ;; esac
-sleep 12
+for i in $(seq 1 20); do sleep 1; case "$(js 'document.readyState')" in complete) break ;; esac; done
+sleep 1
 log "lap: $(js 'location.href')"
 EXP=$(curl -fsS -m 30 "$URL/mac/aggreg8-export.js") || fail "Nem érem el a cashflow tervezőt (nincs internet?)."
 EXP="${EXP%;}"
@@ -135,8 +141,8 @@ fi
 log "kezdő dátum: ${SINCE:-teljes lista}"
 js "window.__cf_since='$SINCE';'x'" >/dev/null
 js "window.__cf_r='fut';($EXP).then(function(r){window.__cf_r=r},function(e){window.__cf_r='HIBA '+e.message});'START'" >/dev/null
-for i in $(seq 1 60); do
-  sleep 3
+for i in $(seq 1 180); do
+  sleep 1
   R=$(js 'String(window.__cf_r)')
   case "$R" in fut) ;; *) break ;; esac
 done
