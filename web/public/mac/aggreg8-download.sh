@@ -1,4 +1,6 @@
 #!/bin/bash
+# SZÜNETELTETVE (a felhasználó kérésére): nem nyit ablakot, amíg a belépés javítása kész nincs
+exit 0
 URL="https://cashflow-tervezo.pengemedia.workers.dev"
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 LOG="$STATE/download.log"
