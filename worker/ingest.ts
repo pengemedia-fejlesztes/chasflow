@@ -8,7 +8,20 @@ import { Env, HttpError, audit, getSetting, json, now, randomId, safeEqual, setS
 const KEY = 'import_token';
 const LAST = 'ingest_last';
 const REQ = 'ingest_request'; // kézi „szinkronizálj most” kérés időpontja (app, robot, Claude)
-const REPORT = 'ingest_report'; // a Mac legutóbbi futásának jelentése (siker vagy hiba)
+const REPORT = 'ingest_report';
+const LAST_DATES = 'bank_last_dates'; // bankonként az utolsó banki tétel napja (feltöltéskor frissül)
+
+/** Bankonként az utolsó banki tétel napja – feltöltés után számoljuk újra (teljes tábla olvasás, ezért nem lekérdezésenként). */
+async function refreshLastDates(env: Env): Promise<Record<string, string>> {
+  const rows = (
+    await env.DB.prepare(
+      "SELECT a.bank_name AS bank, MAX(t.date) AS d FROM bank_accounts a JOIN bank_tx t ON t.account_id = a.id WHERE a.provider = 'manual' GROUP BY a.bank_name",
+    ).all<{ bank: string; d: string | null }>()
+  ).results;
+  const out = Object.fromEntries(rows.filter((r) => r.d).map((r) => [r.bank, r.d as string]));
+  await setSetting(env, LAST_DATES, JSON.stringify(out));
+  return out;
+} // a Mac legutóbbi futásának jelentése (siker vagy hiba)
 
 const budapestHour = () => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
 
@@ -42,12 +55,8 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     await tokenUser(env, req);
     // bankonként a legutolsó banki tétel napja; a Mac ettől 7 nappal korábbtól kéri le az új tételeket
     // (a bankok visszamenő dátummal is könyvelnek; a duplikációt a feltöltés kiszűri)
-    const rows = (
-      await env.DB.prepare(
-        "SELECT a.bank_name AS bank, MAX(t.date) AS d FROM bank_accounts a JOIN bank_tx t ON t.account_id = a.id WHERE a.provider = 'manual' GROUP BY a.bank_name",
-      ).all<{ bank: string; d: string | null }>()
-    ).results;
-    const last_dates = Object.fromEntries(rows.filter((r) => r.d).map((r) => [r.bank, r.d]));
+    // a Mac 30 másodpercenként kérdez: csak a tárolt értékeket olvassuk (a banki tételeket nem – az D1 napi olvasási keretét emésztené)
+    const last_dates = JSON.parse((await getSetting(env, LAST_DATES)) || 'null') || (await refreshLastDates(env));
     const ds = Object.values(last_dates) as string[];
     const since = ds.length ? new Date(Date.parse(ds.reduce((a, d) => (d < a ? d : a))) - 7 * 86400_000).toISOString().slice(0, 10) : null;
     const st = await ingestState(env);
@@ -128,6 +137,7 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
   }
   await audit(env, userId, 'ingest_aggreg8', { source: isJson ? 'json' : 'xml', skipped, accounts: out });
   await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: true, accounts: out } satisfies IngestLast));
+  await refreshLastDates(env);
   return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS });
 }
 
