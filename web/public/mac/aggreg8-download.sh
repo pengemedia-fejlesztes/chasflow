@@ -34,7 +34,7 @@ else
 fi
 # a saját (új) lapunk azonosítója – ezt az egy ablakot vezéreljük, a végén ezt zárjuk be
 TAB=""
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
   sleep 1
   TAB=$(osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
     -e 'if (URL of t contains "aggreg8.hu" or URL of t contains "google.com") and (item 1 of argv) does not contain ("," & (id of t as text) & ",") then return (id of t as text)' \
@@ -44,6 +44,11 @@ done
 # a végén a teljes ablakot bezárja (sikernél és hibánál is)
 trap 'osascript -e "on run argv" -e "tell application \"Google Chrome\"" -e "repeat with w in windows" -e "repeat with t in tabs of w" -e "if (id of t as text) is (item 1 of argv) then" -e "close w" -e "return" -e "end if" -e "end repeat" -e "end repeat" -e "end tell" -e "end run" "$TAB" >/dev/null 2>&1; rm -rf "$LOCK"' EXIT
 log "lap azonosító: $TAB"
+if [ -z "$TAB" ]; then
+  # diagnosztika: hány Chrome fut (külön adatkönyvtárral), és mit lát a vezérlés
+  log "chrome folyamatok: $(ps -axo args | grep -E '/Google Chrome[^/]*\.app/Contents/MacOS/' | grep -v Helper | sed -E 's#.*/([^/]+\.app)/Contents/MacOS/[^ ]+#\1#; s#--user-data-dir=([^ ]+)#udd=\1#' | cut -c1-120 | sort | uniq -c | tr '\n' ';')"
+  log "vezérelt ablakok: $(osascript -e 'tell application "Google Chrome" to get URL of active tab of every window' 2>&1 | sed -E 's#https?://([^/,]+)[^,]*#\1#g' | cut -c1-200)"
+fi
 case "$TAB" in ''|*[!0-9]*) fail "A Mac nem vezérelheti a Chrome-ot (Rendszerbeállítások → Adatvédelem → Automatizálás): $TAB" ;; esac
 tabdo() {
   osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
