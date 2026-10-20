@@ -25,52 +25,41 @@ if [ -z "$PROFILE" ]; then
   PROFILE=$(osascript -l JavaScript -e 'ObjC.import("Foundation");var p=$("~/Library/Application Support/Google/Chrome/Local State").stringByExpandingTildeInPath.js;var s=$.NSString.stringWithContentsOfFileEncodingError(p,$.NSUTF8StringEncoding,null);var c=s?JSON.parse(s.js).profile.info_cache:{};var k=Object.keys(c);var f=function(re){return k.filter(function(d){var i=c[d];return re.test([i.user_name,i.gaia_name,i.name].join(" "))})[0]};f(/360-marketing\.eu/i)||f(/c[ée]ges|360|penge/i)||""' 2>/dev/null)
 fi
 log "Chrome-profil: ${PROFILE:-alapértelmezett}"
-ids() { osascript -e 'tell application "Google Chrome" to get id of every tab of every window' 2>/dev/null | tr -d ' '; }
-BEFORE=",$(ids),"
-if [ -n "$PROFILE" ]; then
-  open -na "Google Chrome" --args --profile-directory="$PROFILE" --new-window "https://standalone.aggreg8.hu/synchronizations"
-else
-  osascript -e 'tell application "Google Chrome" to make new window' -e 'tell application "Google Chrome" to set URL of active tab of front window to "https://standalone.aggreg8.hu/synchronizations"' >/dev/null 2>&1
-fi
+# a saját Chrome-od (a robotok külön adatkönyvtáras / távvezérelt Chrome-ja nem): a fő folyamat azonosítója
+chrome_pid() { ps -axo pid=,args= | awk '/\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome( |$)/ && !/--type=/ && !/--user-data-dir/ && !/--remote-debugging/ && !/--no-startup-window/ {print $1; exit}'; }
+CPID=$(chrome_pid)
+if [ -z "$CPID" ]; then open -a "Google Chrome"; for i in $(seq 1 20); do sleep 1; CPID=$(chrome_pid); [ -n "$CPID" ] && break; done; sleep 3; fi
+CJS="$STATE/aggreg8-chrome.js"
+curl -fsS -m 30 "$URL/mac/aggreg8-chrome.js" -o "$CJS.new" && mv "$CJS.new" "$CJS"
+cr() { osascript -l JavaScript "$CJS" "$CPID" "$@" 2>&1; }
+log "Chrome folyamat: ${CPID:-nincs}"
+[ -n "$CPID" ] || fail "Nem indul a Google Chrome."
+BEFORE=",$(cr ids),"
+# új ablak a céges profilban (a futó Chrome-nak adja át, nem indít új példányt)
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ${PROFILE:+--profile-directory="$PROFILE"} --new-window "https://standalone.aggreg8.hu/synchronizations" >/dev/null 2>&1
 # a saját (új) lapunk azonosítója – ezt az egy ablakot vezéreljük, a végén ezt zárjuk be
 TAB=""
 for i in $(seq 1 30); do
   sleep 1
-  TAB=$(osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
-    -e 'if (URL of t contains "aggreg8.hu" or URL of t contains "google.com") and (item 1 of argv) does not contain ("," & (id of t as text) & ",") then return (id of t as text)' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return ""' -e 'end run' "$BEFORE" 2>&1)
-  [ -n "$TAB" ] && break
+  TAB=$(cr findnew "$BEFORE")
+  case "$TAB" in [0-9]*) break ;; *) TAB="" ;; esac
 done
 # a végén a teljes ablakot bezárja (sikernél és hibánál is)
-trap 'osascript -e "on run argv" -e "tell application \"Google Chrome\"" -e "repeat with w in windows" -e "repeat with t in tabs of w" -e "if (id of t as text) is (item 1 of argv) then" -e "close w" -e "return" -e "end if" -e "end repeat" -e "end repeat" -e "end tell" -e "end run" "$TAB" >/dev/null 2>&1; rm -rf "$LOCK"' EXIT
+trap '[ -n "$TAB" ] && cr closewin "$TAB" >/dev/null; rm -rf "$LOCK"' EXIT
 log "lap azonosító: $TAB"
 if [ -z "$TAB" ]; then
-  # diagnosztika: hány Chrome fut (külön adatkönyvtárral), és mit lát a vezérlés
   log "chrome folyamatok: $(ps -axo args | grep -E '/Google Chrome[^/]*\.app/Contents/MacOS/' | grep -v Helper | sed -E 's#.*/([^/]+\.app)/Contents/MacOS/[^ ]+#\1#; s#--user-data-dir=([^ ]+)#udd=\1#' | cut -c1-120 | sort | uniq -c | tr '\n' ';')"
-  log "vezérelt ablakok: $(osascript -e 'tell application "Google Chrome" to get URL of active tab of every window' 2>&1 | sed -E 's#https?://([^/,]+)[^,]*#\1#g' | cut -c1-200)"
+  log "vezérelt lapok: $(cr urls | cut -c1-200)"
 fi
-case "$TAB" in ''|*[!0-9]*) fail "A Mac nem vezérelheti a Chrome-ot (Rendszerbeállítások → Adatvédelem → Automatizálás): $TAB" ;; esac
-tabdo() {
-  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
-    -e 'if (id of t as text) is (item 1 of argv) then' -e "$2" -e 'end if' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$TAB" "$1" 2>&1
-}
-js() { tabdo "$1" 'return (execute t javascript (item 2 of argv))'; }
-goto() { tabdo "$1" 'set URL of t to (item 2 of argv)' >/dev/null; }
+case "$TAB" in ''|*[!0-9]*) fail "Nem találom a megnyitott aggreg8 ablakot a Chrome-ban." ;; esac
+js() { cr js "$TAB" "$1"; }
+goto() { cr seturl "$TAB" "$1" >/dev/null; }
 # JavaScript a Google bejelentkező lapon (lehet felugró ablak is)
-gjs() {
-  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
-    -e 'if URL of t contains "accounts.google.com" then return (execute t javascript (item 1 of argv))' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOGOOGLE"' -e 'end run' "$1" 2>&1
-}
+gjs() { cr gjs "" "$1"; }
 # automatikus belépés: a „Bejelentkezés mint …” Google-gomb egy beágyazott Google-elem (iframe), ezért valódi
 # egérkattintással nyomjuk meg (a „Cashflow Kattintó” segédprogrammal, a felhasználó jóváhagyásával); jelszót nem ad meg
 APP="$HOME/Applications/Cashflow Kattintó.app"
-front_tab() {
-  osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'activate' -e 'repeat with w in windows' -e 'set i to 0' -e 'repeat with t in tabs of w' -e 'set i to i + 1' \
-    -e 'if (id of t as text) is (item 1 of argv) then' -e 'set active tab index of w to i' -e 'set index of w to 1' -e 'return "OK"' -e 'end if' \
-    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return "NOTAB"' -e 'end run' "$TAB" >/dev/null 2>&1
-}
+front_tab() { cr front "$TAB" >/dev/null; }
 autologin() {
   WANT=$(tr -d ' \n' < "$STATE/google_account" 2>/dev/null | tr 'A-Z' 'a-z')
   for attempt in 1 2 3; do
@@ -103,6 +92,7 @@ sleep 1
 R=$(js 'location.href')
 log "lap: $R"
 case "$R" in
+  "missing value"|"") fail "A Chrome nem engedi a vezérlést: a céges profilban kapcsold be: Nézet → Fejlesztő → A JavaScript engedélyezése Apple-eseményekből." ;;
   *standalone.aggreg8.hu*login*)
     if autologin; then
       goto "https://standalone.aggreg8.hu/synchronizations"; sleep 2
