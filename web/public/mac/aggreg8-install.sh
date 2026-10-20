@@ -341,5 +341,5 @@ echo "Próbafutás indul (a belépést is a rendszer intézi)…"
 L="$HOME/Library/Application Support/cashflow-aggreg8/download.log"; touch "$L"; N0=$(wc -l < "$L")
 launchctl kickstart -k "gui/$(id -u)/$DLABEL"
 echo "Fut… (ha a Mac engedélyt kér a Chrome vezérléséhez: OK)"
-for i in $(seq 1 120); do sleep 5; tail -n +$((N0+1)) "$L" | tail -1 | grep -q "feltöltés:\|letöltés: [^O]\|nincs bejelentkezve\|nincs aggreg8\|nincs engedély" && break; done
+for i in $(seq 1 120); do sleep 5; tail -n +$((N0+1)) "$L" | tail -1 | grep -q "feltöltés:\|HIBA:\|már fut" && break; done
 tail -n +$((N0+1)) "$L"
