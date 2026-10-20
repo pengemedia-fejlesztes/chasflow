@@ -18,10 +18,31 @@ fi
 trap 'rm -rf "$LOCK"' EXIT
 date +%s > "$STATE/last_try"
 log "indul ($1)"
-# saját lap a Chrome-ban (azonosító alapján vezéreljük, nem URL alapján)
-TAB=$(osascript -e 'tell application "Google Chrome"' -e 'activate' -e 'if (count of windows) = 0 then make new window' \
-  -e 'set t to make new tab at end of tabs of window 1 with properties {URL:"https://standalone.aggreg8.hu/synchronizations"}' \
-  -e 'return id of t' -e 'end tell' 2>&1)
+# a céges Chrome-profilban nyitja meg (nem a robotok/AI profiljában): a 360-marketing.eu fiókos profil,
+# vagy a „céges/360/penge” nevű; felülírható: $STATE/chrome_profile (pl. „Profile 1”)
+PROFILE=$(tr -d '\n' < "$STATE/chrome_profile" 2>/dev/null)
+if [ -z "$PROFILE" ]; then
+  PROFILE=$(osascript -l JavaScript -e 'ObjC.import("Foundation");var p=$("~/Library/Application Support/Google/Chrome/Local State").stringByExpandingTildeInPath.js;var s=$.NSString.stringWithContentsOfFileEncodingError(p,$.NSUTF8StringEncoding,null);var c=s?JSON.parse(s.js).profile.info_cache:{};var k=Object.keys(c);var f=function(re){return k.filter(function(d){var i=c[d];return re.test([i.user_name,i.gaia_name,i.name].join(" "))})[0]};f(/360-marketing\.eu/i)||f(/c[ée]ges|360|penge/i)||""' 2>/dev/null)
+fi
+log "Chrome-profil: ${PROFILE:-alapértelmezett}"
+ids() { osascript -e 'tell application "Google Chrome" to get id of every tab of every window' 2>/dev/null | tr -d ' '; }
+BEFORE=",$(ids),"
+if [ -n "$PROFILE" ]; then
+  open -na "Google Chrome" --args --profile-directory="$PROFILE" --new-window "https://standalone.aggreg8.hu/synchronizations"
+else
+  osascript -e 'tell application "Google Chrome" to make new window' -e 'tell application "Google Chrome" to set URL of active tab of front window to "https://standalone.aggreg8.hu/synchronizations"' >/dev/null 2>&1
+fi
+# a saját (új) lapunk azonosítója – ezt az egy ablakot vezéreljük, a végén ezt zárjuk be
+TAB=""
+for i in $(seq 1 20); do
+  sleep 1
+  TAB=$(osascript -e 'on run argv' -e 'tell application "Google Chrome"' -e 'repeat with w in windows' -e 'repeat with t in tabs of w' \
+    -e 'if (URL of t contains "aggreg8.hu" or URL of t contains "google.com") and (item 1 of argv) does not contain ("," & (id of t as text) & ",") then return (id of t as text)' \
+    -e 'end repeat' -e 'end repeat' -e 'end tell' -e 'return ""' -e 'end run' "$BEFORE" 2>&1)
+  [ -n "$TAB" ] && break
+done
+# a végén a teljes ablakot bezárja (sikernél és hibánál is)
+trap 'osascript -e "on run argv" -e "tell application \"Google Chrome\"" -e "repeat with w in windows" -e "repeat with t in tabs of w" -e "if (id of t as text) is (item 1 of argv) then" -e "close w" -e "return" -e "end if" -e "end repeat" -e "end repeat" -e "end tell" -e "end run" "$TAB" >/dev/null 2>&1; rm -rf "$LOCK"' EXIT
 log "lap azonosító: $TAB"
 case "$TAB" in ''|*[!0-9]*) fail "A Mac nem vezérelheti a Chrome-ot (Rendszerbeállítások → Adatvédelem → Automatizálás): $TAB" ;; esac
 tabdo() {
@@ -156,7 +177,6 @@ case "$R" in
     U=$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: application/json" --data-binary @"$F")
     rm -f "$F"
     log "feltöltés: $(echo "$U" | head -c 400)"
-    sleep 3; tabdo "" 'close t' >/dev/null
     if echo "$U" | grep -q '"ok":true'; then
       N=$(echo "$U" | grep -o '"inbox":[0-9-]*' | cut -d: -f2 | awk '{s+=$1} END {print s+0}')
       note "Cashflow – bank frissítve" "Letöltve és feltöltve, $N új tétel jóváhagyásra."
