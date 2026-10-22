@@ -123,10 +123,13 @@ async function main() {
   // felugró Google-ablakok figyelése
   const popups = [];
   await c.send('Target.setDiscoverTargets', { discover: true });
+  // csak valódi lapok/ablakok (a beágyazott Google-gomb iframe nem felugró ablak)
+  let watch = false;
   c.on((m) => {
-    if (m.method === 'Target.targetCreated' && /accounts\.google\.com/.test(m.params.targetInfo.url || '')) popups.push(m.params.targetInfo.targetId);
-    if (m.method === 'Target.targetInfoChanged' && /accounts\.google\.com/.test(m.params.targetInfo.url || '') && !popups.includes(m.params.targetInfo.targetId))
-      popups.push(m.params.targetInfo.targetId);
+    if (m.method !== 'Target.targetCreated' && m.method !== 'Target.targetInfoChanged') return;
+    const ti = m.params.targetInfo;
+    if (watch && m.method === 'Target.targetCreated') step(`új cél: ${ti.type} ${(ti.url || '').slice(0, 80)}`);
+    if (ti.type === 'page' && /accounts\.google\.com/.test(ti.url || '') && !popups.includes(ti.targetId)) popups.push(ti.targetId);
   });
 
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank', background: true });
@@ -167,7 +170,9 @@ async function main() {
     let u = await go('/synchronizations');
     step(`lap: ${u.replace(AGG, '')}`);
     if (loggedOut(u)) {
+      watch = true;
       const ok = await login(c, S, evaluate, href, popups);
+      watch = false;
       if (!ok) {
         await closeTab();
         done(
@@ -262,18 +267,32 @@ async function login(c, S, evaluate, href, popups) {
   };
   // FedCM: a Chrome beépített „Folytatás … néven” ablaka – hivatalos automatizálással
   let fedcm = '';
-  await c.send('FedCm.enable', { disableRejectionDelay: true }, S).catch(() => {});
+  // a FedCM-ablakot a beágyazott Google-gomb (iframe) kéri – ezért a lap összes beágyazott keretére is bekapcsoljuk
+  const fed = async (sid, what) => {
+    try {
+      await c.send('FedCm.enable', { disableRejectionDelay: true }, sid);
+      step(`FedCM figyelés: ${what}`);
+    } catch (e) {
+      step(`FedCM figyelés nem megy (${what}): ${e.message}`);
+    }
+  };
+  await fed(S, 'lap');
+  c.on((m) => {
+    if (m.method === 'Target.attachedToTarget' && m.sessionId === S) fed(m.params.sessionId, `${m.params.targetInfo.type} ${(m.params.targetInfo.url || '').slice(0, 60)}`);
+  });
+  await c.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, S).catch((e) => step('beágyazott keretek: ' + e.message));
   c.on(async (m) => {
-    if (m.method !== 'FedCm.dialogShown' || m.sessionId !== S) return;
+    if (m.method !== 'FedCm.dialogShown') return;
+    const S2 = m.sessionId;
     const p = m.params;
     try {
       if (p.dialogType === 'AccountChooser' || p.dialogType === 'AutoReauthn') {
         let i = (p.accounts || []).findIndex((a) => WANT && String(a.email).toLowerCase() === WANT);
         if (i < 0) i = 0;
-        await c.send('FedCm.selectAccount', { dialogId: p.dialogId, accountIndex: i }, S);
+        await c.send('FedCm.selectAccount', { dialogId: p.dialogId, accountIndex: i }, S2);
         fedcm = `fiók: ${p.accounts?.[i]?.email || i}`;
       } else if (p.dialogType === 'ConfirmIdpLogin') {
-        await c.send('FedCm.clickDialogButton', { dialogId: p.dialogId, dialogButton: 'ConfirmIdpLoginContinue' }, S);
+        await c.send('FedCm.clickDialogButton', { dialogId: p.dialogId, dialogButton: 'ConfirmIdpLoginContinue' }, S2);
         fedcm = 'Google-belépés megerősítve';
       } else fedcm = `ismeretlen ablak: ${p.dialogType}`;
     } catch (e) {
@@ -289,7 +308,8 @@ async function login(c, S, evaluate, href, popups) {
       `(() => { const f = [...document.querySelectorAll('iframe')].find((e) => new RegExp(${JSON.stringify(env.GSI_RE || 'accounts\\.google\\.com/gsi')}).test(e.src) && e.getBoundingClientRect().width > 0); if (!f) return null; f.scrollIntoView({ block: 'center' }); const b = f.getBoundingClientRect(); return { x: b.left + Math.min(b.width / 2, 120), y: b.top + b.height / 2 }; })()`,
     ).catch(() => null);
     if (!r) {
-      step('belépés: nem látom a Google-gombot');
+      const txt = await evaluate(`(document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 160)`).catch(() => '');
+      step(`belépés: nem látom a Google-gombot (${await href()}: ${txt})`);
       for (let i = 0; i < 6; i++) {
         await sleep(1000);
         if (await isIn()) return true;
@@ -308,6 +328,7 @@ async function login(c, S, evaluate, href, popups) {
       }
       const pid = popups[popups.length - 1];
       if (pid && i % 3 === 2) await handlePopup(c, pid);
+      if (i === 5 && !pid && !fedcm) step('belépés: 5 mp után sincs Google-ablak');
     }
   }
   step('belépés: nem sikerült' + (fedcm ? ` (${fedcm})` : ''));
