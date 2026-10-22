@@ -1008,10 +1008,13 @@ function AutoUpload() {
   return (
     <Section
       title="Automatikus bankfeltöltés a Macről (aggreg8)"
-      sub={`A Mac a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}) a saját, bejelentkezett Chrome-odban megnyitja az aggreg8-at, frissíti a BiNX és a MagNet számlát, és a Letöltésekbe menti a tranzakciókat; a fájlt magától feltölti ide (a meglévő tételeket kiszűrjük). Beállítás: feltöltési kulcs, majd a Mac-telepítő parancs a Terminálban.`}
+      sub={`A Mac a banki szinkron idejében (${(st?.sync_hours || SYNC_HOURS).map((h) => h + ':00').join(', ')}), valamint a „Bankszinkron most” / „Szinkron most” gombra (fél percen belül) egy külön Cashflow-Chrome ablakban, a háttérben belép az aggreg8-ba (laszlo.nagy@360-marketing.eu), frissíti a BiNX és a MagNet számlát, letölti az új tételeket (a Letöltésekbe is), és feltölti ide – a meglévőket kiszűrjük. Ha az aggreg8 kiléptet, magától visszalép. Új gépen: feltöltési kulcs, majd a Mac-telepítő parancs a Terminálban; egyszer be kell lépni a Cashflow-Chrome-ban.`}
     >
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Pill kind="primary" onClick={() => run(() => api('/api/ingest/request', { body: {} }), 'Szinkron kérve – a Mac fél percen belül elindítja').then(load)}>
+        <Pill
+          kind="primary"
+          onClick={() => run(() => api('/api/ingest/request', { body: {} }), 'Szinkron kérve – a Mac fél percen belül elindítja').then(load)}
+        >
           Bankszinkron most
         </Pill>
         {st?.request && st.request.at > (st.report?.at || 0) && (
@@ -1083,7 +1086,7 @@ function AutoUpload() {
               .then(copy)
           }
         >
-          Claude ügynök feladat másolása
+          Robot / Claude feladat másolása (szinkron indítása és ellenőrzése)
         </Pill>
       </div>
       {token && (
