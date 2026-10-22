@@ -106,74 +106,8 @@ cat > "$DPLIST" <<PL
 PL
 launchctl load "$DPLIST"
 
-# --- „Cashflow Kattintó”: valódi egérkattintás a Google belépőgombra (csak ez a kis program kap Kisegítő hozzáférést) ---
-mkdir -p "$HOME/Applications" "$HOME/Library/Application Support/cashflow-aggreg8"
+# a korábbi „Cashflow Kattintó” már nem kell (a Chrome vezérlése a hivatalos CDP-felületen megy)
 rm -rf "$HOME/Applications/Cashflow Kattintó.app"
-KJS="$(mktemp -d)/kattinto.js"
-cat > "$KJS" <<'JS'
-ObjC.import('Foundation');
-ObjC.import('CoreGraphics');
-ObjC.import('ApplicationServices');
-// Két rögzített művelet (kódot nem tölt le és nem futtat):
-//   click.txt = "x,y"            → egérkattintás a képernyő adott pontján
-//   click.txt = "press <pid>"    → a Chrome (pid) „Folytatás … néven” gombjának megnyomása a Kisegítő felületen
-function run() {
-  var dir = $('~/Library/Application Support/cashflow-aggreg8').stringByExpandingTildeInPath.js;
-  var fm = $.NSFileManager.defaultManager;
-  var write = function (t) { $(String(t)).writeToFileAtomicallyEncodingError(dir + '/click.result', true, $.NSUTF8StringEncoding, null); };
-  var s = $.NSString.stringWithContentsOfFileEncodingError(dir + '/click.txt', $.NSUTF8StringEncoding, null);
-  s = s && !s.isNil() ? s.js.trim() : '';
-  fm.removeItemAtPathError(dir + '/click.txt', null);
-  var trusted = $.AXIsProcessTrustedWithOptions($({ AXTrustedCheckOptionPrompt: true }));
-  if (!trusted) { write('NINCS ENGEDÉLY (Kisegítő lehetőségek → Cashflow Kattintó)'); return; }
-  // press <pid> [felirat-eleje|másik felirat-eleje…] – a gomb feliratának elejére keres (szövegként, nem kódként)
-  var m = /^press (\d+)(?: (.+))?$/.exec(s);
-  if (m) {
-    try {
-      var p = Application('System Events').processes.whose({ unixId: Number(m[1]) })[0];
-      var words = (m[2] || 'folytatás|continue').toLowerCase().split('|');
-      var re = { test: function (n) { n = n.toLowerCase(); return words.some(function (w) { return w && n.indexOf(w) === 0; }); } };
-      var names = [];
-      var ws = p.windows();
-      for (var i = 0; i < ws.length; i++) {
-        var all = ws[i].entireContents();
-        for (var j = 0; j < all.length; j++) {
-          var e = all[j];
-          try {
-            if (e.role() !== 'AXButton') continue;
-            var n = String(e.name() || e.description() || '').trim();
-            if (n && names.length < 40) names.push(n);
-            if (re.test(n)) { e.actions['AXPress'].perform(); write('NYOMVA ' + n); return; }
-          } catch (x) {}
-        }
-      }
-      write('NINCS GOMB; gombok: ' + names.join(' | '));
-    } catch (e2) { write('HIBA ' + e2); }
-    return;
-  }
-  if (s === 'probe') { try { write('RENDSZERESEMÉNYEK OK ' + Application('System Events').processes.length); } catch (e3) { write('HIBA ' + e3); } return; }
-  if (s.indexOf(',') < 0) { write('ENGEDÉLY OK'); return; }
-  var c = s.split(',');
-  var pt = $.CGPointMake(Number(c[0]), Number(c[1]));
-  [5, 1, 2].forEach(function (type) {
-    $.CGEventPost(0, $.CGEventCreateMouseEvent(null, type, pt, 0));
-    delay(0.08);
-  });
-  write('KATT ' + c.join(','));
-}
-JS
-osacompile -l JavaScript -o "$HOME/Applications/Cashflow Kattintó.app" "$KJS"
-rm -rf "$(dirname "$KJS")"
-rm -f "$HOME/Library/Application Support/cashflow-aggreg8/click.txt"
-echo ""
-echo "A Google belépőgomb megnyomásához a „Cashflow Kattintó” programnak egyszer engedély kell:"
-echo "Rendszerbeállítások → Adatvédelem és biztonság → Kisegítő lehetőségek → Cashflow Kattintó: BE."
-open -W "$HOME/Applications/Cashflow Kattintó.app"
-echo "Állapot: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
-# a „Folytatás … néven” gombhoz a Kattintó a Rendszereseményeket használja – ennek engedélyét most kéri (ha kérdezi: OK)
-echo "probe" > "$HOME/Library/Application Support/cashflow-aggreg8/click.txt"
-open -W "$HOME/Applications/Cashflow Kattintó.app"
-echo "Rendszeresemények: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
 
 # --- figyelő: 30 másodpercenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
 PLABEL="hu.pengemedia.cashflow-aggreg8-poll"
@@ -214,12 +148,10 @@ echo ""
 echo "Kész. 5, 9, 13, 17 és 21 órakor a Chrome megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-….json);"
 echo "a fájlt a Mac feltölti a cashflow tervezőbe. Napló: ~/Library/Application Support/cashflow-aggreg8/"
 echo ""
-echo "EGYSZER a Chrome-ban: Nézet → Fejlesztő → „JavaScript engedélyezése az Apple Events eseményekből” legyen bepipálva."
-echo "Ha a Mac rákérdez, hogy a Terminál/bash vezérelheti-e a Chrome-ot: Engedélyezés."
 echo "Próbafutás indul (a belépést is a rendszer intézi)…"
 # ugyanúgy indítjuk, ahogy ütemezve fut (launchd) – így az engedélykérések most jönnek fel, nem hajnalban
 L="$HOME/Library/Application Support/cashflow-aggreg8/download.log"; touch "$L"; N0=$(wc -l < "$L")
 launchctl kickstart -k "gui/$(id -u)/$DLABEL"
-echo "Fut… (ha a Mac engedélyt kér a Chrome vezérléséhez: OK)"
-for i in $(seq 1 120); do sleep 5; tail -n +$((N0+1)) "$L" | tail -1 | grep -q "feltöltés:\|HIBA:\|már fut" && break; done
+echo "Fut…"
+for i in $(seq 1 120); do sleep 5; tail -n +$((N0+1)) "$L" | tail -1 | grep -q "eredmény:\|HIBA:\|már fut\|kihagyva" && break; done
 tail -n +$((N0+1)) "$L"

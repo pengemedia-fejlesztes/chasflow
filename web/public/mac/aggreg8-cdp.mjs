@@ -1,0 +1,353 @@
+// Cashflow – aggreg8 banki szinkron a Chrome hivatalos fejlesztői vezérlőfelületén (CDP) keresztül.
+// Láthatatlan háttérlapon dolgozik: belépés (Google „Folytatás … néven” is, a Chrome FedCM-automatizálásával),
+// szinkron (BinX, MagNet), letöltés, feltöltés a cashflow tervezőbe, majd a lap bezárása.
+// Nem kell hozzá Kisegítő engedély, AppleScript vagy egérkattintás.
+// Böngésző: 1) már futó, távvezérelhető Chrome (pl. a Marveen robot-Chrome-ja, 9334-es port),
+//           2) különben saját, külön Chrome-példány (külön profillal, 9339-es port).
+// Kimenet: az utolsó sor egy JSON: {ok, msg, steps}
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+
+const env = process.env;
+const STATE = env.CF_STATE || `${homedir()}/Library/Application Support/cashflow-aggreg8`;
+const CF_URL = env.CF_URL || 'https://cashflow-tervezo.pengemedia.workers.dev';
+const TOKEN = env.CF_TOKEN || '';
+const AGG = env.AGG_ORIGIN || 'https://standalone.aggreg8.hu';
+const BACKEND = env.AGG_BACKEND || 'https://standalone-backend.aggreg8.hu';
+const PORTS = (env.CDP_PORTS || '9334,9339').split(',').map(Number);
+const OWN_PORT = Number(env.CDP_OWN_PORT || 9339);
+const CHROME = env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const WANT = (env.CF_GOOGLE_ACCOUNT || '').toLowerCase();
+const DOWNLOADS = env.CF_DOWNLOADS || `${homedir()}/Downloads`;
+
+const steps = [];
+const step = (s) => {
+  steps.push(s);
+  console.error(new Date().toISOString().slice(11, 19), s);
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const done = (ok, msg) => {
+  console.log(JSON.stringify({ ok, msg, steps }));
+  process.exit(ok ? 0 : 1);
+};
+// a teljes futás felső korlátja (ne maradjon beragadva)
+setTimeout(() => done(false, 'Időtúllépés (10 perc).'), 10 * 60_000).unref();
+
+async function getJson(url, ms = 2000) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
+  return r.json();
+}
+
+async function findBrowser() {
+  for (const p of PORTS) {
+    try {
+      const v = await getJson(`http://127.0.0.1:${p}/json/version`);
+      if (v.webSocketDebuggerUrl) return { port: p, ws: v.webSocketDebuggerUrl, own: p === OWN_PORT };
+    } catch {}
+  }
+  return null;
+}
+
+async function launchOwn() {
+  const dir = `${STATE}/chrome-profil`;
+  mkdirSync(dir, { recursive: true });
+  if (!existsSync(CHROME)) throw new Error('Nem találom a Google Chrome-ot.');
+  const extra = env.CHROME_ARGS ? env.CHROME_ARGS.split(' ') : [];
+  const p = spawn(
+    CHROME,
+    [`--remote-debugging-port=${OWN_PORT}`, `--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check', '--window-size=1200,900', ...extra, 'about:blank'],
+    { detached: true, stdio: 'ignore' },
+  );
+  p.unref();
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    try {
+      const v = await getJson(`http://127.0.0.1:${OWN_PORT}/json/version`);
+      if (v.webSocketDebuggerUrl) return { port: OWN_PORT, ws: v.webSocketDebuggerUrl, own: true, launched: true };
+    } catch {}
+  }
+  throw new Error('A saját Chrome-példány nem indult el.');
+}
+
+class CDP {
+  constructor(url) {
+    this.id = 0;
+    this.pending = new Map();
+    this.handlers = [];
+    this.ws = new WebSocket(url);
+    this.ready = new Promise((res, rej) => {
+      this.ws.onopen = res;
+      this.ws.onerror = () => rej(new Error('CDP kapcsolódási hiba'));
+    });
+    this.ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.id && this.pending.has(m.id)) {
+        const { res, rej } = this.pending.get(m.id);
+        this.pending.delete(m.id);
+        m.error ? rej(new Error(m.error.message)) : res(m.result);
+      } else if (m.method) this.handlers.forEach((h) => h(m));
+    };
+  }
+  send(method, params = {}, sessionId, ms = 30000) {
+    const id = ++this.id;
+    this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    return new Promise((res, rej) => {
+      this.pending.set(id, { res, rej });
+      setTimeout(() => {
+        if (this.pending.delete(id)) rej(new Error(`${method}: időtúllépés`));
+      }, ms);
+    });
+  }
+  on(fn) {
+    this.handlers.push(fn);
+  }
+  close() {
+    try {
+      this.ws.close();
+    } catch {}
+  }
+}
+
+async function main() {
+  if (!TOKEN) done(false, 'Nincs feltöltési kulcs.');
+  let br = await findBrowser();
+  if (!br) {
+    step('nincs futó vezérelhető Chrome – saját példány indítása');
+    br = await launchOwn();
+  }
+  step(`böngésző: ${br.own ? 'saját példány' : 'robot-Chrome'} (port ${br.port})`);
+  const c = new CDP(br.ws);
+  await c.ready;
+
+  // felugró Google-ablakok figyelése
+  const popups = [];
+  await c.send('Target.setDiscoverTargets', { discover: true });
+  c.on((m) => {
+    if (m.method === 'Target.targetCreated' && /accounts\.google\.com/.test(m.params.targetInfo.url || '')) popups.push(m.params.targetInfo.targetId);
+    if (m.method === 'Target.targetInfoChanged' && /accounts\.google\.com/.test(m.params.targetInfo.url || '') && !popups.includes(m.params.targetInfo.targetId))
+      popups.push(m.params.targetInfo.targetId);
+  });
+
+  const { targetId } = await c.send('Target.createTarget', { url: 'about:blank', background: true });
+  // a lap bezárása, és a böngésző letöltési beállításának visszaállítása (a robot-Chrome-ot ne zavarjuk)
+  const closeTab = async () => {
+    await c.send('Target.closeTarget', { targetId }).catch(() => {});
+    await c.send('Browser.setDownloadBehavior', { behavior: 'default' }).catch(() => {});
+  };
+  try {
+    const { sessionId: S } = await c.send('Target.attachToTarget', { targetId, flatten: true });
+    await c.send('Page.enable', {}, S);
+    await c.send('Runtime.enable', {}, S);
+    // a letöltött fájl a Letöltések mappába kerüljön
+    await c.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: DOWNLOADS, eventsEnabled: false }).catch(() => {});
+    // háttérlapon is legyen „látható” és fókuszált (a gombok, időzítők így normálisan működnek)
+    await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, S).catch(() => {});
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 900, deviceScaleFactor: 1, mobile: false }, S).catch(() => {});
+
+    const evaluate = async (expression, ms = 30000) => {
+      const r = await c.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, S, ms);
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
+      return r.result.value;
+    };
+    const href = () => evaluate('location.href').catch(() => '');
+    const go = async (path) => {
+      await c.send('Page.navigate', { url: AGG + path }, S);
+      for (let i = 0; i < 40; i++) {
+        await sleep(500);
+        const st = await evaluate('document.readyState').catch(() => '');
+        if (st === 'complete') break;
+      }
+      await sleep(1500); // az Angular-alkalmazás felépül, esetleg átirányít
+      return href();
+    };
+    const loggedOut = (u) => /\/login/.test(u) || !u.startsWith(AGG);
+
+    // 1) belépés
+    let u = await go('/synchronizations');
+    step(`lap: ${u.replace(AGG, '')}`);
+    if (loggedOut(u)) {
+      const ok = await login(c, S, evaluate, href, popups);
+      if (!ok) {
+        await closeTab();
+        done(
+          false,
+          br.own
+            ? 'Az aggreg8-ba nem sikerült automatikusan belépni: a saját Cashflow-Chrome-ban még nincs Google-bejelentkezés (lásd a lépéseket).'
+            : 'Az aggreg8-ba nem sikerült automatikusan belépni (lásd a lépéseket).',
+        );
+      }
+      u = await go('/synchronizations');
+      step(`lap: ${u.replace(AGG, '')}`);
+    }
+
+    // 2) szinkron bankonként
+    const sync = [];
+    for (const bank of ['BinX', 'MagNet']) {
+      const r = await evaluate(
+        `(async () => {
+          const q = () => { let b = [...document.querySelectorAll('app-bac-list button.btn-sync')]; if (!b.length) b = [...document.querySelectorAll('button.btn-sync')]; return b; };
+          const lbl = (b) => { for (let e = b; e && e !== document.body; e = e.parentElement) { const t = (e.innerText || '').toLowerCase(), x = /binx/.test(t), m = /magnet/.test(t); if (x !== m) return x ? 'BinX' : 'MagNet'; if (x && m) break; } return ''; };
+          let b = null;
+          for (let i = 0; i < 30 && !(b = q().find((x) => lbl(x) === '${bank}' && !x.disabled)); i++) await new Promise((r) => setTimeout(r, 1000));
+          if (!b) return 'nincs gomb';
+          const n = () => document.body.innerText.split('Sikeres szinkroniz').length;
+          // az üzenetek száma a kattintás óta látott legkisebbhez képest nő (az előző bank üzenete közben eltűnhet)
+          let base = n();
+          let res = '';
+          const mo = new MutationObserver(() => { if (res) return; const k = n(); if (k < base) base = k; else if (k > base) res = 'OK'; else if (/sikertelen|hiba történt/i.test(document.body.innerText)) res = 'HIBA'; });
+          mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+          b.scrollIntoView({ block: 'center' });
+          b.click();
+          for (let i = 0; i < 180 && !res; i++) await new Promise((r) => setTimeout(r, 500));
+          mo.disconnect();
+          return res || 'időtúllépés';
+        })()`,
+        120000,
+      ).catch((e) => 'hiba: ' + e.message);
+      sync.push(`${bank}: ${r}`);
+      step(`szinkron ${bank}: ${r}`);
+    }
+
+    // 3) letöltés (csak az új tételek: a cashflow megadja a kezdő dátumot; hétfő hajnalban teljes lista)
+    let since = '';
+    const now = new Date();
+    if (!(now.getDay() === 1 && now.getHours() < 7)) {
+      try {
+        const s = await (await fetch(`${CF_URL}/api/ingest/status`, { headers: { Authorization: `Bearer ${TOKEN}` }, signal: AbortSignal.timeout(20000) })).json();
+        since = s.since || '';
+      } catch {}
+    }
+    step(`kezdő dátum: ${since || 'teljes lista'}`);
+    await go('/transactions');
+    let exp = env.EXPORT_JS_FILE
+      ? readFileSync(env.EXPORT_JS_FILE, 'utf8')
+      : await (await fetch(`${CF_URL}/mac/aggreg8-export.js`, { signal: AbortSignal.timeout(20000) })).text();
+    exp = exp.trim().replace(/;$/, '').replaceAll('https://standalone-backend.aggreg8.hu', BACKEND);
+    const summary = await evaluate(`window.__cf_since = ${JSON.stringify(since)}; ${exp}`, 180000).catch((e) => 'HIBA ' + e.message);
+    step(`letöltés: ${String(summary).slice(0, 200)}`);
+    if (!String(summary).startsWith('OK')) {
+      await closeTab();
+      done(false, /LOGIN/.test(String(summary)) ? 'Az aggreg8 kiléptetett a letöltés közben.' : `Letöltési hiba: ${summary}`);
+    }
+    const data = await evaluate('(() => { const d = window.__cf_data || ""; delete window.__cf_data; return d; })()', 60000);
+
+    // 4) feltöltés a cashflow tervezőbe
+    const up = await fetch(`${CF_URL}/api/ingest/aggreg8`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'X-Requested-With': 'cashflow', 'Content-Type': 'application/json' },
+      body: data,
+      signal: AbortSignal.timeout(120000),
+    });
+    const ur = await up.json().catch(() => ({}));
+    await sleep(1500); // a letöltés befejeződjön, mielőtt a lapot bezárjuk
+    await closeTab();
+    if (!ur.ok) done(false, `Feltöltési hiba: ${JSON.stringify(ur).slice(0, 200)}`);
+    const n = (ur.accounts || []).reduce((s, a) => s + (a.inbox || 0) + (a.auto || 0), 0);
+    done(true, `Szinkron: ${sync.join('; ')}. Letöltés: ${String(summary).replace(/^OK /, '')}. Új tétel: ${n}.`);
+  } catch (e) {
+    await closeTab();
+    throw e;
+  } finally {
+    c.close();
+  }
+}
+
+// Belépés: „Bejelentkezés mint …” Google-gomb (beágyazott Google-elem) → a Chrome FedCM-ablaka vagy felugró Google-ablak
+async function login(c, S, evaluate, href, popups) {
+  const AGGRE = new RegExp('^' + AGG.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const isIn = async () => {
+    const u = await href();
+    return AGGRE.test(u) && !/\/login/.test(u);
+  };
+  // FedCM: a Chrome beépített „Folytatás … néven” ablaka – hivatalos automatizálással
+  let fedcm = '';
+  await c.send('FedCm.enable', { disableRejectionDelay: true }, S).catch(() => {});
+  c.on(async (m) => {
+    if (m.method !== 'FedCm.dialogShown' || m.sessionId !== S) return;
+    const p = m.params;
+    try {
+      if (p.dialogType === 'AccountChooser' || p.dialogType === 'AutoReauthn') {
+        let i = (p.accounts || []).findIndex((a) => WANT && String(a.email).toLowerCase() === WANT);
+        if (i < 0) i = 0;
+        await c.send('FedCm.selectAccount', { dialogId: p.dialogId, accountIndex: i }, S);
+        fedcm = `fiók: ${p.accounts?.[i]?.email || i}`;
+      } else if (p.dialogType === 'ConfirmIdpLogin') {
+        await c.send('FedCm.clickDialogButton', { dialogId: p.dialogId, dialogButton: 'ConfirmIdpLoginContinue' }, S);
+        fedcm = 'Google-belépés megerősítve';
+      } else fedcm = `ismeretlen ablak: ${p.dialogType}`;
+    } catch (e) {
+      fedcm = 'hiba: ' + e.message;
+    }
+    step(`belépés (Chrome-ablak): ${fedcm}`);
+  });
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (await isIn()) return true;
+    // a Google-gomb (iframe) közepe – a CDP-s kattintás valódi felhasználói kattintásnak számít, beágyazott elemen is
+    const r = await evaluate(
+      `(() => { const f = [...document.querySelectorAll('iframe')].find((e) => new RegExp(${JSON.stringify(env.GSI_RE || 'accounts\\.google\\.com/gsi')}).test(e.src) && e.getBoundingClientRect().width > 0); if (!f) return null; f.scrollIntoView({ block: 'center' }); const b = f.getBoundingClientRect(); return { x: b.left + Math.min(b.width / 2, 120), y: b.top + b.height / 2 }; })()`,
+    ).catch(() => null);
+    if (!r) {
+      step('belépés: nem látom a Google-gombot');
+      for (let i = 0; i < 6; i++) {
+        await sleep(1000);
+        if (await isIn()) return true;
+      }
+      continue;
+    }
+    step(`belépés: Google-gomb megnyomása (${attempt}. próba)`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
+      await c.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 }, S);
+    // várakozás: FedCM-ablak (automatikusan kezeljük), felugró Google-ablak, vagy közvetlen belépés
+    for (let i = 0; i < 30; i++) {
+      await sleep(1000);
+      if (await isIn()) {
+        step('belépés: sikeres');
+        return true;
+      }
+      const pid = popups[popups.length - 1];
+      if (pid && i % 3 === 2) await handlePopup(c, pid);
+    }
+  }
+  step('belépés: nem sikerült' + (fedcm ? ` (${fedcm})` : ''));
+  return false;
+}
+
+// Felugró Google-ablak (régebbi belépési mód): fiók kiválasztása / Folytatás – CDP-s kattintással
+async function handlePopup(c, targetId) {
+  try {
+    const { sessionId: P } = await c.send('Target.attachToTarget', { targetId, flatten: true });
+    const r = await c.send(
+      'Runtime.evaluate',
+      {
+        expression: `(() => {
+          const want = ${JSON.stringify(WANT)};
+          const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
+          const pw = document.querySelector('input[type=password]');
+          if (pw && vis(pw)) return { what: 'JELSZO' };
+          const at = (e, what) => { e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { what, x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
+          const acc = [...document.querySelectorAll('[data-identifier],[data-email]')].filter(vis);
+          const id = (e) => (e.getAttribute('data-identifier') || e.getAttribute('data-email') || '').toLowerCase();
+          const a = acc.find((e) => want && id(e) === want) || (acc.length === 1 ? acc[0] : null);
+          if (a) return at(a, 'fiók ' + id(a));
+          const btn = [...document.querySelectorAll('button,[role=button]')].filter(vis).find((e) => /^(folytatás|continue|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText || '').trim()));
+          if (btn) return at(btn, 'gomb ' + btn.innerText.trim().slice(0, 30));
+          return { what: 'SEMMI: ' + (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 120) };
+        })()`,
+        returnByValue: true,
+      },
+      P,
+    );
+    const v = r.result?.value || {};
+    step(`belépés (Google-ablak): ${v.what}`);
+    if (v.x !== undefined)
+      for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
+        await c.send('Input.dispatchMouseEvent', { type, x: v.x, y: v.y, button: 'left', clickCount: 1 }, P);
+    await c.send('Target.detachFromTarget', { sessionId: P }).catch(() => {});
+  } catch (e) {
+    step('belépés (Google-ablak): ' + e.message);
+  }
+}
+
+main().catch((e) => done(false, 'Hiba: ' + e.message));
