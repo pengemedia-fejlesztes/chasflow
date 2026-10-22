@@ -20,6 +20,7 @@ const OWN_PORT = Number(env.CDP_OWN_PORT || 9339);
 const CHROME = env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WANT = (env.CF_GOOGLE_ACCOUNT || '').toLowerCase();
 const DOWNLOADS = env.CF_DOWNLOADS || `${homedir()}/Downloads`;
+const GOOGLE = new RegExp(env.GOOGLE_RE || 'accounts\\.google\\.com');
 
 const steps = [];
 const step = (s) => {
@@ -136,7 +137,7 @@ async function main() {
     const ti = m.params.targetInfo;
     if (watch && m.method === 'Target.targetCreated') step(`új cél: ${ti.type} ${(ti.url || '').slice(0, 80)}`);
     // a mi lapunkból nyílt új ablak (a Google belépőablaka), vagy bármely Google-belépő lap
-    if (ti.type === 'page' && ti.targetId !== ourTarget && (ti.openerId === ourTarget || /accounts\.google\.com/.test(ti.url || '')) && !popups.includes(ti.targetId))
+    if (ti.type === 'page' && ti.targetId !== ourTarget && (ti.openerId === ourTarget || GOOGLE.test(ti.url || '')) && !popups.includes(ti.targetId))
       popups.push(ti.targetId);
   });
 
@@ -316,6 +317,23 @@ async function login(c, S, evaluate, href, popups) {
     const r = await evaluate(
       `(() => { const f = [...document.querySelectorAll('iframe')].find((e) => new RegExp(${JSON.stringify(env.GSI_RE || 'accounts\\.google\\.com/gsi')}).test(e.src) && e.getBoundingClientRect().width > 0); if (!f) return null; f.scrollIntoView({ block: 'center' }); const b = f.getBoundingClientRect(); return { x: b.left + Math.min(b.width / 2, 120), y: b.top + b.height / 2 }; })()`,
     ).catch(() => null);
+    if (!r && GOOGLE.test(await href())) {
+      for (let i = 0; i < 30; i++) {
+        await sleep(1000);
+        if (await isIn()) {
+          step('belépés: sikeres');
+          return true;
+        }
+        if (i % 3 === 2) {
+          const w = await handlePopup(c, null, S);
+          if (w === 'JELSZO') {
+            step('belépés: a Google jelszót kér – a robot-Chrome-ban egyszer be kell jelentkezni a Google-fiókba');
+            return false;
+          }
+        }
+      }
+      continue;
+    }
     if (!r) {
       const txt = await evaluate(`(document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 160)`).catch(() => '');
       step(`belépés: nem látom a Google-gombot (${await href()}: ${txt})`);
@@ -337,7 +355,16 @@ async function login(c, S, evaluate, href, popups) {
       }
       const pid = popups[popups.length - 1];
       if (pid && i % 3 === 2) await handlePopup(c, pid);
-      if (i === 5 && !pid && !fedcm) step('belépés: 5 mp után sincs Google-ablak');
+      // háttérlapból a Google nem nyit felugró ablakot, hanem magát a lapot viszi a belépőoldalára
+      const cur = await href();
+      if (GOOGLE.test(cur) && i % 3 === 2) {
+        const w = await handlePopup(c, null, S);
+        if (w === 'JELSZO') {
+          step('belépés: a Google jelszót kér – a robot-Chrome-ban egyszer be kell jelentkezni a Google-fiókba');
+          return false;
+        }
+      }
+      if (i === 5 && !pid && !fedcm && !GOOGLE.test(await href())) step('belépés: 5 mp után sincs Google-ablak');
     }
   }
   step('belépés: nem sikerült' + (fedcm ? ` (${fedcm})` : ''));
@@ -345,9 +372,9 @@ async function login(c, S, evaluate, href, popups) {
 }
 
 // Felugró Google-ablak (régebbi belépési mód): fiók kiválasztása / Folytatás – CDP-s kattintással
-async function handlePopup(c, targetId) {
+async function handlePopup(c, targetId, existingSession) {
   try {
-    const { sessionId: P } = await c.send('Target.attachToTarget', { targetId, flatten: true });
+    const P = existingSession || (await c.send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
     const r = await c.send(
       'Runtime.evaluate',
       {
@@ -356,6 +383,8 @@ async function handlePopup(c, targetId) {
           const vis = (e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0; };
           const pw = document.querySelector('input[type=password]');
           if (pw && vis(pw)) return { what: 'JELSZO' };
+          const em = document.querySelector('input[type=email]');
+          if (em && vis(em) && !em.value) return { what: 'EMAIL' };
           const at = (e, what) => { e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { what, x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
           const acc = [...document.querySelectorAll('[data-identifier],[data-email]')].filter(vis);
           const id = (e) => (e.getAttribute('data-identifier') || e.getAttribute('data-email') || '').toLowerCase();
@@ -385,7 +414,16 @@ async function handlePopup(c, targetId) {
     if (v.x !== undefined)
       for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
         await c.send('Input.dispatchMouseEvent', { type, x: v.x, y: v.y, button: 'left', clickCount: 1 }, P);
-    await c.send('Target.detachFromTarget', { sessionId: P }).catch(() => {});
+    if (v.what === 'EMAIL' && WANT) {
+      // a Google az e-mail-címet kéri: beírja és Tovább (jelszót soha nem ír be)
+      await c.send('Runtime.evaluate', { expression: `(() => { const e = document.querySelector('input[type=email]'); e.focus(); e.select(); })()` }, P);
+      await c.send('Input.insertText', { text: WANT }, P);
+      await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, P);
+      await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, P);
+      step('belépés (Google): e-mail-cím megadva');
+    }
+    if (!existingSession) await c.send('Target.detachFromTarget', { sessionId: P }).catch(() => {});
+    return v.what;
   } catch (e) {
     step('belépés (Google-ablak): ' + e.message);
   }
