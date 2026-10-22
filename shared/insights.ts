@@ -120,13 +120,17 @@ export function targetTracking(ix: Index, target: number, months: string[]) {
 // ───────────── Ajánlatok megvalósulása ─────────────
 export interface OfferStats {
   won: Entry[];
-  lost: { id: string; name: string; leaf_id: string; amount: number; date: string }[];
+  lost: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at?: number; offer_at?: number | null }[];
   open: Entry[];
   expired: Entry[];
   rate: number | null;
   wonSum: number;
   lostSum: number;
   openSum: number;
+  /** átlagos napok az ajánlat felvitelétől az elfogadásig / elutasításig (ahol ismert) */
+  acceptDays: number | null;
+  acceptN: number;
+  rejectDays: number | null;
 }
 /** Megnyert = valaha ajánlat volt, de már biztos terv / teljesült; elveszett = törölt ajánlat; lejárt = 30 napnál régebbi nyitott ajánlat. */
 export function offerConversion(entries: Entry[], lost: OfferStats['lost'], today: string): OfferStats {
@@ -136,7 +140,25 @@ export function offerConversion(entries: Entry[], lost: OfferStats['lost'], toda
   const open = openAll.filter((e) => dayDiff(e.date, today) <= 30);
   const sum = (xs: { amount: number }[]) => xs.reduce((s, e) => s + Math.abs(e.amount), 0);
   const decided = won.length + lost.length;
-  return { won, lost, open, expired, rate: decided ? won.length / decided : null, wonSum: sum(won), lostSum: sum(lost), openSum: sum(openAll) };
+  const days = (xs: [number | null | undefined, number | null | undefined][]) => {
+    const ds = xs.filter(([a, b]) => a && b && b >= a).map(([a, b]) => (b! - a!) / 86400000);
+    return { avg: ds.length ? Math.round((ds.reduce((x, y) => x + y, 0) / ds.length) * 10) / 10 : null, n: ds.length };
+  };
+  const acc = days(won.map((e) => [e.offer_at, e.accepted_at]));
+  const rej = days(lost.map((e) => [e.offer_at, e.deleted_at]));
+  return {
+    won,
+    lost,
+    open,
+    expired,
+    rate: decided ? won.length / decided : null,
+    wonSum: sum(won),
+    lostSum: sum(lost),
+    openSum: sum(openAll),
+    acceptDays: acc.avg,
+    acceptN: acc.n,
+    rejectDays: rej.avg,
+  };
 }
 
 // ───────────── ÁFA / adó előrejelzés ─────────────

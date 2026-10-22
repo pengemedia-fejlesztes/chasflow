@@ -3,6 +3,7 @@
 // A PartnerEditor a partnertörzs oldalon is ugyanez.
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
+import { offerConversion } from '../../shared/insights';
 import { fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
@@ -238,33 +239,69 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
 
 /** Tervezett feladatok: mit számlázunk a partnernek / mit fizetünk neki (havidíj, SEO, weboldal részlet…). */
 function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) => void }) {
-  const { ix, canEdit } = useStore();
-  const byName = new Map<string, { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean }>();
+  const { ix, data, canEdit, commit } = useStore();
+  const byName = new Map<
+    string,
+    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null }
+  >();
   for (const e of p.future) {
     const sec = ix.sectionOf(e.leaf_id);
-    const k = sec + '|' + e.name;
-    const x = byName.get(k) || { name: e.name || '(név nélkül)', sec, next: e.date, n: 0, sum: 0, offer: !!e.tentative };
+    const k = sec + '|' + e.name + '|' + (e.tentative ? 'o' : 'p');
+    const x = byName.get(k) || { name: e.name || '(név nélkül)', sec, next: e.date, n: 0, sum: 0, offer: !!e.tentative, ids: [], offer_at: null };
     x.n++;
     x.sum += Math.abs(e.amount);
+    x.ids.push(e.id);
+    if (e.offer_at && (!x.offer_at || e.offer_at < x.offer_at)) x.offer_at = e.offer_at;
     if (e.date < x.next) x.next = e.date;
     byName.set(k, x);
   }
   const rows = [...byName.values()].sort((a, b) => a.next.localeCompare(b.next));
+  // ajánlatok elfogadása ennél a partnernél: elfogadott / elutasított (törölt), arány, átlagos döntési idő
+  const leafIds = new Set(p.leaves.map((l) => l.id));
+  const st = offerConversion(
+    data.entries.filter((e) => leafIds.has(e.leaf_id)),
+    (data.lostOffers || []).filter((e) => leafIds.has(e.leaf_id)),
+    data.today,
+  );
+  const accept = (r: (typeof rows)[number]) => {
+    const ids = new Set(r.ids);
+    commit({ upsert: data.entries.filter((e) => ids.has(e.id)).map((e) => ({ ...e, tentative: 0 })) }, `Ajánlat elfogadva: ${r.name}`);
+  };
+  const reject = (r: (typeof rows)[number]) => {
+    if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel törlődik a tervből, az elutasítási arányba beszámít)`)) return;
+    commit({ delete: r.ids }, `Ajánlat elutasítva: ${r.name}`);
+  };
+  const ago = (ms: number | null) => (ms ? Math.max(0, Math.round((Date.now() - ms) / 86400000)) : null);
   return (
     <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <span style={eyebrow}>Tervezett feladatok – mit számlázunk / mit fizetünk</span>
       {rows.length ? (
         rows.map((r) => (
-          <div key={r.sec + r.name} style={{ display: 'flex', gap: 10, alignItems: 'baseline', borderTop: `1px solid ${C.line3}`, paddingTop: 6 }}>
-            <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <div
+            key={r.sec + r.name + r.offer}
+            style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 6 }}
+          >
+            <span style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>
                 {r.name}
                 {r.offer && <span style={{ font: `600 11px ${FONT}`, color: C.blue }}> · ajánlat</span>}
               </b>
               <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
                 {r.sec === 'in' ? 'számlázunk' : 'fizetünk'} · következő {dd(r.next)} · {r.n} alkalom
+                {r.offer && ago(r.offer_at) !== null ? ` · ${ago(r.offer_at)} napja nyitott ajánlat` : ''}
               </span>
             </span>
+            {r.offer && canEdit && (
+              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `600 13px ${FONT}`, color: '#1A7340', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={false} onChange={() => accept(r)} style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                  Elfogadva
+                </label>
+                <Pill small onClick={() => reject(r)}>
+                  Elutasítva
+                </Pill>
+              </span>
+            )}
             <b style={{ font: `700 13.5px ${FONT}`, color: r.sec === 'in' ? C.blueDark : C.navy, fontVariantNumeric: 'tabular-nums' }}>
               {r.sec === 'in' ? '+' : '−'}
               {fmt(r.sum)}
@@ -273,6 +310,22 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) =>
         ))
       ) : (
         <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Még nincs betervezett feladat ennél a partnernél.</span>
+      )}
+      {(st.won.length > 0 || st.lost.length > 0 || st.open.length + st.expired.length > 0) && (
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 8 }}>
+          {[
+            ['Ajánlat-elfogadás', st.rate === null ? '–' : `${Math.round(st.rate * 100)}%`],
+            ['Elfogadva', `${st.won.length} db · ${fmt(st.wonSum)}`],
+            ['Elutasítva', `${st.lost.length} db · ${fmt(st.lostSum)}`],
+            ['Nyitott', `${st.open.length + st.expired.length} db`],
+            ['Elfogadásig átlag', st.acceptDays === null ? '–' : `${st.acceptDays} nap`],
+          ].map(([k, v]) => (
+            <span key={k} style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ font: `600 10.5px ${FONT}`, letterSpacing: '.08em', textTransform: 'uppercase', color: C.muted }}>{k}</span>
+              <b style={{ font: `700 14px ${FONT}`, color: C.navy }}>{v}</b>
+            </span>
+          ))}
+        </div>
       )}
       {canEdit && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>

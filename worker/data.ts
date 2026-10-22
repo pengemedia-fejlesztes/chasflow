@@ -20,7 +20,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
       env.DB.prepare('SELECT * FROM series'),
       env.DB.prepare(
-        'SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
+        'SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
       ),
       env.DB.prepare(
         'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
@@ -47,7 +47,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       ),
       // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
       env.DB.prepare(
-        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at FROM deleted_entries d
+        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at, d.offer_at FROM deleted_entries d
        WHERE d.tentative = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
@@ -104,7 +104,7 @@ function cleanEntry(e: Entry): Entry {
   };
 }
 
-const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by';
+const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tentative, offer_at, source, ext_ref, link_id, note, updated_at, updated_by';
 
 export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
@@ -121,11 +121,14 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     const e = cleanEntry(raw);
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, source, ext_ref, link_id, note, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, offer_at, source, ext_ref, link_id, note, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, date = excluded.date, leaf_id = excluded.leaf_id, name = excluded.name,
            amount = excluded.amount, series_id = excluded.series_id, done = excluded.done, tentative = excluded.tentative,
-           was_offer = MAX(entries.was_offer, excluded.was_offer),
+           was_offer = MAX(entries.was_offer, excluded.was_offer), offer_at = COALESCE(entries.offer_at, excluded.offer_at),
+           accepted_at = CASE WHEN excluded.tentative = 1 AND excluded.done = 0 THEN NULL
+             WHEN entries.accepted_at IS NULL AND entries.tentative = 1 AND (excluded.tentative = 0 OR excluded.done = 1)
+             THEN excluded.updated_at ELSE entries.accepted_at END,
            source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       ).bind(
@@ -139,6 +142,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
         e.done,
         e.tentative,
         e.tentative || (raw as any).was_offer ? 1 : 0,
+        e.tentative ? t : null,
         e.source,
         e.ext_ref,
         e.link_id,
@@ -402,7 +406,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     for (const rid of rids) {
       stmts.push(
         env.DB.prepare(
-          `INSERT INTO entries (${ENTRY_COLS}) SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, ?, ?
+          `INSERT INTO entries (${ENTRY_COLS}) SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, offer_at, source, ext_ref, link_id, note, ?, ?
            FROM deleted_entries WHERE rowid = ? AND leaf_id IN (SELECT id FROM leaves) ON CONFLICT(id) DO NOTHING`,
         ).bind(now(), u.id, rid),
       );

@@ -56,6 +56,9 @@ export interface Entry {
   tentative: number;
   /** 1 = valaha ajánlat volt (megnyert ajánlat követéséhez) */
   was_offer?: number;
+  /** mikor lett ajánlatként felvéve / mikor fogadták el (ms) */
+  offer_at?: number | null;
+  accepted_at?: number | null;
   /** számlához kötött terv eredeti (tervezett) összege – alulszámlázás figyeléséhez */
   plan_amount?: number | null;
   source: string;
@@ -168,7 +171,7 @@ export interface DataBundle {
   /** törölt (elvesztett) ajánlatok */
   /** NAV Online Számla: bejövő (szállítói) számlák */
   navInvoices?: NavInvoice[];
-  lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number }[];
+  lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number; offer_at?: number | null }[];
   /** partnertörzs */
   partners?: Partner[];
 }

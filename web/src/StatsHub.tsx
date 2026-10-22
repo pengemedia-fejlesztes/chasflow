@@ -507,6 +507,8 @@ export function StatsHub({
                 ['Megnyert', `${offers.won.length} db · ${fmtM(offers.wonSum)}`],
                 ['Elveszett (törölt)', `${offers.lost.length} db · ${fmtM(offers.lostSum)}`],
                 ['Nyitott', `${offers.open.length + offers.expired.length} db · ${fmtM(offers.openSum)}`],
+                ['Elfogadásig átlag', offers.acceptDays === null ? '–' : `${offers.acceptDays} nap (${offers.acceptN} ajánlat)`],
+                ['Elutasításig átlag', offers.rejectDays === null ? '–' : `${offers.rejectDays} nap`],
               ]}
             />
             {[

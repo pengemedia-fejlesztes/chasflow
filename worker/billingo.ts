@@ -207,8 +207,8 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         for (const c of matched.covered) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ? AND done = 0').bind(c));
         stmts.push(
           env.DB.prepare(
-            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = ?, date = ?, tentative = 0, updated_at = ? WHERE id = ?",
-          ).bind(ext, coveredSum, gross, due, t, matched.id),
+            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = ?, date = ?, accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0, updated_at = ? WHERE id = ?",
+          ).bind(ext, coveredSum, gross, due, t, t, matched.id),
         );
         if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
         plans++;
