@@ -75,7 +75,7 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
   if (path === '/api/ingest/report' && req.method === 'POST') {
     await tokenUser(env, req);
     const ok = new URL(req.url).searchParams.get('ok') === '1';
-    const msg = (await req.text()).replace(/\s+/g, ' ').trim().slice(0, 600);
+    const msg = (await req.text()).replace(/\s+/g, ' ').trim().slice(0, 2000);
     await setSetting(env, REPORT, JSON.stringify({ at: now(), ok, msg }));
     return json({ ok: true });
   }
