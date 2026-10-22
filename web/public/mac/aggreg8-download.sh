@@ -1,11 +1,11 @@
 #!/bin/bash
-# SZÜNETELTETVE (a felhasználó kérésére): nem nyit ablakot, amíg a belépés javítása kész nincs
-exit 0
 URL="https://cashflow-tervezo.pengemedia.workers.dev"
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 LOG="$STATE/download.log"
 note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+LF=$(cat "$STATE/login_failed" 2>/dev/null || echo 0)
+if [ "$1" != "kérésre" ] && [ $(( $(date +%s) - LF )) -lt 10800 ]; then log "kihagyva: a legutóbbi automatikus belépés nem sikerült (kézi indítás: Bankszinkron most)"; exit 0; fi
 TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null)
 # jelentés a cashflow tervezőnek (siker vagy hiba) – az appban és a diagnosztikában látszik
 report() { curl -s -m 20 -X POST "$URL/api/ingest/report?ok=$1" -H "Authorization: Bearer $TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: text/plain; charset=utf-8" --data-binary "$2" >/dev/null 2>&1; }
@@ -76,7 +76,7 @@ autologin() {
   [ -z "$WANT" ] && WANT=$(osascript -l JavaScript -e 'ObjC.import("Foundation");var p=$("~/Library/Application Support/Google/Chrome/Local State").stringByExpandingTildeInPath.js;var s=$.NSString.stringWithContentsOfFileEncodingError(p,$.NSUTF8StringEncoding,null);var c=s?JSON.parse(s.js).profile.info_cache:{};var i=c["'"${PROFILE:-Default}"'"]||{};(i.user_name||"").toLowerCase()' 2>/dev/null)
   log "belépés: fiók: ${WANT:-?}"
   GBEFORE=",$(cr ids),"
-  for attempt in 1 2 3; do
+  for attempt in 1; do
     case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
     front_tab; sleep 1
     P=$(js '(function(){var f=[].slice.call(document.querySelectorAll("iframe")).filter(function(e){return /accounts\.google\.com\/gsi/.test(e.src)&&e.offsetParent!==null})[0];if(!f)return "NINCS";f.scrollIntoView({block:"center"});var r=f.getBoundingClientRect();return Math.round(window.screenX+r.left+Math.min(r.width/2,120))+","+Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2)})()')
@@ -107,10 +107,12 @@ case "$R" in
   "missing value"|"") fail "A Chrome nem engedi a vezérlést: a céges profilban kapcsold be: Nézet → Fejlesztő → A JavaScript engedélyezése Apple-eseményekből." ;;
   *standalone.aggreg8.hu*login*)
     if autologin; then
+      rm -f "$STATE/login_failed"
       goto "https://standalone.aggreg8.hu/synchronizations"; sleep 2
       for i in $(seq 1 20); do sleep 1; case "$(js 'document.readyState')" in complete) break ;; esac; done
       R=$(js 'location.href'); log "lap: $R"
     else
+      date +%s > "$STATE/login_failed"
       fail "Az aggreg8-ból kiléptetett, és nem tudtam automatikusan visszalépni – részletek a Mac naplójában (belépés: …). Ha a képernyő zárolva volt, a következő futás újrapróbálja."
     fi ;;
 esac
