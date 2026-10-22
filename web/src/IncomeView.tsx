@@ -8,7 +8,7 @@ import { itemLabel } from './MonthList';
 import { PartnerLink } from './PartnerCard';
 import { markDone } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, SyncPill } from './ui';
+import { C, FONT, FONT_H, Pill, card, eyebrow, stamp, SyncPill } from './ui';
 
 const BSTATUS: Record<string, [string, string]> = {
   outstanding: ['kiküldve, nyitott', C.blueDark],
@@ -106,7 +106,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           onClick={() => pickFocus('billingo')}
           label="Kiküldött számlák (nyitott)"
           value={fmt(sum(billingoOpen))}
-          sub={data.integrations.billingo ? `Billingo · ${relTime(data.settings.billingo_last_sync)}` : 'Billingo nincs bekötve'}
+          sub={data.integrations.billingo ? `Billingo · ${stamp(data.settings.billingo_last_sync)}` : 'Billingo nincs bekötve'}
         />
         <Stat
           active={focus === 'offers'}

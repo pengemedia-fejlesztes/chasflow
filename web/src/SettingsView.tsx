@@ -15,7 +15,7 @@ import { readSheetRows } from './sheet';
 import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './aggreg8';
 import { SYNC_HOURS } from '../../shared/aggreg8';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
+import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp } from './ui';
 
 type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'partners' | 'categories' | 'rules' | 'trash';
 
@@ -204,6 +204,7 @@ interface UserRow {
   totp_enabled: number;
   disabled: number;
   last_login: number | null;
+  last_seen: number | null;
 }
 
 function Users() {
@@ -280,7 +281,13 @@ function Users() {
                 {u.name} {u.id === data.me.id && <span style={{ color: C.muted, fontWeight: 500 }}>(te)</span>}
               </span>
               <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-                {u.email} · 2FA: {u.totp_enabled ? 'be' : 'ki'} · utolsó belépés: {u.last_login ? relTime(u.last_login) : 'még nem'}
+                {u.email} · 2FA: {u.totp_enabled ? 'be' : 'ki'} ·{' '}
+                {u.last_seen && Date.now() - u.last_seen < 5 * 60_000 ? (
+                  <b style={{ color: '#1E8E3E' }}>● most online</b>
+                ) : (
+                  <>utolsó aktivitás: {stamp(Math.max(u.last_seen || 0, u.last_login || 0) || null)}</>
+                )}
+                {' · '}jelszavas belépés: {stamp(u.last_login)}
               </span>
             </span>
             <select
@@ -441,7 +448,7 @@ function Integrations() {
           <span style={{ font: `600 14px ${FONT}`, color: data.integrations.billingo ? C.blueDark : C.neg }}>
             {data.integrations.billingo ? '✓ API kulcs beállítva' : '✗ Nincs API kulcs'}
           </span>
-          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>utolsó szinkron: {relTime(data.settings.billingo_last_sync)}</span>
+          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>utolsó szinkron: {stamp(data.settings.billingo_last_sync)}</span>
           {data.integrations.billingo && <SyncPill label="↻ Szinkron most" onRun={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')} />}
         </div>
         <Field label="Alapértelmezett kategória ismeretlen partnernél (üres = új alkategória a Projektek alatt)">
@@ -462,7 +469,7 @@ function Integrations() {
             {data.integrations.nav ? '✓ Technikai felhasználó beállítva' : '✗ Nincs beállítva'}
           </span>
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
-            utolsó szinkron: {relTime(data.settings.nav_last_sync)} · {(data.navInvoices || []).filter((n) => n.status === 'new').length} számla terv nélkül
+            utolsó szinkron: {stamp(data.settings.nav_last_sync)} · {(data.navInvoices || []).filter((n) => n.status === 'new').length} számla terv nélkül
           </span>
           {data.integrations.nav && (
             <SyncPill
@@ -972,8 +979,6 @@ function Categories() {
   );
 }
 
-const dateTime = (ms: number | string) =>
-  new Date(Number(ms)).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 /** A következő ütemezett banki szinkron (budapesti idő). */
 function nextSync(hours: number[]) {
   const h = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));

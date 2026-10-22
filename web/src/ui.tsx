@@ -261,6 +261,13 @@ export const relTime = (ms: number | string | null | undefined) => {
   return Math.round(d / 86400_000) + ' napja';
 };
 
+/** Pontos időpont (Budapest): „10. 22. 10:15”. */
+export const dateTime = (ms: number | string) =>
+  new Date(Number(ms)).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+/** Pontos időpont és mennyi ideje: „10. 22. 10:15 (5 perce)”. */
+export const stamp = (ms: number | string | null | undefined) => (ms ? `${dateTime(ms)} (${relTime(ms)})` : 'még nem');
+
 export const shortDate = (d: string) => `${d.slice(5, 7)}.${d.slice(8, 10)}.`;
 
 /** Dátum mező, ami mindig év. hó. nap sorrendben látszik; koppintásra a rendszer saját dátumválasztója nyílik. */

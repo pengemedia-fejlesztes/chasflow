@@ -5,7 +5,7 @@ import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
 import { TxCard } from './TxCard';
-import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, shortDate, SyncPill } from './ui';
+import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
   const { ix, data, run, canEdit } = useStore();
@@ -111,14 +111,14 @@ export function BankView({ mobile }: { mobile?: boolean }) {
                 {a.balance != null ? fmt(a.balance) + ' ' + (a.currency === 'HUF' ? 'Ft' : a.currency) : '—'}
               </span>
               <span style={{ font: `500 11.5px ${FONT}`, color: a.last_error ? C.negLight : C.muted2 }}>
-                {a.last_error ? a.last_error : `szinkron: ${relTime(a.last_sync)}${a.valid_until ? ' · hozzájárulás: ' + a.valid_until.slice(0, 10) : ''}`}
+                {a.last_error ? a.last_error : `szinkron: ${stamp(a.last_sync)}${a.valid_until ? ' · hozzájárulás: ' + a.valid_until.slice(0, 10) : ''}`}
               </span>
             </div>
           </div>
         ))}
         {accounts.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', marginLeft: 'auto' }}>
-            <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {relTime(lastSync)}</span>
+            <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {stamp(lastSync)}</span>
             <span style={{ font: `800 20px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ix.bankBalance != null ? fmt(ix.bankBalance) + ' Ft' : '—'}</span>
             <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan: 5, 9, 13, 17, 21 órakor</span>
           </div>

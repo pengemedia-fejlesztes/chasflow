@@ -367,7 +367,10 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
   if (!path.startsWith('/api/users')) return null;
   requireRole(u, 'admin');
   if (path === '/api/users' && req.method === 'GET') {
-    const r = await env.DB.prepare('SELECT id, email, name, role, totp_enabled, disabled, last_login, created_at FROM users ORDER BY id').all();
+    // utolsó aktivitás: a munkamenetek legutóbbi használata (a bent maradt felhasználónál a jelszavas belépés régi lehet)
+    const r = await env.DB.prepare(
+      'SELECT id, email, name, role, totp_enabled, disabled, last_login, created_at, (SELECT MAX(last_seen) FROM sessions s WHERE s.user_id = users.id) AS last_seen FROM users ORDER BY id',
+    ).all();
     return json(r.results);
   }
   if (path === '/api/users' && req.method === 'POST') {
