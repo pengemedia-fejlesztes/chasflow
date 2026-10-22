@@ -125,14 +125,23 @@ async function main() {
   await c.send('Target.setDiscoverTargets', { discover: true });
   // csak valódi lapok/ablakok (a beágyazott Google-gomb iframe nem felugró ablak)
   let watch = false;
+  let ourTarget = '';
   c.on((m) => {
+    if (m.method === 'Target.targetDestroyed') {
+      const i = popups.indexOf(m.params.targetId);
+      if (i >= 0) popups.splice(i, 1);
+      return;
+    }
     if (m.method !== 'Target.targetCreated' && m.method !== 'Target.targetInfoChanged') return;
     const ti = m.params.targetInfo;
     if (watch && m.method === 'Target.targetCreated') step(`új cél: ${ti.type} ${(ti.url || '').slice(0, 80)}`);
-    if (ti.type === 'page' && /accounts\.google\.com/.test(ti.url || '') && !popups.includes(ti.targetId)) popups.push(ti.targetId);
+    // a mi lapunkból nyílt új ablak (a Google belépőablaka), vagy bármely Google-belépő lap
+    if (ti.type === 'page' && ti.targetId !== ourTarget && (ti.openerId === ourTarget || /accounts\.google\.com/.test(ti.url || '')) && !popups.includes(ti.targetId))
+      popups.push(ti.targetId);
   });
 
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank', background: true });
+  ourTarget = targetId;
   // a lap bezárása, és a böngésző letöltési beállításának visszaállítása (a robot-Chrome-ot ne zavarjuk)
   const closeTab = async () => {
     await c.send('Target.closeTarget', { targetId }).catch(() => {});
@@ -352,9 +361,20 @@ async function handlePopup(c, targetId) {
           const id = (e) => (e.getAttribute('data-identifier') || e.getAttribute('data-email') || '').toLowerCase();
           const a = acc.find((e) => want && id(e) === want) || (acc.length === 1 ? acc[0] : null);
           if (a) return at(a, 'fiók ' + id(a));
-          const btn = [...document.querySelectorAll('button,[role=button]')].filter(vis).find((e) => /^(folytatás|continue|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText || '').trim()));
+          // a fiók az e-mail-címe szövege alapján (a Google fiókválasztója nem mindig jelöli adat-attribútummal)
+          const email = want || '@';
+          const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let tn;
+          while ((tn = tw.nextNode())) {
+            const t = (tn.nodeValue || '').trim().toLowerCase();
+            if (t && (want ? t === want : /^[^\s@]+@[^\s@]+$/.test(t)) && tn.parentElement && vis(tn.parentElement)) {
+              const row = tn.parentElement.closest('li,[role=link],[role=button],[data-authuser],[tabindex]') || tn.parentElement;
+              return at(row, 'fiók (szöveg) ' + t);
+            }
+          }
+          const btn = [...document.querySelectorAll('button,[role=button]')].filter(vis).find((e) => /^(folytatás|continue|tovább|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText || '').trim()));
           if (btn) return at(btn, 'gomb ' + btn.innerText.trim().slice(0, 30));
-          return { what: 'SEMMI: ' + (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 120) };
+          return { what: 'SEMMI: ' + (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 300) };
         })()`,
         returnByValue: true,
       },
