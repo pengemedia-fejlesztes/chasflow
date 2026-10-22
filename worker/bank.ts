@@ -406,6 +406,8 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
 
   if (path === '/api/sync' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
+    // a Mac-es aggreg8 bankszinkront is kéri (a Mac fél percen belül elindítja)
+    await setSetting(env, 'ingest_request', JSON.stringify({ at: now(), by: u.email }));
     const r = await syncAll(env);
     await audit(env, u.id, 'sync', r);
     return json(r);
