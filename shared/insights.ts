@@ -75,7 +75,7 @@ export function costStructure(ix: Index) {
 }
 
 /** Ügyfélkoncentráció: TOP 1/3/5 részesedés és HHI (0–10 000) az elmúlt 12 hónap bevételéből. */
-export function concentration(shares: { name: string; v: number }[]) {
+export function concentration<T extends { name: string; v: number }>(shares: T[]) {
   const list = shares.filter((s) => s.v > 0).sort((a, b) => b.v - a.v);
   const total = list.reduce((s, x) => s + x.v, 0) || 1;
   const top = (n: number) => list.slice(0, n).reduce((s, x) => s + x.v, 0) / total;

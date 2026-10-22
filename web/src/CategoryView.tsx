@@ -7,6 +7,7 @@ import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
 import { REP, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
 
@@ -240,7 +241,9 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             >
               {head.name || ix.leafById[head.leaf_id]?.label}
             </span>
-            <span style={{ font: `400 12px ${FONT}`, color: C.faint }}>{ix.leafById[head.leaf_id]?.label} · törölve</span>
+            <span style={{ font: `400 12px ${FONT}`, color: C.faint }}>
+              <PartnerLink leaf={head.leaf_id}>{ix.leafById[head.leaf_id]?.label}</PartnerLink> · törölve
+            </span>
           </div>
           <div style={{ padding: '0 8px' }}>
             {canEdit && (
@@ -875,7 +878,9 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                 style={{ height: 32, fontSize: 12.5 }}
               />
             ) : (
-              <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{ix.leafById[e.leaf_id]?.label}</span>
+              <PartnerLink leaf={e.leaf_id} style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+                {ix.leafById[e.leaf_id]?.label}
+              </PartnerLink>
             )}
             <span style={{ textAlign: 'right', font: `700 13.5px ${FONT}`, color: e.amount * sign < 0 ? C.neg : C.navy, fontVariantNumeric: 'tabular-nums' }}>
               {fmt(e.amount * sign)}

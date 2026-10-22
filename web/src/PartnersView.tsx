@@ -8,6 +8,7 @@ import type { Entry, Section } from '../../shared/types';
 import { api } from './api';
 import { useBack } from './back';
 import { DivergingBars } from './Bars';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
 
@@ -458,7 +459,9 @@ export function PartnerNames() {
                 />
               ) : (
                 <span style={{ flex: '1 1 180px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>{p.name}</b>
+                  <PartnerLink leaf={p.key} style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>
+                    <b>{p.name}</b>
+                  </PartnerLink>
                   <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
                     {st ? `${st.count} tény · 12 hó: ${fmt(st.last12)} Ft` : 'még nincs tény'}
                     {p.billingNames[0] ? ` · ${p.billingNames[0].name}` : ''}

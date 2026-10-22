@@ -18,6 +18,7 @@ import { useBack } from './back';
 import { DivergingBars } from './Bars';
 import { PartnerNames, PartnersView, usePartners } from './PartnersView';
 import { PlanActualView } from './PlanActualView';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, card } from './ui';
 
@@ -97,7 +98,7 @@ export function StatsHub({
   const liq = useMemo(() => liquidity(ix), [ix]);
   const trend = useMemo(() => revenueTrend(ix, 24), [ix]);
   const costs = useMemo(() => costStructure(ix), [ix]);
-  const conc = useMemo(() => concentration(partners.map((p) => ({ name: p.name, v: p.sides.in?.last12 || 0 }))), [partners]);
+  const conc = useMemo(() => concentration(partners.map((p) => ({ key: p.key, name: p.name, v: p.sides.in?.last12 || 0 }))), [partners]);
   const aging = useMemo(() => receivablesAging(data.entries, ix.sectionOf, data.today), [data.entries, ix, data.today]);
   const target = Number(data.settings.profit_target || 0);
   const tMonths = monthRange(addMonths(ix.cur, -12), ix.cur);
@@ -294,7 +295,8 @@ export function StatsHub({
                         textOverflow: 'ellipsis',
                       }}
                     >
-                      {e.name || ix.leafById[e.leaf_id]?.label} <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
+                      <PartnerLink leaf={e.leaf_id}>{e.name || ix.leafById[e.leaf_id]?.label}</PartnerLink>{' '}
+                      <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
                     </span>
                     <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(e.amount)}</b>
                   </div>
@@ -317,7 +319,9 @@ export function StatsHub({
               {conc.list.slice(0, 15).map((x) => (
                 <div key={x.name} style={{ padding: '6px 0', borderTop: `1px solid ${C.line3}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>{x.name}</span>
+                    <PartnerLink leaf={x.key} style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>
+                      {x.name}
+                    </PartnerLink>
                     <b style={{ font: `700 13px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
                       {fmt(x.v)} · {pct(x.share)}
                     </b>
@@ -342,7 +346,9 @@ export function StatsHub({
             {discipline.map((p) => (
               <div key={p.key} style={{ display: 'flex', gap: 10, padding: '8px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
                 <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <b style={{ font: `600 14px ${FONT}`, color: C.ink }}>{p.name}</b>
+                  <PartnerLink leaf={p.key} style={{ font: `600 14px ${FONT}`, color: C.ink }}>
+                    <b>{p.name}</b>
+                  </PartnerLink>
                   <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
                     {p.invoices.length} számla · {p.lateCount} késve fizetve{p.outstanding ? ` · lejárt: ${fmt(p.outstanding)} Ft` : ''}
                   </span>
@@ -526,7 +532,8 @@ export function StatsHub({
                         textOverflow: 'ellipsis',
                       }}
                     >
-                      {e.name || ix.leafById[e.leaf_id]?.label} <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
+                      <PartnerLink leaf={e.leaf_id}>{e.name || ix.leafById[e.leaf_id]?.label}</PartnerLink>{' '}
+                      <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
                     </span>
                     <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(e.amount))}</b>
                   </div>

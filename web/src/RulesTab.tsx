@@ -4,6 +4,7 @@ import { displayGroup, normalizeText } from '../../shared/categories';
 import type { Section } from '../../shared/types';
 import { api } from './api';
 import { LeafPicker } from './LeafPicker';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
 
@@ -204,7 +205,7 @@ export function RulesTab() {
               <div key={g.key} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 8 }}>
                 <span style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column' }}>
                   <span style={{ font: `600 14px ${FONT}`, color: C.navy }}>
-                    {g.partner} → {L.label}
+                    {g.partner} → <PartnerLink leaf={L.id}>{L.label}</PartnerLink>
                   </span>
                   <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
                     {displayGroup(ix.groupById[L.group_id]?.label || '')} · {g.count}/{g.total} alkalommal · {g.months} hónapban · átlag{' '}
@@ -250,7 +251,9 @@ export function RulesTab() {
               <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: G.section === 'in' ? C.blue : C.muted }}>
                 {G.section === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(G.label)}
               </span>
-              <span style={{ font: `700 16px ${FONT_H}`, color: C.navy }}>{L.label}</span>
+              <PartnerLink leaf={L.id} style={{ font: `700 16px ${FONT_H}`, color: C.navy }}>
+                {L.label}
+              </PartnerLink>
             </div>
             {rows.map((row) => {
               const key = row.kind + ':' + (row.kind === 'contains' ? row.r.id : row.r.pattern);

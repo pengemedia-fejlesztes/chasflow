@@ -5,6 +5,7 @@ import { fmt, monthLabel, ymOf } from '../../shared/model';
 import type { BankTx, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import { repStep, shiftDate } from './logic';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, inputStyle, shortDate } from './ui';
 
@@ -253,7 +254,14 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 12 }}>
             <span style={{ flex: '1 1 260px', font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
               Tény: <b style={{ color: C.navy }}>{t.date.replace(/-/g, '.')}.</b> (banki dátum)
-              {leaf ? ` → ${ix.leafById[leaf]?.label}` : ''}
+              {leaf ? (
+                <>
+                  {' → '}
+                  <PartnerLink leaf={leaf}>{ix.leafById[leaf]?.label}</PartnerLink>
+                </>
+              ) : (
+                ''
+              )}
               {planE ? ` · lezárja: ${planE.name || 'terv'}` : ''}
               {n ? ` · + ${n} terv: ${nextDates.map((d) => `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`).join(', ')}${n > 3 ? ' …' : ''}` : ''}
               {planE && diff !== 0 && (

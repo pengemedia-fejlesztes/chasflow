@@ -277,7 +277,8 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
             <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <span style={{ font: `600 13.5px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
               <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
-                {ix.leafById[e.leaf_id]?.label} · {e.source === 'bank' ? 'bankból' : e.source === 'import' ? 'xls' : 'kézi'}
+                <PartnerLink leaf={e.leaf_id}>{ix.leafById[e.leaf_id]?.label}</PartnerLink> ·{' '}
+                {e.source === 'bank' ? 'bankból' : e.source === 'import' ? 'xls' : 'kézi'}
               </span>
             </span>
             <span style={{ font: `700 14px ${FONT}`, color: C.blueDark, fontVariantNumeric: 'tabular-nums' }}>+{fmt(e.amount)}</span>
