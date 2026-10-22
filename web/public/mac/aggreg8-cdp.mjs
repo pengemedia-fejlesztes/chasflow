@@ -184,10 +184,12 @@ async function main() {
       const ok = await login(c, S, evaluate, href, popups);
       watch = false;
       if (!ok) {
-        if (br.own && /jelszót kér/.test(steps.join(' '))) {
+        if (br.own) {
+          const txt = await evaluate(`(document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 200)`).catch(() => '');
+          step(`belépő lap: ${txt}`);
           // a Google jelszót/kódot kér: az ablakot nyitva hagyjuk és előre hozzuk – ezt egyszer embernek kell megadnia
           await c.send('Target.activateTarget', { targetId }).catch(() => {});
-          done(false, 'Egyszeri Google-belépés kell: a megnyílt Cashflow-Chrome ablakban add meg a laszlo.nagy@360-marketing.eu jelszavát és a kódot. Utána minden magától megy.');
+          done(false, 'Egyszeri belépés kell: a megnyílt Cashflow-Chrome ablakban lépj be az aggreg8-ba a laszlo.nagy@360-marketing.eu Google-fiókkal (jelszó + kód). Utána minden magától megy.');
         }
         await closeTab();
         done(false, 'Az aggreg8-ba nem sikerült automatikusan belépni (lásd a lépéseket).');
@@ -385,6 +387,7 @@ async function login(c, S, evaluate, href, popups) {
 }
 
 // Felugró Google-ablak (régebbi belépési mód): fiók kiválasztása / Folytatás – CDP-s kattintással
+const pressed = {};
 async function handlePopup(c, targetId, existingSession) {
   try {
     const P = existingSession || (await c.send('Target.attachToTarget', { targetId, flatten: true })).sessionId;
@@ -427,6 +430,8 @@ async function handlePopup(c, targetId, existingSession) {
       P,
     );
     const v = r.result?.value || {};
+    pressed[v.what] = (pressed[v.what] || 0) + 1;
+    if (pressed[v.what] > 3 && v.x !== undefined) return 'ISMETLES';
     step(`belépés (Google-ablak): ${v.what}`);
     if (v.x !== undefined)
       for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
