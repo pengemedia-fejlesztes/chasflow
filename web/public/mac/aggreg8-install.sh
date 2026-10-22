@@ -126,11 +126,14 @@ function run() {
   fm.removeItemAtPathError(dir + '/click.txt', null);
   var trusted = $.AXIsProcessTrustedWithOptions($({ AXTrustedCheckOptionPrompt: true }));
   if (!trusted) { write('NINCS ENGEDÉLY (Kisegítő lehetőségek → Cashflow Kattintó)'); return; }
-  var m = /^press (\d+)$/.exec(s);
+  // press <pid> [felirat-eleje|másik felirat-eleje…] – a gomb feliratának elejére keres (szövegként, nem kódként)
+  var m = /^press (\d+)(?: (.+))?$/.exec(s);
   if (m) {
     try {
       var p = Application('System Events').processes.whose({ unixId: Number(m[1]) })[0];
-      var re = /^(folytatás|continue|tovább)/i;
+      var words = (m[2] || 'folytatás|continue').toLowerCase().split('|');
+      var re = { test: function (n) { n = n.toLowerCase(); return words.some(function (w) { return w && n.indexOf(w) === 0; }); } };
+      var names = [];
       var ws = p.windows();
       for (var i = 0; i < ws.length; i++) {
         var all = ws[i].entireContents();
@@ -139,11 +142,12 @@ function run() {
           try {
             if (e.role() !== 'AXButton') continue;
             var n = String(e.name() || e.description() || '').trim();
+            if (n && names.length < 40) names.push(n);
             if (re.test(n)) { e.actions['AXPress'].perform(); write('NYOMVA ' + n); return; }
           } catch (x) {}
         }
       }
-      write('NINCS GOMB');
+      write('NINCS GOMB; gombok: ' + names.join(' | '));
     } catch (e2) { write('HIBA ' + e2); }
     return;
   }
