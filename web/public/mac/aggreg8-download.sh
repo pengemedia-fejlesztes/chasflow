@@ -49,6 +49,6 @@ if [ "$OK" = "1" ]; then
   report 1 "$MSG"
   note "Cashflow – bank frissítve" "$(echo "$MSG" | grep -o 'Új tétel: [0-9]*' )"
 else
-  case "$MSG" in *belépni*) date +%s > "$STATE/login_failed" ;; esac
+  case "$MSG" in *belépni*|*Egyszeri*) date +%s > "$STATE/login_failed" ;; esac
   fail "$MSG"
 fi

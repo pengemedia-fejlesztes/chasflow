@@ -2,8 +2,8 @@
 // Láthatatlan háttérlapon dolgozik: belépés (Google „Folytatás … néven” is, a Chrome FedCM-automatizálásával),
 // szinkron (BinX, MagNet), letöltés, feltöltés a cashflow tervezőbe, majd a lap bezárása.
 // Nem kell hozzá Kisegítő engedély, AppleScript vagy egérkattintás.
-// Böngésző: 1) már futó, távvezérelhető Chrome (pl. a Marveen robot-Chrome-ja, 9334-es port),
-//           2) különben saját, külön Chrome-példány (külön profillal, 9339-es port).
+// Böngésző: saját, külön „Cashflow-Chrome” példány (külön profillal, 9339-es port) – ebben egyszer be kell lépni a
+// laszlo.nagy@360-marketing.eu Google-fiókkal (jelszó + kód, ezt a Google csak embertől fogadja el); utána minden automatikus.
 // Kimenet: az utolsó sor egy JSON: {ok, msg, steps}
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ const CF_URL = env.CF_URL || 'https://cashflow-tervezo.pengemedia.workers.dev';
 const TOKEN = env.CF_TOKEN || '';
 const AGG = env.AGG_ORIGIN || 'https://standalone.aggreg8.hu';
 const BACKEND = env.AGG_BACKEND || 'https://standalone-backend.aggreg8.hu';
-const PORTS = (env.CDP_PORTS || '9334,9339').split(',').map(Number);
+const PORTS = (env.CDP_PORTS || '9339').split(',').map(Number);
 const OWN_PORT = Number(env.CDP_OWN_PORT || 9339);
 const CHROME = env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const WANT = (env.CF_GOOGLE_ACCOUNT || '').toLowerCase();
@@ -184,13 +184,13 @@ async function main() {
       const ok = await login(c, S, evaluate, href, popups);
       watch = false;
       if (!ok) {
+        if (br.own && /jelszót kér/.test(steps.join(' '))) {
+          // a Google jelszót/kódot kér: az ablakot nyitva hagyjuk és előre hozzuk – ezt egyszer embernek kell megadnia
+          await c.send('Target.activateTarget', { targetId }).catch(() => {});
+          done(false, 'Egyszeri Google-belépés kell: a megnyílt Cashflow-Chrome ablakban add meg a laszlo.nagy@360-marketing.eu jelszavát és a kódot. Utána minden magától megy.');
+        }
         await closeTab();
-        done(
-          false,
-          br.own
-            ? 'Az aggreg8-ba nem sikerült automatikusan belépni: a saját Cashflow-Chrome-ban még nincs Google-bejelentkezés (lásd a lépéseket).'
-            : 'Az aggreg8-ba nem sikerült automatikusan belépni (lásd a lépéseket).',
-        );
+        done(false, 'Az aggreg8-ba nem sikerült automatikusan belépni (lásd a lépéseket).');
       }
       u = await go('/synchronizations');
       step(`lap: ${u.replace(AGG, '')}`);
@@ -340,7 +340,7 @@ async function login(c, S, evaluate, href, popups) {
         if (i % 3 === 2) {
           const w = await handlePopup(c, null, S);
           if (w === 'JELSZO') {
-            step('belépés: a Google jelszót kér – a robot-Chrome-ban egyszer be kell jelentkezni a Google-fiókba');
+            step('belépés: a Google jelszót kér (egyszeri belépés)');
             return false;
           }
         }
@@ -373,7 +373,7 @@ async function login(c, S, evaluate, href, popups) {
       if (GOOGLE.test(cur) && i % 3 === 2) {
         const w = await handlePopup(c, null, S);
         if (w === 'JELSZO') {
-          step('belépés: a Google jelszót kér – a robot-Chrome-ban egyszer be kell jelentkezni a Google-fiókba');
+          step('belépés: a Google jelszót kér (egyszeri belépés)');
           return false;
         }
       }
