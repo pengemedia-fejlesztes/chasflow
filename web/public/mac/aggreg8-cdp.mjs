@@ -286,9 +286,16 @@ async function main() {
 // Belépés: „Bejelentkezés mint …” Google-gomb (beágyazott Google-elem) → a Chrome FedCM-ablaka vagy felugró Google-ablak
 async function login(c, S, evaluate, href, popups) {
   const AGGRE = new RegExp('^' + AGG.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  // akkor vagyunk bent, ha az aggreg8 már elmentette a belépést (token a böngészőben), nem elég az, hogy elhagytuk a /login-t
   const isIn = async () => {
     const u = await href();
-    return AGGRE.test(u) && !/\/login/.test(u);
+    if (!AGGRE.test(u) || /\/login/.test(u)) return false;
+    for (let i = 0; i < 20; i++) {
+      if (await evaluate(`!!localStorage.getItem('token')`).catch(() => false)) return true;
+      await sleep(1000);
+      if (/\/login/.test(await href())) return false;
+    }
+    return false;
   };
   // FedCM: a Chrome beépített „Folytatás … néven” ablaka – hivatalos automatizálással
   let fedcm = '';
@@ -414,7 +421,7 @@ async function handlePopup(c, targetId, existingSession) {
           let tn;
           while ((tn = tw.nextNode())) {
             const t = (tn.nodeValue || '').trim().toLowerCase();
-            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) && tn.parentElement && vis(tn.parentElement)) mails.push({ t, el: tn.parentElement });
+            if (/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(t) && tn.parentElement && vis(tn.parentElement)) mails.push({ t, el: tn.parentElement });
           }
           const pick = mails.find((m) => want && m.t === want) || (mails.length === 1 ? mails[0] : null);
           if (pick) {
