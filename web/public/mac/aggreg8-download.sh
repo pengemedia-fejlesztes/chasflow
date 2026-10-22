@@ -69,6 +69,13 @@ realclick() { # $1 = lap azonosító, $2 = "x,y"
   open -g -W "$APP"
   log "belépés: kattintás: $(cat "$STATE/click.result" 2>/dev/null)"
 }
+# a Chrome saját „Folytatás … néven” ablakának gombja (a Kattintó a Kisegítő felületen nyomja meg)
+axpress() {
+  rm -f "$STATE/click.result"; echo "press $CPID" > "$STATE/click.txt"
+  cr front "$TAB" >/dev/null; sleep 0.5
+  open -g -W "$APP"
+  log "belépés: Chrome-ablak gomb: $(cat "$STATE/click.result" 2>/dev/null | cut -c1-120)"
+}
 # a Google felugró ablakában a teendő elem képernyő-koordinátája: a fiókod, vagy a Folytatás/Tovább gomb
 GPICK='(function(){var want=WANT;var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};var pw=document.querySelector("input[type=password]");if(pw&&vis(pw))return "JELSZO";var pt=function(e,lab){e.scrollIntoView({block:"center"});var r=e.getBoundingClientRect();return "PT "+Math.round(window.screenX+r.left+r.width/2)+","+Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2)+" "+lab};var all=[].slice.call(document.querySelectorAll("[data-identifier],[data-email]")).filter(vis);var id=function(e){return (e.getAttribute("data-identifier")||e.getAttribute("data-email")||"").toLowerCase()};var x=all.filter(function(e){return want&&id(e)===want})[0]||(all.length===1?all[0]:null);if(x)return pt(x,"fiók "+id(x));var bs=[].slice.call(document.querySelectorAll("button,[role=button],a")).filter(vis);var c=bs.filter(function(e){return /^(folytatás|tovább|continue|bejelentkezés|sign in|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText||"").trim())})[0];if(c)return pt(c,"gomb "+(c.innerText||"").trim().slice(0,30));if(want){var el=[].slice.call(document.querySelectorAll("div,li,span")).filter(function(e){return vis(e)&&(e.innerText||"").trim().toLowerCase()===want})[0];if(el)return pt(el,"fiók szöveg")}return "SEMMI: "+(document.body.innerText||"").replace(/\s+/g," ").slice(0,160)})()'
 autologin() {
@@ -86,6 +93,8 @@ autologin() {
     for i in $(seq 1 12); do
       sleep 2
       case "$(js 'location.href')" in *standalone.aggreg8.hu*login*) ;; *standalone.aggreg8.hu*) log "belépés: sikeres"; return 0 ;; esac
+      # a Chrome beépített Google-belépő ablaka: „Folytatás … néven”
+      if [ "$i" = 1 ] || [ "$i" = 4 ]; then axpress; continue; fi
       GT=$(cr findgoogle "$GBEFORE")
       [ -n "$GT" ] || continue
       G=$(cr js "$GT" "${GPICK/WANT/\"$WANT\"}")

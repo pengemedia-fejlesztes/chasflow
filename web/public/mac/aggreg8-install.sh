@@ -114,21 +114,48 @@ cat > "$KJS" <<'JS'
 ObjC.import('Foundation');
 ObjC.import('CoreGraphics');
 ObjC.import('ApplicationServices');
+// Két rögzített művelet (kódot nem tölt le és nem futtat):
+//   click.txt = "x,y"            → egérkattintás a képernyő adott pontján
+//   click.txt = "press <pid>"    → a Chrome (pid) „Folytatás … néven” gombjának megnyomása a Kisegítő felületen
 function run() {
   var dir = $('~/Library/Application Support/cashflow-aggreg8').stringByExpandingTildeInPath.js;
-  var write = function (t) { $(t).writeToFileAtomicallyEncodingError(dir + '/click.result', true, $.NSUTF8StringEncoding, null); };
+  var fm = $.NSFileManager.defaultManager;
+  var write = function (t) { $(String(t)).writeToFileAtomicallyEncodingError(dir + '/click.result', true, $.NSUTF8StringEncoding, null); };
+  var s = $.NSString.stringWithContentsOfFileEncodingError(dir + '/click.txt', $.NSUTF8StringEncoding, null);
+  s = s && !s.isNil() ? s.js.trim() : '';
+  fm.removeItemAtPathError(dir + '/click.txt', null);
   var trusted = $.AXIsProcessTrustedWithOptions($({ AXTrustedCheckOptionPrompt: true }));
   if (!trusted) { write('NINCS ENGEDÉLY (Kisegítő lehetőségek → Cashflow Kattintó)'); return; }
-  var s = $.NSString.stringWithContentsOfFileEncodingError(dir + '/click.txt', $.NSUTF8StringEncoding, null);
-  if (!s || !s.js || s.js.indexOf(',') < 0) { write('ENGEDÉLY OK'); return; }
-  var p = s.js.trim().split(',');
-  var pt = $.CGPointMake(Number(p[0]), Number(p[1]));
+  var m = /^press (\d+)$/.exec(s);
+  if (m) {
+    try {
+      var p = Application('System Events').processes.whose({ unixId: Number(m[1]) })[0];
+      var re = /^(folytatás|continue|tovább)/i;
+      var ws = p.windows();
+      for (var i = 0; i < ws.length; i++) {
+        var all = ws[i].entireContents();
+        for (var j = 0; j < all.length; j++) {
+          var e = all[j];
+          try {
+            if (e.role() !== 'AXButton') continue;
+            var n = String(e.name() || e.description() || '').trim();
+            if (re.test(n)) { e.actions['AXPress'].perform(); write('NYOMVA ' + n); return; }
+          } catch (x) {}
+        }
+      }
+      write('NINCS GOMB');
+    } catch (e2) { write('HIBA ' + e2); }
+    return;
+  }
+  if (s === 'probe') { try { write('RENDSZERESEMÉNYEK OK ' + Application('System Events').processes.length); } catch (e3) { write('HIBA ' + e3); } return; }
+  if (s.indexOf(',') < 0) { write('ENGEDÉLY OK'); return; }
+  var c = s.split(',');
+  var pt = $.CGPointMake(Number(c[0]), Number(c[1]));
   [5, 1, 2].forEach(function (type) {
     $.CGEventPost(0, $.CGEventCreateMouseEvent(null, type, pt, 0));
     delay(0.08);
   });
-  $.NSFileManager.defaultManager.removeItemAtPathError(dir + '/click.txt', null);
-  write('KATT ' + p.join(','));
+  write('KATT ' + c.join(','));
 }
 JS
 osacompile -l JavaScript -o "$HOME/Applications/Cashflow Kattintó.app" "$KJS"
@@ -139,6 +166,10 @@ echo "A Google belépőgomb megnyomásához a „Cashflow Kattintó” programna
 echo "Rendszerbeállítások → Adatvédelem és biztonság → Kisegítő lehetőségek → Cashflow Kattintó: BE."
 open -W "$HOME/Applications/Cashflow Kattintó.app"
 echo "Állapot: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
+# a „Folytatás … néven” gombhoz a Kattintó a Rendszereseményeket használja – ennek engedélyét most kéri (ha kérdezi: OK)
+echo "probe" > "$HOME/Library/Application Support/cashflow-aggreg8/click.txt"
+open -W "$HOME/Applications/Cashflow Kattintó.app"
+echo "Rendszeresemények: $(cat "$HOME/Library/Application Support/cashflow-aggreg8/click.result" 2>/dev/null)"
 
 # --- figyelő: 30 másodpercenként megnézi, kért-e valaki szinkront (app gomb, robot, Claude), vagy pótolni kell egy kimaradt futást ---
 PLABEL="hu.pengemedia.cashflow-aggreg8-poll"
