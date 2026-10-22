@@ -14,7 +14,7 @@ function cleanPayRule(v: unknown): string | null {
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers, navInvoices] =
+  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers, navInvoices, partners] =
     await env.DB.batch([
       env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
       env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
@@ -57,6 +57,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
         `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
        FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
       ),
+      env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
     ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
@@ -76,6 +77,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     partnerNames: partnerNames.results as any,
     lostOffers: lostOffers.results as any,
     navInvoices: navInvoices.results as any,
+    partners: (partners.results as any[]).map((p) => ({ ...p, aliases: JSON.parse(p.aliases || '[]') })),
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }

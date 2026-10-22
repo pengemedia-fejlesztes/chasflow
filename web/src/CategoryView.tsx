@@ -14,7 +14,7 @@ const GOOD = '#1A7340';
 const GOOD_BG = '#E8F5EE';
 
 export function CategoryView({ groupId, openModal }: { groupId: string; openModal: (leaf: string | null, edit?: EditTarget) => void }) {
-  const { ix, data, filters, setFilters, commit, canEdit, run } = useStore();
+  const { ix, data, filters, setFilters, commit, canEdit, run, openPartner } = useStore();
   const [openP, setOpenP] = useState<Record<string, boolean>>({});
   const G = ix.groupById[groupId];
   const leafIds = useMemo(() => new Set(ix.leaves.filter((l) => l.group_id === groupId).map((l) => l.id)), [ix, groupId]);
@@ -697,12 +697,20 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     <div style={{ padding: '11px 8px', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                       <span
                         role="button"
-                        title="Partner tételei"
+                        title="Partner adatlapja"
+                        className="partner-link"
                         onClick={(ev) => {
                           ev.stopPropagation();
-                          canEdit && openModal(leaf);
+                          openPartner(leaf);
                         }}
-                        style={{ font: `700 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        style={{
+                          font: `700 15px ${FONT}`,
+                          color: C.navy,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          cursor: 'pointer',
+                        }}
                       >
                         {L?.label || '—'}
                       </span>

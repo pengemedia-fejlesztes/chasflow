@@ -18,8 +18,8 @@ type Side = 'in' | 'out' | 'all';
 export function usePartners() {
   const { data, ix } = useStore();
   return useMemo(
-    () => partnerStats(data.entries, ix.leaves, ix.groups, data.billingo, data.today, data.partnerNames || []),
-    [data.entries, data.billingo, data.today, data.partnerNames, ix],
+    () => partnerStats(data.entries, ix.leaves, ix.groups, data.billingo, data.today, data.partnerNames || [], data.partners || []),
+    [data.entries, data.billingo, data.today, data.partnerNames, data.partners, ix],
   );
 }
 
@@ -33,6 +33,7 @@ function trend(p: PartnerStat, sec: Section) {
 
 export function PartnersView({ mobile, initialKey, onBack }: { mobile?: boolean; initialKey?: string | null; onBack?: () => void }) {
   const stats = usePartners();
+  const { openPartner } = useStore();
   const [sel, setSel] = useState<string | null>(initialKey || null);
   const [side, setSide] = useState<Side>('in');
   const [sort, setSort] = useState<'last12' | 'total'>('last12');
@@ -79,7 +80,7 @@ export function PartnersView({ mobile, initialKey, onBack }: { mobile?: boolean;
         return (
           <button
             key={p.key}
-            onClick={() => setSel(p.key)}
+            onClick={() => openPartner(p.key)}
             style={{
               ...card,
               padding: '12px 14px',
@@ -215,7 +216,7 @@ function Comps({ list }: { list: Component[] }) {
   );
 }
 
-export function PartnerDetail({ p, mobile, onBack }: { p: PartnerStat; mobile?: boolean; onBack: () => void }) {
+export function PartnerDetail({ p, mobile, onBack, embedded }: { p: PartnerStat; mobile?: boolean; onBack: () => void; embedded?: boolean }) {
   const { ix } = useStore();
   const [all, setAll] = useState(false);
   const years = Object.keys(p.byYear).sort().reverse();
@@ -238,13 +239,15 @@ export function PartnerDetail({ p, mobile, onBack }: { p: PartnerStat; mobile?: 
   const offersSum = (sIn?.offers || 0) + (sOut?.offers || 0);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button
-        onClick={onBack}
-        style={{ alignSelf: 'flex-start', border: 0, background: 'transparent', color: C.blueDark, font: `600 14px ${FONT}`, padding: 0, cursor: 'pointer' }}
-      >
-        ‹ Partnerek
-      </button>
-      <div>
+      {!embedded && (
+        <button
+          onClick={onBack}
+          style={{ alignSelf: 'flex-start', border: 0, background: 'transparent', color: C.blueDark, font: `600 14px ${FONT}`, padding: 0, cursor: 'pointer' }}
+        >
+          ‹ Partnerek
+        </button>
+      )}
+      <div style={embedded ? { display: 'none' } : undefined}>
         <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
           Partner ·{' '}
           {p.leaves.map((l) => `${ix.sectionOf(l.id) === 'in' ? 'bevétel' : 'kiadás'}: ${displayGroup(ix.groupById[l.group_id]?.label || '')}`).join(' · ')}

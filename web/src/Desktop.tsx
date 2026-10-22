@@ -8,6 +8,7 @@ import { BankView } from './BankView';
 import { CategoryView } from './CategoryView';
 import type { EditTarget } from './EntryModal';
 import { PartnerModal } from './PartnerModal';
+import { PartnerRegistry } from './PartnerCard';
 import { FilterBar, periodLabel } from './Filters';
 import { IncomeView } from './IncomeView';
 import { setCellValue } from './logic';
@@ -16,7 +17,7 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'settings';
+export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'settings';
 
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
@@ -53,6 +54,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     ['alerts', 'Riasztások', flags.length],
     ['income', 'Tervezett bevétel', openIncome],
     ['bank', 'Bankszinkron', newTx],
+    ['partners', 'Partnertörzs', 0],
     ['settings', 'Beállítások', 0],
   ];
 
@@ -237,6 +239,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
         {view === 'income' && <IncomeView />}
         {view === 'bank' && <BankView />}
+        {view === 'partners' && (
+          <div style={{ padding: '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+            <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Partnertörzs</h1>
+            <PartnerRegistry />
+          </div>
+        )}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>
       {modal && <PartnerModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}

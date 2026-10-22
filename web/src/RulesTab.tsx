@@ -261,7 +261,14 @@ export function RulesTab() {
                     <span style={{ font: `600 14px ${FONT}`, color: C.ink, flex: '1 1 200px' }}>
                       {row.kind === 'contains' ? `tartalmazza: „${r.pattern}”` : `partner: ${r.pattern}`}
                       <span style={{ font: `500 12px ${FONT}`, color: C.muted, marginLeft: 8 }}>
-                        {row.kind === 'learned' ? 'tanult (jóváhagyásból)' : row.r.source === 'builtin' ? 'beépített' : 'kézi'} · {r.hits} találat
+                        {row.kind === 'learned'
+                          ? 'tanult (jóváhagyásból)'
+                          : row.r.source === 'builtin'
+                            ? 'beépített'
+                            : row.r.source === 'alias'
+                              ? 'partner alternatív neve'
+                              : 'kézi'}{' '}
+                        · {r.hits} találat
                         {row.kind === 'contains' && row.r.note ? ' · ' + row.r.note : ''}
                       </span>
                     </span>

@@ -10,6 +10,7 @@ import { genSeries } from './logic';
 import { targetTracking } from '../../shared/insights';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card } from './ui';
 
@@ -167,11 +168,22 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                   <div style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{f.name || cat}</span>
                     <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-                      {f.kind === 'target'
-                        ? 'havi eredmény-cél (Beállítások → Statisztikák)'
-                        : f.nav
-                          ? `${f.nav.invoice_number} · kelt ${dot(f.nav.issue_date || f.date)} · fizetendő ${dot(f.date)}`
-                          : `${dot(f.date)} · ${cat}`}
+                      {f.kind === 'target' ? (
+                        'havi eredmény-cél (Beállítások → Statisztikák)'
+                      ) : f.nav ? (
+                        `${f.nav.invoice_number} · kelt ${dot(f.nav.issue_date || f.date)} · fizetendő ${dot(f.date)}`
+                      ) : (
+                        <>
+                          {dot(f.date)} ·{' '}
+                          {f.leaf_id ? (
+                            <PartnerLink leaf={f.leaf_id} style={{ color: C.blueDark, fontWeight: 600 }}>
+                              {cat}
+                            </PartnerLink>
+                          ) : (
+                            cat
+                          )}
+                        </>
+                      )}
                       {f.tx ? ` · ${f.tx.partner || f.tx.memo}` : ''}
                     </span>
                   </div>

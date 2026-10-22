@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { fmt, monthLabel } from '../../shared/model';
 import type { MonthRow } from '../../shared/monthrows';
 import type { Entry } from '../../shared/types';
+import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H } from './ui';
 
@@ -231,20 +232,16 @@ function Row(p: {
       <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
         {/* fent a partner (cég / személy), alatta a feladat / szolgáltatás */}
         <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <span style={{ font: `700 15.5px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {partner || item}
-          </span>
-          {p.onPartner && !p.selMode && partner && (
-            <span
-              role="button"
-              title="Partner adatlapja"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                p.onPartner!(r.leaf_id);
-              }}
-              style={{ flex: 'none', font: `700 15px ${FONT}`, color: C.blueDark, padding: '0 4px' }}
+          {partner && !p.selMode ? (
+            <PartnerLink
+              leaf={r.leaf_id}
+              style={{ font: `700 15.5px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
             >
-              ›
+              {partner}
+            </PartnerLink>
+          ) : (
+            <span style={{ font: `700 15.5px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {partner || item}
             </span>
           )}
         </span>

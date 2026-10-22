@@ -6,6 +6,7 @@ import { api } from './api';
 import { Desktop, logout } from './Desktop';
 import { Mobile } from './Mobile';
 import { StoreProvider } from './store';
+import { PartnerCardHost } from './PartnerCard';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, inputStyle } from './ui';
 
@@ -108,6 +109,7 @@ export function App() {
     <StoreProvider initial={phase.data}>
       <BackHandling />
       {mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}
+      <PartnerCardHost mobile={mobile} />
     </StoreProvider>
   );
 }

@@ -7,6 +7,7 @@ import { payDate, payRuleLabel } from '../../shared/workdays';
 import { ruleOf } from './logic';
 import { api } from './api';
 import { RulesTab } from './RulesTab';
+import { PartnerRegistry } from './PartnerCard';
 import { StatsHub } from './StatsHub';
 import { TrashTab } from './TrashTab';
 import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
@@ -16,7 +17,7 @@ import { SYNC_HOURS } from '../../shared/aggreg8';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill } from './ui';
 
-type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'categories' | 'rules' | 'trash';
+type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'partners' | 'categories' | 'rules' | 'trash';
 
 export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobile?: boolean }) {
   const { isAdmin } = useStore();
@@ -26,7 +27,7 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
     ['account', 'Fiókom'],
   ];
   if (isAdmin) tabs.push(['users', 'Felhasználók'], ['integrations', 'Bekötések'], ['data', 'Adatok']);
-  tabs.push(['rules', 'Párosítások'], ['categories', 'Kategóriák'], ['trash', 'Törölt tételek']);
+  tabs.push(['partners', 'Partnertörzs'], ['rules', 'Párosítások'], ['categories', 'Kategóriák'], ['trash', 'Törölt tételek']);
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {!mobile && <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beállítások</h1>}
@@ -38,6 +39,7 @@ export function SettingsView({ onLogout, mobile }: { onLogout: () => void; mobil
       </div>
       {tab === 'stats' && <StatsHub mobile={mobile} />}
       {tab === 'account' && <Account onLogout={onLogout} />}
+      {tab === 'partners' && <PartnerRegistry mobile={mobile} />}
       {tab === 'users' && isAdmin && <Users />}
       {tab === 'integrations' && isAdmin && <Integrations />}
       {tab === 'data' && isAdmin && <DataTab />}

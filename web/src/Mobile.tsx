@@ -6,7 +6,6 @@ import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { useBack } from './back';
 import { StatsHub } from './StatsHub';
-import { partnerIdOf } from '../../shared/partners';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
@@ -54,7 +53,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'home'));
   const flags = useFlags();
   const [partnerKey, setPartnerKey] = useState<string | null>(null);
-  const openPartner = (leaf: string) => (setPartnerKey(partnerIdOf(ix.leafById[leaf]?.label || leaf)), setTab('stats'));
+  const openPartner = (leaf: string) => st.openPartner(leaf);
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
   const m = months.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];

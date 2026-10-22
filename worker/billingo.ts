@@ -1,5 +1,6 @@
 // Billingo v3 szinkron: kiállított számlák → tervezett bevétel.
-import { partnerKey, suggestLeaf } from '../shared/match';
+import { partnerKey, suggestLeaf, type ContainsRule } from '../shared/match';
+import { loadContains } from './rules';
 import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
 import { Env, HttpError, getSetting, now, setSetting, todayHu } from './util';
@@ -48,8 +49,10 @@ async function leafForPartner(
   rules: Record<string, string>,
   cache: CategoryCache,
   stmts: D1PreparedStatement[],
+  contains?: ContainsRule[],
 ) {
-  const s = suggestLeaf({ date: '', amount: 1, partner, memo: '' }, rules, leaves, sectionOf);
+  // a partnertörzs alternatív nevei (és a többi „tartalmazza” szabály) is számítanak
+  const s = suggestLeaf({ date: '', amount: 1, partner, memo: '' }, rules, leaves, sectionOf, contains?.length ? contains : undefined);
   if (s) return s;
   const def = await getSetting(env, 'billingo_leaf_default');
   if (def && leaves.some((l) => l.id === def)) return def;
@@ -71,6 +74,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   const docs = await fetchDocs(env.BILLINGO_API_URL || BASE, env.BILLINGO_API_KEY, start);
 
   const cache = await new CategoryCache(env).load();
+  const contains = await loadContains(env).catch(() => [] as ContainsRule[]);
   const [leavesR, groupsR, rulesR, existingR, docsR, openR] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM leaves'),
     env.DB.prepare('SELECT id, section FROM groups'),
@@ -193,7 +197,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       plans++;
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
     } else if (gross > 0) {
-      const lid = await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts);
+      const lid = await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains);
       const matched = findPlan(lid, gross, due);
       if (matched) {
         // a meglévő tervből „kiszámlázott” tétel lesz

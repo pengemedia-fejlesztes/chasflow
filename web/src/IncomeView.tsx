@@ -5,6 +5,7 @@ import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { CalendarSheet } from './DatePicker';
 import { itemLabel } from './MonthList';
+import { PartnerLink } from './PartnerCard';
 import { markDone } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, eyebrow, relTime, SyncPill } from './ui';
@@ -195,9 +196,12 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                   </span>
                   <span style={{ flex: '1 1 200px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {/* fent a partner, alatta a feladat / szolgáltatás */}
-                    <span style={{ font: `700 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <PartnerLink
+                      leaf={e.leaf_id}
+                      style={{ font: `700 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
                       {ix.leafById[e.leaf_id]?.label || e.name}
-                    </span>
+                    </PartnerLink>
                     {itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '') && (
                       <span
                         style={{ font: `500 13.5px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: -2 }}

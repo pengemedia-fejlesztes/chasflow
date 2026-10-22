@@ -5,6 +5,7 @@ import * as eb from './enablebanking';
 import { handleRules } from './rules';
 import { navEnabled, syncNav } from './nav';
 import { handleIngest, handleIngestToken } from './ingest';
+import { handlePartners } from './partners';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
@@ -65,7 +66,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
   if (u.role === 'admin' && !u.totp_enabled) throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken]) {
+  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }

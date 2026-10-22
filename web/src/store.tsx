@@ -24,6 +24,9 @@ interface Store {
   showToast: (t: Toast | string) => void;
   canEdit: boolean;
   isAdmin: boolean;
+  /** a megnyitott partner adatlap (alkategória-azonosító vagy partnerkulcs) */
+  partnerCard: string | null;
+  openPartner: (leafOrKey: string | null) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -152,6 +155,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
   );
 
   const ix = useMemo(() => buildIndex(data), [data]);
+  const [partnerCard, openPartner] = useState<string | null>(null);
   const role = data.me.role;
   const value: Store = {
     data,
@@ -166,6 +170,8 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
     showToast,
     canEdit: role !== 'viewer',
     isAdmin: role === 'admin',
+    partnerCard,
+    openPartner,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

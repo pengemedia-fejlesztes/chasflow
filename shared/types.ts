@@ -23,6 +23,18 @@ export interface Leaf {
   pay_days?: number | null;
 }
 
+/** Partnertörzs: a partner adatlapjának szerkeszthető adatai (a kulcs a partner normalizált neve). */
+export interface Partner {
+  key: string;
+  name: string;
+  kind: 'vevo' | 'szallito' | 'mindketto' | null;
+  /** alternatív nevek: cégnév, Billingo-számlanév, banki név, üzlet/kút neve… – ezek alapján párosít és összevon */
+  aliases: string[];
+  tax_number: string | null;
+  note: string | null;
+  updated_at: number;
+}
+
 export interface Series {
   id: string;
   leaf_id: string;
@@ -157,6 +169,8 @@ export interface DataBundle {
   /** NAV Online Számla: bejövő (szállítói) számlák */
   navInvoices?: NavInvoice[];
   lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number }[];
+  /** partnertörzs */
+  partners?: Partner[];
 }
 
 export interface DeletedEntry extends Entry {

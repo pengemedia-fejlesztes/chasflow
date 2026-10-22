@@ -77,3 +77,7 @@ select,
 textarea {
   box-sizing: border-box;
 }
+.partner-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

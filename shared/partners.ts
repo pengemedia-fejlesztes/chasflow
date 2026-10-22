@@ -2,7 +2,7 @@
 // múltbeli tények, várható tételek (terv, ajánlat), összetevők, számlázási nevek, Billingo számlák és késések.
 import { partnerKey } from './match';
 import { addMonths, monthRange, ymOf } from './model';
-import type { BillingoDoc, Entry, Group, Leaf, Section } from './types';
+import type { BillingoDoc, Entry, Group, Leaf, Partner, Section } from './types';
 
 export interface PartnerInvoice {
   doc: BillingoDoc;
@@ -46,6 +46,8 @@ export interface PartnerStat {
   futureComponents: Component[];
   billingNames: { name: string; source: 'Billingo' | 'bank'; n: number }[];
   invoices: PartnerInvoice[];
+  /** a partnertörzs adatai (alternatív nevek, típus…), ha már szerkesztették */
+  info: Partner | null;
   avgLate: number | null;
   lateCount: number;
   outstanding: number;
@@ -78,7 +80,14 @@ export function partnerStats(
   billingo: BillingoDoc[],
   today: string,
   bankNames: { leaf_id: string; partner: string; n: number }[] = [],
+  partners: Partner[] = [],
+  /** a forgalom nélküli partnerek is (a partnertörzshöz) */
+  all = false,
 ): PartnerStat[] {
+  const infoByKey = new Map(partners.map((p) => [p.key, p]));
+  // alternatív nevek (normalizálva) → partner
+  const aliasKeys: { a: string; key: string }[] = [];
+  for (const p of partners) for (const a of p.aliases || []) if (squash(a).length >= 3) aliasKeys.push({ a: squash(a), key: p.key });
   const gById = new Map(groups.map((g) => [g.id, g]));
   const secOfLeaf = new Map(leaves.map((l) => [l.id, (gById.get(l.group_id)?.section || 'out') as Section]));
   const sectionOf = (id: string) => secOfLeaf.get(id) || 'out';
@@ -112,7 +121,10 @@ export function partnerStats(
     const viaRef = entries.find((e) => e.ext_ref === `billingo:${d.id}`)?.leaf_id;
     const pk = squash(d.partner || '');
     const k =
-      (viaPlan && keyOfLeaf.get(viaPlan)) || (viaRef && keyOfLeaf.get(viaRef)) || keys.find((x) => pk.includes(x) || (pk.length >= 3 && x.includes(pk)));
+      (viaPlan && keyOfLeaf.get(viaPlan)) ||
+      (viaRef && keyOfLeaf.get(viaRef)) ||
+      aliasKeys.find((x) => pk.includes(x.a))?.key ||
+      keys.find((x) => pk.includes(x) || (pk.length >= 3 && x.includes(pk)));
     if (!k) continue;
     if (!docsByKey.has(k)) docsByKey.set(k, []);
     docsByKey.get(k)!.push(d);
@@ -125,7 +137,7 @@ export function partnerStats(
     const docs = (docsByKey.get(key) || []).sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
     const past = es.filter((e) => e.kind === 'actual').sort((a, b) => b.date.localeCompare(a.date));
     const future = es.filter((e) => e.kind === 'plan' && !e.done).sort((a, b) => a.date.localeCompare(b.date));
-    if (!past.length && !future.length && !docs.length) continue;
+    if (!all && !past.length && !future.length && !docs.length) continue;
     const sides: Partial<Record<Section, SideStat>> = {};
     const byYear: Record<string, { inc: number; out: number }> = {};
     const byMonth = new Map<string, { inc: number; out: number }>();
@@ -167,7 +179,7 @@ export function partnerStats(
     for (const r of bankNames)
       if (ls.some((l) => l.id === r.leaf_id)) bn.set('k|' + r.partner, { name: r.partner, source: 'bank', n: (bn.get('k|' + r.partner)?.n || 0) + r.n });
     // a leggyakrabban használt alkategória neve a partner neve
-    const name = [...ls].sort((a, b) => (byLeaf.get(b.id)?.length || 0) - (byLeaf.get(a.id)?.length || 0))[0].label;
+    const name = infoByKey.get(key)?.name || [...ls].sort((a, b) => (byLeaf.get(b.id)?.length || 0) - (byLeaf.get(a.id)?.length || 0))[0].label;
     out.push({
       key,
       name,
@@ -184,6 +196,7 @@ export function partnerStats(
       futureComponents: components(future, sectionOf),
       billingNames: [...bn.values()].sort((a, b) => b.n - a.n),
       invoices,
+      info: infoByKey.get(key) || null,
       avgLate: lates.length ? lates.reduce((s, x) => s + x, 0) / lates.length : null,
       lateCount: lates.filter((x) => x > 0).length,
       outstanding: invoices.filter((i) => i.overdue).reduce((s, i) => s + i.doc.gross, 0),

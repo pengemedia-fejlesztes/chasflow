@@ -97,3 +97,36 @@ describe('számlázás ellenőrzése', () => {
     expect(payDate('2026-11', 'inv:8', 1)).toBe('2026-11-10');
   });
 });
+
+import { partnerStats } from '../shared/partners';
+import { cleanAliases } from '../worker/partners';
+
+describe('partnertörzs', () => {
+  it('alternatív nevek tisztítása: üres, rövid és ismétlődő nevek nélkül', () => {
+    expect(cleanAliases([' OMV 135 ', 'omv 135', 'x', '', 'Shell  27', null])).toEqual(['OMV 135', 'Shell 27']);
+  });
+  it('a Billingo számla az alternatív név alapján a partnerhez kerül, a partnertörzs neve az elsődleges', () => {
+    const leaves = [{ id: 'l1', group_id: 'g1', label: 'Aurapro', sort: 0, archived: 0 }];
+    const groups = [{ id: 'g1', section: 'in', label: 'Ügyfelek', sort: 0 }] as any;
+    const docs = [
+      {
+        id: 1,
+        number: 'A1',
+        partner: 'Kovács Bt.',
+        gross: 1000,
+        currency: 'HUF',
+        invoice_date: '2026-10-01',
+        due_date: '2026-10-09',
+        payment_status: 'paid',
+        paid_date: '2026-10-05',
+        cancelled: 0,
+        plan_id: null,
+      },
+    ] as any;
+    const partners = [{ key: 'aurapro', name: 'Aurapro Kft', kind: 'vevo', aliases: ['Kovács Bt'], tax_number: null, note: null, updated_at: 0 }] as any;
+    const [p] = partnerStats([], leaves, groups, docs, '2026-10-20', [], partners, true);
+    expect(p.name).toBe('Aurapro Kft');
+    expect(p.invoices.length).toBe(1);
+    expect(p.info?.kind).toBe('vevo');
+  });
+});
