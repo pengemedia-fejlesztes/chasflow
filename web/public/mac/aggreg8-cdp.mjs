@@ -196,6 +196,19 @@ async function main() {
       step(`lap: ${u.replace(AGG, '')}`);
     }
 
+    // ellenőrzés: a belépett aggreg8-fiókban megvan-e a BinX és a MagNet kapcsolat (különben semmit nem töltünk fel)
+    const banks = await evaluate(
+      `(async () => { const lbl = (b) => { for (let e = b; e && e !== document.body; e = e.parentElement) { const t = (e.innerText || '').toLowerCase(), x = /binx/.test(t), m = /magnet/.test(t); if (x !== m) return x ? 'BinX' : 'MagNet'; if (x && m) break; } return ''; };
+        for (let i = 0; i < 20; i++) { const b = [...document.querySelectorAll('button.btn-sync')].map(lbl).filter(Boolean); if (b.length) return [...new Set(b)].join(','); await new Promise((r) => setTimeout(r, 1000)); }
+        return ''; })()`,
+      60000,
+    ).catch(() => '');
+    step(`bankkapcsolatok: ${banks || 'nincs'}`);
+    if (!/BinX/.test(banks) && !/MagNet/.test(banks)) {
+      await closeTab();
+      done(false, 'A belépett aggreg8-fiókban nem látom a BinX/MagNet kapcsolatot – semmit nem töltöttem fel (lásd a lépéseket).');
+    }
+
     // 2) szinkron bankonként
     const sync = [];
     for (const bank of ['BinX', 'MagNet']) {
@@ -392,14 +405,18 @@ async function handlePopup(c, targetId, existingSession) {
           if (a) return at(a, 'fiók ' + id(a));
           // a fiók az e-mail-címe szövege alapján (a Google fiókválasztója nem mindig jelöli adat-attribútummal)
           const email = want || '@';
+          // a kívánt fiók; ha az nincs a listában és csak egy fiók van, az (a bankkapcsolatokat belépés után ellenőrizzük)
           const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const mails = [];
           let tn;
           while ((tn = tw.nextNode())) {
             const t = (tn.nodeValue || '').trim().toLowerCase();
-            if (t && (want ? t === want : /^[^\s@]+@[^\s@]+$/.test(t)) && tn.parentElement && vis(tn.parentElement)) {
-              const row = tn.parentElement.closest('li,[role=link],[role=button],[data-authuser],[tabindex]') || tn.parentElement;
-              return at(row, 'fiók (szöveg) ' + t);
-            }
+            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) && tn.parentElement && vis(tn.parentElement)) mails.push({ t, el: tn.parentElement });
+          }
+          const pick = mails.find((m) => want && m.t === want) || (mails.length === 1 ? mails[0] : null);
+          if (pick) {
+            const row = pick.el.closest('li,[role=link],[role=button],[data-authuser],[tabindex]') || pick.el;
+            return at(row, 'fiók ' + pick.t);
           }
           const btn = [...document.querySelectorAll('button,[role=button]')].filter(vis).find((e) => /^(folytatás|continue|tovább|confirm|megerősítés|engedélyezés|allow)/i.test((e.innerText || '').trim()));
           if (btn) return at(btn, 'gomb ' + btn.innerText.trim().slice(0, 30));
