@@ -451,6 +451,7 @@ function Integrations() {
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>utolsó szinkron: {stamp(data.settings.billingo_last_sync)}</span>
           {data.integrations.billingo && <SyncPill label="↻ Szinkron most" onRun={() => run(() => api('/api/sync', { body: {} }), 'Szinkron kész')} />}
         </div>
+        <AutoPayInfo raw={data.settings.billingo_autopay_last} />
         <Field label="Alapértelmezett kategória ismeretlen partnernél (üres = új alkategória a Projektek alatt)">
           <LeafSelect
             ix={ix}
@@ -1118,5 +1119,27 @@ function AutoUpload() {
         </div>
       )}
     </Section>
+  );
+}
+
+/** Banki jóváírás alapján fizetettre állított Billingo-számlák (utolsó futás). */
+function AutoPayInfo({ raw }: { raw?: string }) {
+  let r: { at: number; paid: number; items: string[]; errors: string[] } | null = null;
+  try {
+    r = raw ? JSON.parse(raw) : null;
+  } catch {}
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, font: `400 13px/1.45 ${FONT}`, color: C.muted }}>
+      <span>
+        Automatikus „fizetve”: ha a bankba forintra pontosan a számla összege érkezik, és a partner (név, alternatív név) vagy a közleményben a számlaszám
+        beazonosítja, a számla a Billingóban is fizetettre áll.
+      </span>
+      {r && (
+        <span>
+          Utoljára {stamp(r.at)}: {r.paid} számla fizetettre állítva{r.items.length ? ` – ${r.items.join('; ')}` : ''}
+        </span>
+      )}
+      {r && r.errors.length > 0 && <span style={{ color: C.neg, wordBreak: 'break-word' }}>Hiba: {r.errors.join('; ')}</span>}
+    </div>
   );
 }

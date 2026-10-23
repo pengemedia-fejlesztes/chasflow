@@ -5,7 +5,7 @@ import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
-import { billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
+import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
 import { navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
@@ -178,7 +178,22 @@ export async function syncAll(env: Env) {
   } catch (e: any) {
     res.autoError = e.message;
   }
+  try {
+    res.billingoPaid = await payBillingoFromBank(env);
+  } catch (e: any) {
+    res.billingoPaidError = e.message;
+  }
   return res;
+}
+
+/** Banki jóváírás → Billingo-számla fizetettre állítása; ha volt ilyen, a tervek is frissülnek (terv lezárva, tény a banki tételhez kötve). */
+export async function payBillingoFromBank(env: Env) {
+  const r = await autoPayBillingo(env);
+  if (r.paid) {
+    await syncBillingo(env).catch((e) => console.error('billingo sync after autopay', e));
+    await autoApprove(env, approve).catch(() => 0);
+  }
+  return r;
 }
 
 export interface ApproveItem {

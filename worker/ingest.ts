@@ -2,7 +2,7 @@
 // A kulcs csak az aggreg8 importra (XML vagy a Mac-bot JSON-ja) és az ütemezés lekérdezésére jó; a szerver csak a hash-ét tárolja.
 import { A8_LIMITS, SYNC_HOURS, bankOfAccount, parseAggreg8, parseAggreg8Json, type A8Account } from '../shared/aggreg8';
 import { requireRole, type User } from './auth';
-import { importManualRows } from './bank';
+import { importManualRows, payBillingoFromBank } from './bank';
 import { Env, HttpError, audit, getSetting, json, now, randomId, safeEqual, setSetting, sha256 } from './util';
 
 const KEY = 'import_token';
@@ -138,7 +138,8 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
   await audit(env, userId, 'ingest_aggreg8', { source: isJson ? 'json' : 'xml', skipped, accounts: out });
   await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: true, accounts: out } satisfies IngestLast));
   await refreshLastDates(env);
-  return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS });
+  const billingo_paid = await payBillingoFromBank(env).catch((e) => ({ error: String(e?.message || e) }));
+  return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS, billingo_paid });
 }
 
 /** Kulcs létrehozása (a régi érvényét veszti) / visszavonása – adminnak. */

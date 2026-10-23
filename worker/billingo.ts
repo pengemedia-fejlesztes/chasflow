@@ -3,7 +3,9 @@ import { partnerKey, suggestLeaf, type ContainsRule } from '../shared/match';
 import { loadContains } from './rules';
 import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
-import { Env, HttpError, getSetting, now, setSetting, todayHu } from './util';
+import { matchPayments, namesMatch } from '../shared/billingopay';
+import { partnerIdOf } from '../shared/partners';
+import { Env, HttpError, audit, getSetting, now, setSetting, todayHu } from './util';
 
 const BASE = 'https://api.billingo.hu/v3';
 
@@ -273,4 +275,70 @@ export async function billingoPublicUrl(env: Env, id: number): Promise<string> {
   const j = (await res.json().catch(() => null)) as { public_url?: string } | null;
   if (!res.ok || !j?.public_url) throw new HttpError(502, `A Billingo nem adta ki a számlát (${res.status}).`);
   return j.public_url;
+}
+
+/**
+ * Banki jóváírás alapján a nyitott Billingo-számla fizetettre állítása (a Billingóban is): forintra pontos összeg és
+ * beazonosítható számla (számlaszám a közleményben, vagy a partner neve / alternatív neve / a tétel partnere).
+ */
+export async function autoPayBillingo(env: Env): Promise<{ paid: number; items: string[]; errors: string[] }> {
+  const res = { paid: 0, items: [] as string[], errors: [] as string[] };
+  if (!env.BILLINGO_API_KEY) return res;
+  const base = env.BILLINGO_API_URL || BASE;
+  const [docsR, txR, leavesR, partnersR, plansR] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT id, number, partner, gross, currency, invoice_date, plan_id FROM billingo_docs WHERE cancelled = 0 AND paid_by_tx IS NULL AND payment_status IN ('outstanding', 'expired') AND invoice_date >= date('now', '-400 days')",
+    ),
+    env.DB.prepare(
+      "SELECT id, date, amount, currency, partner, memo, leaf_id FROM bank_tx WHERE amount > 0 AND date >= date('now', '-120 days') AND id NOT IN (SELECT paid_by_tx FROM billingo_docs WHERE paid_by_tx IS NOT NULL)",
+    ),
+    env.DB.prepare('SELECT id, label FROM leaves'),
+    env.DB.prepare('SELECT name, aliases FROM partners'),
+    env.DB.prepare("SELECT id, leaf_id FROM entries WHERE kind = 'plan' AND ext_ref LIKE 'billingo:%'"),
+  ]);
+  const docs = docsR.results as any[];
+  if (!docs.length || !txR.results.length) return res;
+  const leafPid = new Map((leavesR.results as any[]).map((l) => [l.id, partnerIdOf(l.label)]));
+  const planLeaf = new Map((plansR.results as any[]).map((p) => [p.id, p.leaf_id]));
+  const groups = (partnersR.results as any[]).map((p) => [p.name, ...JSON.parse(p.aliases || '[]')] as string[]);
+  const aliasesOf = (name: string) => groups.find((g) => g.some((n) => namesMatch(n, name))) || [name];
+  const matches = matchPayments(
+    (txR.results as any[]).map((t) => ({ ...t, partnerId: t.leaf_id ? leafPid.get(t.leaf_id) : null })),
+    docs.map((d) => ({ ...d, partnerId: d.plan_id && planLeaf.get(d.plan_id) ? leafPid.get(planLeaf.get(d.plan_id)) : null })),
+    aliasesOf,
+  );
+  const h = { 'X-API-KEY': env.BILLINGO_API_KEY, Accept: 'application/json', 'Content-Type': 'application/json' };
+  for (const m of matches.slice(0, 20)) {
+    const label = `${m.doc.number || m.doc.id} (${m.doc.partner || '?'}, ${m.doc.gross} Ft, ${m.tx.date}, ${m.why})`;
+    try {
+      // friss állapot a Billingóból: csak teljesen kifizetetlen, azonos összegű számlát állítunk át
+      const cur = await fetch(`${base}/documents/${m.doc.id}`, { headers: h });
+      if (!cur.ok) throw new Error(`lekérés HTTP ${cur.status}`);
+      const d = (await cur.json()) as BillingoDocument & { payment_method?: string };
+      if (d.cancelled || !['outstanding', 'expired'].includes(String(d.payment_status)) || Math.round(Number(d.gross_total)) !== Math.round(m.tx.amount)) {
+        await env.DB.prepare('UPDATE billingo_docs SET payment_status = ? WHERE id = ?')
+          .bind(d.payment_status || null, m.doc.id)
+          .run();
+        continue;
+      }
+      const put = await fetch(`${base}/documents/${m.doc.id}/payments`, {
+        method: 'PUT',
+        headers: h,
+        body: JSON.stringify([{ date: m.tx.date, price: Number(d.gross_total), payment_method: 'wire_transfer' }]),
+      });
+      if (!put.ok) throw new Error(`fizetés rögzítése HTTP ${put.status}: ${(await put.text()).slice(0, 200)}`);
+      await env.DB.prepare("UPDATE billingo_docs SET payment_status = 'paid', paid_date = ?, paid_by_tx = ?, synced_at = ? WHERE id = ?")
+        .bind(m.tx.date, m.tx.id, now(), m.doc.id)
+        .run();
+      res.paid++;
+      res.items.push(label);
+    } catch (e: any) {
+      res.errors.push(`${label}: ${e.message}`);
+    }
+  }
+  if (res.paid || res.errors.length) {
+    await audit(env, null, 'billingo_autopay', res);
+    await setSetting(env, 'billingo_autopay_last', JSON.stringify({ at: now(), ...res }));
+  }
+  return res;
 }

@@ -142,6 +142,7 @@ export interface Me {
 export interface Settings {
   opening_balance?: string; // nyitó egyenleg a legelső tény előtt
   billingo_last_sync?: string;
+  billingo_autopay_last?: string;
   billingo_leaf_default?: string;
   bank_last_sync?: string;
   nav_last_sync?: string;
