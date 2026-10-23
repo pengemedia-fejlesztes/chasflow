@@ -1131,8 +1131,9 @@ function AutoPayInfo({ raw }: { raw?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, font: `400 13px/1.45 ${FONT}`, color: C.muted }}>
       <span>
-        Automatikus „fizetve”: ha a bankba forintra pontosan a számla összege érkezik, és a partner (név, alternatív név) vagy a közleményben a számlaszám
-        beazonosítja, a számla a Billingóban is fizetettre áll.
+        Automatikus „fizetve”: ha a bankba forintra pontosan a számla bruttó összege érkezik, és beazonosítható – a közleményben szerepel a kiállított számla
+        sorszáma (pl. PM-2026-000123; nem a bankszámlaszám), vagy a küldő neve a számla partnere / annak alternatív neve –, a számla a Billingóban is fizetettre
+        áll.
       </span>
       {r && (
         <span>

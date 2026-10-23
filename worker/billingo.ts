@@ -281,8 +281,8 @@ export async function billingoPublicUrl(env: Env, id: number): Promise<string> {
  * Banki jóváírás alapján a nyitott Billingo-számla fizetettre állítása (a Billingóban is): forintra pontos összeg és
  * beazonosítható számla (számlaszám a közleményben, vagy a partner neve / alternatív neve / a tétel partnere).
  */
-export async function autoPayBillingo(env: Env): Promise<{ paid: number; items: string[]; errors: string[] }> {
-  const res = { paid: 0, items: [] as string[], errors: [] as string[] };
+export async function autoPayBillingo(env: Env, opts: { dry?: boolean } = {}) {
+  const res = { paid: 0, items: [] as string[], errors: [] as string[], open: 0, incoming: 0, nearMiss: [] as string[], dry: !!opts.dry };
   if (!env.BILLINGO_API_KEY) return res;
   const base = env.BILLINGO_API_URL || BASE;
   const [docsR, txR, leavesR, partnersR, plansR] = await env.DB.batch([
@@ -297,6 +297,8 @@ export async function autoPayBillingo(env: Env): Promise<{ paid: number; items: 
     env.DB.prepare("SELECT id, leaf_id FROM entries WHERE kind = 'plan' AND ext_ref LIKE 'billingo:%'"),
   ]);
   const docs = docsR.results as any[];
+  res.open = docs.length;
+  res.incoming = txR.results.length;
   if (!docs.length || !txR.results.length) return res;
   const leafPid = new Map((leavesR.results as any[]).map((l) => [l.id, partnerIdOf(l.label)]));
   const planLeaf = new Map((plansR.results as any[]).map((p) => [p.id, p.leaf_id]));
@@ -307,6 +309,17 @@ export async function autoPayBillingo(env: Env): Promise<{ paid: number; items: 
     docs.map((d) => ({ ...d, partnerId: d.plan_id && planLeaf.get(d.plan_id) ? leafPid.get(planLeaf.get(d.plan_id)) : null })),
     aliasesOf,
   );
+  // diagnosztikához: azonos összeg, de nem azonosítható (vagy kétes) – csak a nevek, összeg nélkül
+  if (opts.dry) {
+    const got = new Set(matches.map((m) => m.doc.id));
+    for (const d of docs) {
+      if (got.has(d.id)) continue;
+      const same = (txR.results as any[]).filter((t) => Math.round(t.amount) === Math.round(d.gross) && (!d.invoice_date || t.date >= d.invoice_date));
+      if (same.length) res.nearMiss.push(`${d.number || d.id} [${d.partner || '?'}] ↔ ${same.map((t) => `${t.date} „${t.partner || '-'}”`).join(', ')}`);
+    }
+    res.items = matches.map((m) => `${m.doc.number || m.doc.id} [${m.doc.partner || '?'}] ← ${m.tx.date} „${m.tx.partner || '-'}” (${m.why})`);
+    return res;
+  }
   const h = { 'X-API-KEY': env.BILLINGO_API_KEY, Accept: 'application/json', 'Content-Type': 'application/json' };
   for (const m of matches.slice(0, 20)) {
     const label = `${m.doc.number || m.doc.id} (${m.doc.partner || '?'}, ${m.doc.gross} Ft, ${m.tx.date}, ${m.why})`;

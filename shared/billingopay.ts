@@ -1,6 +1,6 @@
 // Banki jóváírás ↔ nyitott Billingo-számla párosítása a számla fizetettre állításához.
-// Csak akkor párosít, ha az összeg forintra pontosan egyezik ÉS a számla beazonosítható: a számlaszám szerepel a
-// közleményben, vagy a partner (név / partnertörzs alternatív neve / a tétel partnere) egyezik. Kétes esetben nem párosít.
+// Csak akkor párosít, ha az összeg forintra pontosan egyezik ÉS a számla beazonosítható: a kiállított számla sorszáma
+// (Billingo számlaszám, pl. PM-2026-000123 – nem bankszámlaszám) szerepel a közleményben, vagy a partner (név / partnertörzs alternatív neve / a tétel partnere) egyezik. Kétes esetben nem párosít.
 import { normalizeText } from './categories';
 import { partnerKey } from './match';
 
@@ -59,7 +59,9 @@ export function matchPayments(txs: PayTx[], docs: PayDoc[], aliasesOf: (name: st
       // a fizetés nem lehet jóval a számla kelte előtt
       if (d.invoice_date && dayMs(tx.date) < dayMs(d.invoice_date) - 3 * 86400_000) continue;
       const num = compact(d.number || '');
-      if (num.length >= 5 && textC.includes(num)) {
+      // a sorszám előtag nélkül is (pl. „PM-2026-000123” → „2026/000123”), ha legalább 6 számjegyből áll
+      const bare = num.replace(/^[a-z]+/, '');
+      if ((num.length >= 5 && textC.includes(num)) || (/\d{6}/.test(bare) && bare.length >= 6 && textC.includes(bare))) {
         cands.push({ tx, doc: d, why: 'számlaszám' });
         continue;
       }

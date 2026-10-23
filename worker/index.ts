@@ -1,6 +1,7 @@
 // Cashflow tervező – Cloudflare Worker belépési pont (API + ütemezett szinkron).
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
-import { handleBank, reapplyRules, syncAll } from './bank';
+import { handleBank, payBillingoFromBank, reapplyRules, syncAll } from './bank';
+import { autoPayBillingo } from './billingo';
 import * as eb from './enablebanking';
 import { handleRules } from './rules';
 import { navEnabled, syncNav } from './nav';
@@ -25,6 +26,13 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (req.headers.get('X-Requested-With') !== 'cashflow') throw new HttpError(403, 'Hiányzó kliens fejléc.');
   }
 
+  // diagnosztika: Billingo automatikus „fizetve” – próba (dry) vagy éles futtatás
+  if (path === '/api/diag/autopay' && req.method === 'POST') {
+    const t = req.headers.get('X-Diag-Token') || '';
+    if (!env.DIAG_TOKEN || env.DIAG_TOKEN.length < 32 || !safeEqual(t, env.DIAG_TOKEN)) throw new HttpError(404, 'Nincs ilyen végpont.');
+    const dry = url.searchParams.get('run') !== '1';
+    return json(dry ? await autoPayBillingo(env, { dry }) : await payBillingoFromBank(env));
+  }
   // diagnosztika (GitHub Actions): egyszer használatos, véletlen DIAG_TOKEN-nel – a NAV szinkron lefuttatása, csak állapotot ad vissza
   if (path === '/api/diag/nav' && req.method === 'POST') {
     const t = req.headers.get('X-Diag-Token') || '';

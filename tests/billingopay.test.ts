@@ -20,6 +20,9 @@ describe('Billingo automatikus fizetettre állítás', () => {
     const m = matchPayments([tx({ partner: 'Kovács Péter', memo: 'Szla: PM-2026-000123' })], [doc({}), doc({ id: 2, number: 'PM-2026-000124' })]);
     expect(m.map((x) => x.doc.id)).toEqual([1]);
   });
+  it('sorszám előtag nélkül a közleményben', () => {
+    expect(matchPayments([tx({ partner: 'X', memo: 'szla 2026/000123' })], [doc({})])).toHaveLength(1);
+  });
   it('1 Ft eltérésnél nem párosít', () => {
     expect(matchPayments([tx({ partner: 'Orvosmost Kft', amount: 127001 })], [doc({})])).toHaveLength(0);
   });
