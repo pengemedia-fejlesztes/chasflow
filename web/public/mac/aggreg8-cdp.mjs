@@ -254,7 +254,7 @@ async function main() {
       ? readFileSync(env.EXPORT_JS_FILE, 'utf8')
       : await (await fetch(`${CF_URL}/mac/aggreg8-export.js`, { signal: AbortSignal.timeout(20000) })).text();
     exp = exp.trim().replace(/;$/, '').replaceAll('https://standalone-backend.aggreg8.hu', BACKEND);
-    const summary = await evaluate(`window.__cf_since = ${JSON.stringify(since)}; ${exp}`, 180000).catch((e) => 'HIBA ' + e.message);
+    const summary = await evaluate(`window.__cf_since = ${JSON.stringify(since)}; window.__cf_nofile = true; ${exp}`, 180000).catch((e) => 'HIBA ' + e.message);
     step(`letöltés: ${String(summary).slice(0, 200)}`);
     if (!String(summary).startsWith('OK')) {
       await closeTab();
@@ -270,7 +270,6 @@ async function main() {
       signal: AbortSignal.timeout(120000),
     });
     const ur = await up.json().catch(() => ({}));
-    await sleep(1500); // a letöltés befejeződjön, mielőtt a lapot bezárjuk
     await closeTab();
     if (!ur.ok) done(false, `Feltöltési hiba: ${JSON.stringify(ur).slice(0, 200)}`);
     const n = (ur.accounts || []).reduce((s, a) => s + (a.inbox || 0) + (a.auto || 0), 0);

@@ -76,10 +76,13 @@
   };
   const name = 'aggreg8-tranzakciok-' + new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-') + '.json';
   window.__cf_data = JSON.stringify(out);
-  const u = URL.createObjectURL(new Blob([window.__cf_data], { type: 'application/json' }));
-  const a = document.createElement('a');
-  a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(u), 60000);
+  // automatikus futásnál nincs fájl a Letöltésekben (a szinkron közvetlenül tölt fel); kézi futtatásnál letölti
+  if (!window.__cf_nofile) {
+    const u = URL.createObjectURL(new Blob([window.__cf_data], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 60000);
+  }
   const dates = keep.map(dayOf).filter(Boolean).sort();
-  return 'OK ' + keep.length + ' tétel' + (since ? ', ' + since + ' óta' : ', teljes lista') + ' (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + ', fájl: ' + name;
+  return 'OK ' + keep.length + ' tétel' + (since ? ', ' + since + ' óta' : ', teljes lista') + ' (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + (window.__cf_nofile ? '' : ', fájl: ' + name);
 })();

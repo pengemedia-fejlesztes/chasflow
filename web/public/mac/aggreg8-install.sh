@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cashflow tervező – aggreg8 banki tételek automatikus feltöltése a Letöltések mappából (macOS).
-# 5, 9, 13, 17, 21 órakor a saját Chrome-ban megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-*.json).
+# 5, 9, 13, 17, 21 órakor a saját Chrome-ban megnyitja az aggreg8-at, frissít, és a tranzakciókat közvetlenül feltölti (nem ment fájlt a Letöltésekbe).
 # Telepítés:  bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh)
 # Eltávolítás: bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh) --uninstall
 set -e
@@ -54,6 +54,7 @@ for F in "\$HOME"/Downloads/aggreg8-bank-tranzakciok-*.xml; do
   R=\$(curl -s -m 120 -X POST "$URL/api/ingest/aggreg8" -H "Authorization: Bearer \$TOKEN" -H "X-Requested-With: cashflow" -H "Content-Type: \$CT" --data-binary @"\$F")
   if echo "\$R" | grep -q '"ok":true'; then
     echo "\$SUM" >> "\$STATE/done"
+    mv -f "\$F" "\$HOME/.Trash/" 2>/dev/null  # beolvasva → Kukába
     N=\$(echo "\$R" | grep -o '"inbox":[0-9-]*' | cut -d: -f2 | awk '{s+=\$1} END {print s+0}')
     D=\$(echo "\$R" | grep -o '"duplicates":[0-9-]*' | cut -d: -f2 | awk '{s+=\$1} END {print s+0}')
     note "Cashflow – banki tételek feltöltve" "\$N új tétel jóváhagyásra, \$D már megvolt"
@@ -79,7 +80,7 @@ PL
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load "$PLIST"
 
-# --- letöltés: a saját, bejelentkezett Chrome-ban megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat ---
+# --- letöltés: a saját, bejelentkezett Chrome-ban megnyitja az aggreg8-at, frissít, és közvetlenül feltölti a tranzakciókat ---
 cat > "$DSCRIPT" <<'SH'
 #!/bin/bash
 # Mindig a legfrissebb letöltő fut (a javításokhoz nem kell újratelepíteni); ha a szerver nem érhető el, a legutóbbi helyi példány.
@@ -145,7 +146,7 @@ launchctl unload "$PPLIST" 2>/dev/null || true
 launchctl load "$PPLIST"
 
 echo ""
-echo "Kész. 5, 9, 13, 17 és 21 órakor a Chrome megnyitja az aggreg8-at, frissít, és a Letöltésekbe menti a tranzakciókat (aggreg8-tranzakciok-….json);"
+echo "Kész. 5, 9, 13, 17 és 21 órakor a Chrome megnyitja az aggreg8-at, frissít, és közvetlenül feltölti a tranzakciókat (a Letöltésekbe nem ment fájlt);"
 echo "a fájlt a Mac feltölti a cashflow tervezőbe. Napló: ~/Library/Application Support/cashflow-aggreg8/"
 echo ""
 echo "Próbafutás indul (a belépést is a rendszer intézi)…"

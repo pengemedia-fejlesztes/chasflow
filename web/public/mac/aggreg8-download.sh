@@ -47,6 +47,10 @@ MSG=$(echo "$RES" | "$NODE" -e 'let s="";process.stdin.on("data",d=>s+=d).on("en
 if [ "$OK" = "1" ]; then
   rm -f "$STATE/login_failed"
   report 1 "$MSG"
+  # a korábban a Letöltésekbe mentett, már beolvasott aggreg8-fájlok a Kukába
+  for F in "$HOME"/Downloads/aggreg8-tranzakciok-*.json "$HOME"/Downloads/aggreg8-tranzakciok-*.json.crdownload; do
+    [ -f "$F" ] && mv -f "$F" "$HOME/.Trash/" 2>/dev/null
+  done
   note "Cashflow – bank frissítve" "$(echo "$MSG" | grep -o 'Új tétel: [0-9]*' )"
 else
   case "$MSG" in *belépni*|*Egyszeri*) date +%s > "$STATE/login_failed" ;; esac
