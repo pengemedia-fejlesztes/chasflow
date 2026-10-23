@@ -2,6 +2,7 @@
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
 import { useMemo, useState } from 'react';
+import { displayGroup } from '../../shared/categories';
 import { addMonths, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { addDays, DEFAULT_PAY_DAYS, invoiceDue, ONEOFF_DAYS } from '../../shared/workdays';
@@ -271,8 +272,23 @@ function ItemRow({
   const [date, setDate] = useState(next?.date || '');
   const [tentative, setTentative] = useState(it.tentative);
   const [rep, setRep] = useState<Rep>(it.rep);
+  const { ix, data } = useStore();
+  const curLeaf = next?.leaf_id || it.open[0]?.leaf_id || '';
+  const [leafTo, setLeafTo] = useState(curLeaf);
+  const [pickLeaf, setPickLeaf] = useState(false);
+  const moved = !!leafTo && leafTo !== curLeaf;
   const amt = num(amount);
   const editable = it.open.filter((e) => e.source !== 'billingo');
+  /** másik partnerhez / projekthez áthelyezés: a nyitott tételek és a sorozatuk is átkerül */
+  const moveTo = <T extends { upsert?: Entry[]; series?: any[] }>(b: T): T => {
+    if (!moved) return b;
+    b.upsert = (b.upsert || []).map((e) => ({ ...e, leaf_id: leafTo }));
+    const sids = new Set((b.upsert || []).map((e) => e.series_id).filter(Boolean));
+    const ser = data.series.filter((x) => sids.has(x.id) && !(b.series || []).some((y: any) => y.id === x.id)).map((x) => ({ ...x, leaf_id: leafTo }));
+    b.series = [...(b.series || []).map((x: any) => ({ ...x, leaf_id: leafTo })), ...ser];
+    return b;
+  };
+  const movedMsg = moved ? ` → ${ix.leafById[leafTo]?.label} (${displayGroup(ix.groupById[ix.leafById[leafTo]?.group_id]?.label || '')})` : '';
   const save = () => {
     if (!amt) return alert('Adj meg összeget.');
     if (rep !== it.rep && next) {
@@ -295,7 +311,7 @@ function ItemRow({
         b.upsert[0].series_id = null;
       }
       b.delete = editable.map((e) => e.id);
-      onSave(b, `${name || it.name}: ${REP[rep].toLowerCase()} · ${b.upsert!.length} tétel`);
+      onSave(moveTo(b), `${name || it.name}: ${REP[rep].toLowerCase()} · ${b.upsert!.length} tétel${movedMsg}`);
       return;
     }
     const upsert = editable.map((e) => ({
@@ -307,7 +323,7 @@ function ItemRow({
     }));
     // a már kiszámlázott (Billingo) tétel összege a számláé – csak a név változik
     it.open.filter((e) => e.source === 'billingo').forEach((e) => upsert.push({ ...e, name: name.trim() || e.name }));
-    onSave({ upsert }, `${name}: frissítve (${editable.length} nyitott tétel)`);
+    onSave(moveTo({ upsert }), moved ? `${name || it.name}: áthelyezve${movedMsg}` : `${name}: frissítve (${editable.length} nyitott tétel)`);
   };
   return (
     <div style={{ borderTop: first ? 0 : `1px solid ${C.line3}`, background: expanded ? C.bg3 : '#fff' }}>
@@ -365,6 +381,26 @@ function ItemRow({
               </span>
             )}
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={eyebrow}>Projekt / partner</span>
+            <b style={{ font: `700 13.5px ${FONT}`, color: moved ? C.blueDark : C.navy }}>
+              {ix.leafById[leafTo]?.label} · {displayGroup(ix.groupById[ix.leafById[leafTo]?.group_id]?.label || '')}
+            </b>
+            <Pill small onClick={() => setPickLeaf((x) => !x)}>
+              {pickLeaf ? 'Bezár' : 'Másik projekt / partner…'}
+            </Pill>
+            {moved && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>mentéskor átkerül ide ({it.open.length} nyitott tétel)</span>}
+          </div>
+          {pickLeaf && (
+            <LeafPicker
+              section={section}
+              value={leafTo}
+              onChange={(id) => {
+                setLeafTo(id);
+                setPickLeaf(false);
+              }}
+            />
+          )}
           {section === 'in' && <OfferToggle value={tentative} onChange={setTentative} />}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <Pill
