@@ -143,8 +143,13 @@ async function main() {
 
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank', background: true });
   ourTarget = targetId;
-  // a lap bezárása, és a böngésző letöltési beállításának visszaállítása (a robot-Chrome-ot ne zavarjuk)
+  // a saját Cashflow-Chrome-ot a végén teljesen bezárjuk (az egész ablakot; a belépés a profilban megmarad);
+  // a robot-Chrome-ban csak a saját lapunkat zárjuk be, és visszaállítjuk a letöltési beállítást
   const closeTab = async () => {
+    if (br.own) {
+      await c.send('Browser.close').catch(() => {});
+      return;
+    }
     await c.send('Target.closeTarget', { targetId }).catch(() => {});
     await c.send('Browser.setDownloadBehavior', { behavior: 'default' }).catch(() => {});
   };
