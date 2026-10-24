@@ -96,6 +96,14 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const sumBy = (es: Entry[], m: string) => es.filter((e) => ymOf(e.date) === m).reduce((a, e) => a + e.amount * sign, 0);
   const plansOf = (leaf: string) => planEntries.filter((e) => e.leaf_id === leaf && !e.tentative);
   const leafPlan = (leaf: string, m: string) => sumBy(plansOf(leaf), m);
+  // ajánlatok (még nem biztos tervek) külön – a „Terv” sorban nincsenek benne, az „Ajánlat” sorban látszanak
+  const offersAll = planEntries.filter((e) => e.tentative && !e.done);
+  const leafOffer = (leaf: string, m: string) =>
+    sumBy(
+      offersAll.filter((e) => e.leaf_id === leaf),
+      m,
+    );
+  const monthOffer = (m: string) => sumBy(offersAll, m);
   const leafAct = (leaf: string, m: string) =>
     sumBy(
       actualsIn.filter((e) => e.leaf_id === leaf),
@@ -724,9 +732,34 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     <div style={{ padding: '0 8px', font: `600 11.5px ${FONT}`, color: C.blueDark }}>{prows.length + extra.length} tétel</div>
                     {months.map((m) => {
                       const plan = leafPlan(leaf, m);
+                      const offer = leafOffer(leaf, m);
                       const act = m <= ix.cur ? leafAct(leaf, m) : 0;
                       const hasAct = m <= ix.cur && act !== 0;
-                      if (!plan && !hasAct) return <div key={m} />;
+                      if (!plan && !hasAct && !offer) return <div key={m} />;
+                      if (!plan && !hasAct)
+                        return (
+                          <div key={m} style={{ padding: '6px 4px' }}>
+                            <div
+                              title={`ajánlat ${fmt(offer)} Ft (még nem biztos – a Terv sorban nincs benne)`}
+                              style={{
+                                height: 34,
+                                borderRadius: 8,
+                                padding: '0 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-end',
+                                lineHeight: 1.1,
+                                border: '1px dashed #C9A94A',
+                                background: '#FFF9E6',
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              <b style={{ font: `700 12.5px ${FONT}`, color: '#8A6D1C' }}>{fmt(offer)}</b>
+                              <span style={{ font: `500 10px ${FONT}`, color: '#8A6D1C' }}>ajánlat</span>
+                            </div>
+                          </div>
+                        );
                       const diff = act - plan;
                       const past = m < ix.cur;
                       const cmp = hasAct || past;
@@ -754,6 +787,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                           >
                             <b style={{ font: `700 12.5px ${FONT}`, color: bad ? C.neg : good ? GOOD : cmp ? C.blueDark : C.navy }}>{fmt(cmp ? act : plan)}</b>
                             {cmp && plan !== 0 && <span style={{ font: `500 10px ${FONT}`, color: C.muted }}>terv {fmt(plan)}</span>}
+                            {!cmp && offer !== 0 && <span style={{ font: `500 10px ${FONT}`, color: '#8A6D1C' }}>+ ajánlat {fmt(offer)}</span>}
                           </div>
                         </div>
                       );
@@ -791,7 +825,13 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             {/* havi összesítő: terv, tény és a kettő különbsége */}
             {(
               [
-                ['Terv', (m: string) => monthPlan(m), C.navy],
+                ['Terv (biztos)', (m: string) => monthPlan(m), C.navy],
+                ...(months.some((m) => monthOffer(m) !== 0)
+                  ? ([
+                      ['Ajánlat (nem biztos)', (m: string) => monthOffer(m) || null, '#8A6D1C'],
+                      ['Terv + ajánlat', (m: string) => monthPlan(m) + monthOffer(m), C.navy],
+                    ] as [string, (m: string) => number | null, string | null][])
+                  : []),
                 ['Tény', (m: string) => (m <= ix.cur ? monthAct(m) : null), C.blue],
                 ['Különbség', (m: string) => (m <= ix.cur ? monthAct(m) - monthPlan(m) : null), null],
               ] as [string, (m: string) => number | null, string | null][]
@@ -809,13 +849,13 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               >
                 <div />
                 <div style={{ padding: '10px 8px', font: `700 13px ${FONT_H}`, color: C.navy }}>{label}</div>
-                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{i === 2 ? 'tény − terv' : ''}</div>
+                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{label === 'Különbség' ? 'tény − terv' : ''}</div>
                 {months.map((m) => {
                   const v = f(m);
                   const c = col || (v === null || v === 0 ? C.blueDark : (section === 'in' ? v > 0 : v < 0) ? GOOD : C.neg);
                   return (
                     <div key={m} style={{ padding: '10px 8px', textAlign: 'center', font: `700 12.5px ${FONT}`, color: c, fontVariantNumeric: 'tabular-nums' }}>
-                      {v === null ? '' : (i === 2 && v > 0 ? '+' : '') + fmt(v)}
+                      {v === null ? '' : (label === 'Különbség' && v > 0 ? '+' : '') + fmt(v)}
                     </div>
                   );
                 })}
