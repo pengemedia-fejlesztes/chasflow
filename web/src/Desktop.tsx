@@ -11,7 +11,7 @@ import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { FilterBar, periodLabel } from './Filters';
 import { IncomeView } from './IncomeView';
-import { setCellValue } from './logic';
+import { planActual, setCellValue } from './logic';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
@@ -254,6 +254,89 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+/**
+ * Bevételi tölcsér: Projektek (biztos terv), Ajánlatok, a kettő együtt, és a projektek tervhez kötött ténye
+ * (a terv hónapjában: amihez számlamozgás tartozik) – hogy a terv mennyire valósult meg.
+ */
+function PipelineCard({ cols, goGroup }: { cols: Matrix['columns']; goGroup: (id: string) => void }) {
+  const { ix, data } = useStore();
+  const inGroups = ix.groups.filter((g) => g.section === 'in');
+  const offerG = inGroups.filter((g) => /aj[áa]nlat/i.test(g.label));
+  const projG = inGroups.filter((g) => /projekt/i.test(g.label));
+  const groupOf = (l: string) => ix.leafById[l]?.group_id;
+  const isOfferG = (l: string) => offerG.some((g) => g.id === groupOf(l));
+  const inProj = (l: string) => (projG.length ? projG.some((g) => g.id === groupOf(l)) : ix.sectionOf(l) === 'in' && !isOfferG(l));
+  const proj = useMemo(() => planActual(data.entries, inProj, 1), [data.entries, ix]); // eslint-disable-line react-hooks/exhaustive-deps
+  const offerAll = useMemo(() => planActual(data.entries, (l) => ix.sectionOf(l) === 'in', 1), [data.entries, ix]);
+  const offerGrp = useMemo(() => planActual(data.entries, isOfferG, 1), [data.entries, ix]); // eslint-disable-line react-hooks/exhaustive-deps
+  // az aktuális hónap tény + terv oszlopa egy oszlop itt
+  const cs = cols.filter((c, i) => !(c.current && c.kind === 'actual' && cols[i + 1]?.current));
+  const sum = (m: Map<string, number>, c: Matrix['columns'][number]) => c.months.reduce((a, ym) => a + (m.get(ym) || 0), 0);
+  // ajánlat = minden nyitott (nem biztos) bevételi terv + az Ajánlatok csoportban még ott álló tervek
+  const offer = (c: Matrix['columns'][number]) => sum(offerAll.offer, c) + sum(offerGrp.plan, c);
+  const past = (c: Matrix['columns'][number]) => c.months[0] <= ix.cur;
+  const rows: [string, (c: Matrix['columns'][number]) => number | null, string, (() => void) | undefined][] = [
+    ['Projektek – terv (biztos)', (c) => sum(proj.plan, c), C.navy, projG[0] ? () => goGroup(projG[0].id) : undefined],
+    ['Ajánlatok (nem biztos)', offer, '#8A6D1C', offerG[0] ? () => goGroup(offerG[0].id) : undefined],
+    ['Projektek + ajánlatok', (c) => sum(proj.plan, c) + offer(c), C.navy, undefined],
+    ['Projektek – tény (tervhez kötött)', (c) => (past(c) || sum(proj.linked, c) ? sum(proj.linked, c) : null), C.blue, undefined],
+    ['Teljesülés', (c) => (past(c) ? sum(proj.linked, c) - sum(proj.plan, c) : null), '', undefined],
+  ];
+  if (!cs.length) return null;
+  return (
+    <div style={{ ...card, padding: 0, overflow: 'auto' }}>
+      <div style={{ padding: '14px 18px 6px', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Bevétel · Projektek és ajánlatok</span>
+        <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>terv = amivel terveztél · tény = a tervhez kötött számlamozgás (a terv hónapjában)</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `minmax(230px,1.7fr) repeat(${cs.length},minmax(96px,1fr))`, minWidth: 250 + cs.length * 100 }}>
+        <div />
+        {cs.map((c) => (
+          <div key={c.key} style={{ padding: '6px 8px', textAlign: 'right', font: `700 11.5px ${FONT}`, color: c.current ? C.blue : C.muted }}>
+            {c.label}
+          </div>
+        ))}
+        {rows.map(([label, f, col, go], ri) => (
+          <Fragment key={label}>
+            <div
+              onClick={go}
+              style={{
+                padding: '9px 18px',
+                font: `${ri === 2 ? 700 : 600} 13px ${FONT}`,
+                color: C.navy,
+                borderTop: `1px solid ${ri === 3 ? C.line2 : C.line}`,
+                cursor: go ? 'pointer' : 'default',
+              }}
+            >
+              {label}
+              {go ? ' ›' : ''}
+            </div>
+            {cs.map((c) => {
+              const v = f(c);
+              const color = col || (v === null || !Math.round(v) ? C.muted : v >= 0 ? '#2E7D4F' : C.neg);
+              return (
+                <div
+                  key={c.key}
+                  style={{
+                    padding: '9px 8px',
+                    textAlign: 'right',
+                    borderTop: `1px solid ${ri === 3 ? C.line2 : C.line}`,
+                    font: `${ri === 2 ? 700 : 600} 12.5px ${FONT}`,
+                    color,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {v === null ? '' : !Math.round(v) ? '–' : (label === 'Teljesülés' && v > 0 ? '+' : '') + fmt(v)}
+                </div>
+              );
+            })}
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Kpi(p: { label: string; value: string; sub: string; dark?: boolean; color?: string; onClick?: () => void }) {
   const style = p.dark
     ? { background: C.navy2, border: 0 }
@@ -399,6 +482,8 @@ function Overview({
         />
         <Kpi label="Bankszinkron" value={`${newTx} új tétel`} sub="Jóváhagyás →" onClick={goBank} />
       </div>
+
+      <PipelineCard cols={cols} goGroup={goGroup} />
 
       <div style={{ ...card, padding: '18px 22px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 18 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

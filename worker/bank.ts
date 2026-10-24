@@ -194,7 +194,32 @@ export async function syncAll(env: Env) {
   } catch (e: any) {
     res.billingoPaidError = e.message;
   }
+  try {
+    res.leafFixed = await fixLinkedLeaves(env);
+  } catch (e: any) {
+    res.leafFixError = e.message;
+  }
   return res;
+}
+
+/**
+ * A Billingo-számlából jött terv és a hozzá kötött tény ugyanannál a partnernél legyen: ha a tény (pl. xls import,
+ * banki tétel) más alkategóriában van, átkerül a terv partneréhez (a banki tétel is) – így a partner összesítője stimmel.
+ */
+export async function fixLinkedLeaves(env: Env): Promise<number> {
+  const r = await env.DB.prepare(
+    `SELECT a.id AS aid, p.leaf_id AS leaf FROM entries p JOIN entries a ON a.id = p.link_id
+     WHERE p.kind = 'plan' AND p.ext_ref LIKE 'billingo:%' AND a.kind = 'actual' AND a.leaf_id <> p.leaf_id`,
+  ).all<{ aid: string; leaf: string }>();
+  if (!r.results.length) return 0;
+  const t = now();
+  await env.DB.batch(
+    r.results.flatMap((x) => [
+      env.DB.prepare('UPDATE entries SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(x.leaf, t, x.aid),
+      env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE actual_id = ?').bind(x.leaf, x.aid),
+    ]),
+  );
+  return r.results.length;
 }
 
 /** Banki jóváírás → Billingo-számla fizetettre állítása; ha volt ilyen, a tervek is frissülnek (terv lezárva, tény a banki tételhez kötve). */

@@ -6,7 +6,7 @@ import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
-import { REP, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { REP, planActual, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
@@ -114,7 +114,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       planEntries.filter((e) => !e.tentative),
       m,
     );
-  const monthAct = (m: string) => sumBy(actualsIn, m);
+  // terv ↔ tény: a tervhez az a tény tartozik, amihez számlamozgás (kötés) van – a terv hónapjában
+  const pa = planActual(data.entries, (l) => leafIds.has(l), sign);
   /**
    * Tervhez nem kötött tények tételenként (név szerint), és az összevont banki tételek (pl. bankköltség) részletei
    * a mögöttük lévő banki tranzakciókból – így a partner/kategória alatt látszik, miből jött össze az összeg.
@@ -832,8 +833,15 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       ['Terv + ajánlat', (m: string) => monthPlan(m) + monthOffer(m), C.navy],
                     ] as [string, (m: string) => number | null, string | null][])
                   : []),
-                ['Tény', (m: string) => (m <= ix.cur ? monthAct(m) : null), C.blue],
-                ['Különbség', (m: string) => (m <= ix.cur ? monthAct(m) - monthPlan(m) : null), null],
+                ['Tény (tervhez kötött)', (m: string) => (m <= ix.cur || pa.linked.get(m) ? pa.linked.get(m) || 0 : null), C.blue],
+                ['Különbség', (m: string) => (m <= ix.cur ? (pa.linked.get(m) || 0) - monthPlan(m) : null), null],
+                ...(months.some((m) => m <= ix.cur && pa.other.get(m))
+                  ? ([['Egyéb tény (terv nélkül)', (m: string) => (m <= ix.cur ? pa.other.get(m) || 0 : null), C.muted]] as [
+                      string,
+                      (m: string) => number | null,
+                      string | null,
+                    ][])
+                  : []),
               ] as [string, (m: string) => number | null, string | null][]
             ).map(([label, f, col], i) => (
               <div
@@ -849,7 +857,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               >
                 <div />
                 <div style={{ padding: '10px 8px', font: `700 13px ${FONT_H}`, color: C.navy }}>{label}</div>
-                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{label === 'Különbség' ? 'tény − terv' : ''}</div>
+                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{label === 'Különbség' ? 'kötött tény − terv' : ''}</div>
                 {months.map((m) => {
                   const v = f(m);
                   const c = col || (v === null || v === 0 ? C.blueDark : (section === 'in' ? v > 0 : v < 0) ? GOOD : C.neg);

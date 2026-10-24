@@ -258,3 +258,37 @@ export async function acceptOffer(ix: Index, entries: Entry[], series: Series[])
     },
   });
 }
+
+export interface PlanActual {
+  /** biztos terv (nem ajánlat), a terv hónapjában */
+  plan: Map<string, number>;
+  /** nyitott ajánlat */
+  offer: Map<string, number>;
+  /** a tervhez kötött tény (számlamozgás) – a terv hónapjában, így a terv és a teljesülése egy oszlopban van */
+  linked: Map<string, number>;
+  /** tervhez nem kötött tény, a saját hónapjában */
+  other: Map<string, number>;
+}
+
+/** Terv / ajánlat / tény hónaponként a kiválasztott alkategóriákra (előjel: bevétel +, kiadás −1-gyel szorozva pozitív). */
+export function planActual(entries: Entry[], inLeaf: (leaf: string) => boolean, sign: number): PlanActual {
+  const r: PlanActual = { plan: new Map(), offer: new Map(), linked: new Map(), other: new Map() };
+  const add = (m: Map<string, number>, ym: string, v: number) => m.set(ym, (m.get(ym) || 0) + v * sign);
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const linkedIds = new Set<string>();
+  for (const e of entries) if (e.kind === 'plan' && e.link_id) linkedIds.add(e.link_id);
+  for (const e of entries) {
+    if (!inLeaf(e.leaf_id)) continue;
+    const ym = ymOf(e.date);
+    if (e.kind === 'plan') {
+      if (e.tentative) {
+        if (!e.done) add(r.offer, ym, e.amount);
+        continue;
+      }
+      add(r.plan, ym, e.amount);
+      const a = e.link_id ? byId.get(e.link_id) : undefined;
+      if (a) add(r.linked, ym, a.amount);
+    } else if (!linkedIds.has(e.id)) add(r.other, ym, e.amount);
+  }
+  return r;
+}
