@@ -3,7 +3,7 @@
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { addMonths, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
+import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
 import type { EditTarget } from './EntryModal';
@@ -216,6 +216,19 @@ const MONTH_OPTS: [number, string][] = [
   [24, '24 hó'],
   [36, '36 hó'],
 ];
+function MonthSelect({ value, from, n, onChange }: { value: string; from: string; n: number; onChange: (ym: string) => void }) {
+  const opts = Array.from({ length: n }, (_, i) => addMonths(from, i));
+  if (!opts.includes(value)) opts.unshift(value);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, height: 36, width: 175, padding: '0 10px' }}>
+      {opts.map((m) => (
+        <option key={m} value={m}>
+          {monthLong(m)}
+        </option>
+      ))}
+    </select>
+  );
+}
 function DaySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, height: 36, width: 170, padding: '0 10px' }}>
@@ -335,6 +348,13 @@ function ItemRow({
     setDay(d);
     onSave(regen({ rep: it.rep, day: d, months }), `${it.name}: ${scheduleMsg(it.rep, d, months)}`);
   };
+  // kezdő és utolsó hónap: meddig tartson a tervezés (a tervezés hossza ebből számolódik)
+  const startYm = ymOf(firstOpen?.date || data.today);
+  const endYm = addMonths(startYm, Math.max(0, months - repStep(it.rep)));
+  const saveStart = (ym: string) => {
+    if (ym === startYm) return;
+    onSave(regen({ rep: it.rep, day, months, startDate: ym + '-01' }), `${it.name}: kezdés ${monthLong(ym)}, ${scheduleMsg(it.rep, day, months)}`);
+  };
   const saveMonths = (m: number) => {
     setMonths(m);
     onSave(regen({ rep: it.rep, day, months: m }), `${it.name}: ${scheduleMsg(it.rep, day, m)}`);
@@ -451,6 +471,17 @@ function ItemRow({
               <DaySelect value={day} onChange={saveDay} />
               <span style={eyebrow}>Tervezés</span>
               <Seg small value={months} onChange={saveMonths} options={MONTH_OPTS} />
+            </div>
+          )}
+          {it.rep !== 'once' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={eyebrow}>Kezdés</span>
+              <MonthSelect value={startYm} from={addMonths(data.today.slice(0, 7), -2)} n={26} onChange={saveStart} />
+              <span style={eyebrow}>Utolsó hónap</span>
+              <MonthSelect value={endYm} from={startYm} n={36} onChange={(m) => saveMonths(monthDiff(m, startYm) + 1)} />
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+                {Math.ceil(months / repStep(it.rep))} alkalom · {monthLong(startYm)} – {monthLong(endYm)}
+              </span>
             </div>
           )}
           {it.rep !== 'once' && <MonthList it={it} editable={editable} onApply={onApply} />}

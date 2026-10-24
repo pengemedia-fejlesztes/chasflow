@@ -364,7 +364,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
           if (!list.length && canEdit && inferred !== 'once' && m === addMonths(lastYm, repStep(inferred)))
             return (
               <div key={m} style={{ padding: '6px 4px' }}>
-                <ContinueBtn onClick={() => commit(extendRows(data, [lastE.id], 12), `${itemLabel(lastE.name, '') || 'Sorozat'} folytatva 12 hónappal`)} />
+                <ContinueBtn
+                  onExtend={(n) => commit(extendRows(data, [lastE.id], n), `${itemLabel(lastE.name, '') || 'Sorozat'} folytatva ${n} hónappal`)}
+                  onEdit={() => openModal(null, { key })}
+                />
               </div>
             );
           if (!list.length)
@@ -762,16 +765,17 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                         return canEdit && cont.length && m === contYm ? (
                           <div key={m} style={{ padding: '6px 4px' }} onClick={(ev) => ev.stopPropagation()}>
                             <ContinueBtn
-                              onClick={() =>
+                              onExtend={(n) =>
                                 commit(
                                   extendRows(
                                     data,
                                     cont.map((e) => e.id),
-                                    12,
+                                    n,
                                   ),
-                                  `${L?.label || 'Partner'}: ${cont.length} sorozat folytatva 12 hónappal`,
+                                  `${L?.label || 'Partner'}: ${cont.length} sorozat folytatva ${n} hónappal`,
                                 )
                               }
+                              onEdit={() => setOpenP((o) => ({ ...o, [leaf]: true }))}
                             />
                           </div>
                         ) : (
@@ -1115,25 +1119,63 @@ function DeletedCell({ ds, sign, canEdit, onRestore }: { ds: DeletedEntry[]; sig
   );
 }
 
-/** A sorozat utolsó tétele utáni első üres hónap: egy kattintással 12 hónappal folytatja a tervet. */
-function ContinueBtn({ onClick }: { onClick: () => void }) {
-  return (
+/**
+ * A sorozat utolsó tétele utáni első üres hónap: folytatás választott hosszal (+3 … +24 hó, ugyanazzal az összeggel és
+ * fizetési nappal), vagy „Beállítás…”: a tétel szerkesztője (fizetés napja, kezdés, utolsó hónap).
+ */
+function ContinueBtn({ onExtend, onEdit }: { onExtend: (months: number) => void; onEdit?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const opt = (label: string, fn: () => void) => (
     <button
-      onClick={onClick}
-      title="A sorozat folytatása 12 hónappal (ugyanazzal az összeggel és fizetési nappal)"
-      style={{
-        width: '100%',
-        height: 34,
-        borderRadius: 8,
-        border: `1px dashed ${C.blue}`,
-        background: '#F2F8FC',
-        color: C.blue,
-        font: `700 12px ${FONT}`,
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-      }}
+      key={label}
+      onClick={() => (setOpen(false), fn())}
+      style={{ border: 0, background: 'transparent', textAlign: 'left', padding: '7px 12px', font: `600 12.5px ${FONT}`, color: C.navy, cursor: 'pointer' }}
+      className="side-opt"
     >
-      ↻ Folytatás
+      {label}
     </button>
+  );
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen((x) => !x)}
+        title="A terv folytatása: hány hónapra, vagy a tétel beállításai (fizetés napja, utolsó hónap)"
+        style={{
+          width: '100%',
+          height: 34,
+          borderRadius: 8,
+          border: `1px dashed ${C.blue}`,
+          background: '#F2F8FC',
+          color: C.blue,
+          font: `700 12px ${FONT}`,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        ↻ Folytatás
+      </button>
+      {open && (
+        <div
+          onMouseLeave={() => setOpen(false)}
+          style={{
+            position: 'absolute',
+            zIndex: 20,
+            top: 38,
+            left: 0,
+            minWidth: 170,
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#fff',
+            border: `1px solid ${C.line2}`,
+            borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(0,30,60,.15)',
+            padding: '4px 0',
+          }}
+        >
+          {[3, 6, 12, 24].map((n) => opt(`+${n} hónap`, () => onExtend(n)))}
+          {onEdit && opt('Fizetés napja, utolsó hónap…', onEdit)}
+        </div>
+      )}
+    </div>
   );
 }
