@@ -7,9 +7,9 @@ import { offerConversion } from '../../shared/insights';
 import { addMonths, fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
-import { DEFAULT_PAY_DAYS, payDate, payRuleLabel } from '../../shared/workdays';
+import { payDate, payRuleLabel } from '../../shared/workdays';
 import { api } from './api';
-import { rowKey } from './logic';
+import { acceptOffer, payDefaults, rowKey } from './logic';
 import { PartnerModal } from './PartnerModal';
 import { PartnerDetail } from './PartnersView';
 import { useStore } from './store';
@@ -472,10 +472,10 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
     const d = rule.match(/^day:(\d+)$/);
     if (d) return ['day', Number(d[1])];
     if (rule === 'first_workday' || rule === 'last_workday') return [rule, 0];
-    return ['inv', L?.pay_days ?? DEFAULT_PAY_DAYS];
+    return ['inv', L?.pay_days ?? payDefaults(data.settings).payDays];
   };
   const [mode, setMode] = useState(init()[0]);
-  const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : DEFAULT_PAY_DAYS)));
+  const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : payDefaults(data.settings).payDays)));
   const [resched, setResched] = useState(true);
   const num = Math.max(0, Math.min(mode === 'day' ? 31 : 120, parseInt(n) || 0));
   const newRule = mode === 'inv' ? `inv:${num}` : mode === 'day' ? `day:${Math.max(1, num)}` : mode;
@@ -498,7 +498,10 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
         {sec === 'in' ? 'Vevőként (bevétel)' : 'Szállítóként (kiadás)'} · {displayGroup(ix.groupById[L?.group_id || '']?.label || '')}
       </b>
       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
-        Jelenleg: {payRuleLabel(rule || null) === 'nincs szabály' ? `számla + ${L?.pay_days ?? DEFAULT_PAY_DAYS} nap (alapértelmezett)` : payRuleLabel(rule)}
+        Jelenleg:{' '}
+        {payRuleLabel(rule || null) === 'nincs szabály'
+          ? `számla + ${L?.pay_days ?? payDefaults(data.settings).payDays} nap (alapértelmezett)`
+          : payRuleLabel(rule)}
       </span>
       <Seg small value={mode} onChange={(v) => canEdit && setMode(v)} options={TERM_MODES as any} />
       {(mode === 'inv' || mode === 'day') && (
@@ -531,7 +534,7 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
 
 /** Tervezett feladatok: mit számlázunk a partnernek / mit fizetünk neki (havidíj, SEO, weboldal részlet…). */
 function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, key?: string) => void }) {
-  const { ix, data, canEdit, commit } = useStore();
+  const { ix, data, canEdit, run, commit } = useStore();
   const byName = new Map<
     string,
     { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null; leaf: string; key: string }
@@ -569,7 +572,15 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
   );
   const accept = (r: (typeof rows)[number]) => {
     const ids = new Set(r.ids);
-    commit({ upsert: data.entries.filter((e) => ids.has(e.id)).map((e) => ({ ...e, tentative: 0 })) }, `Ajánlat elfogadva: ${r.name}`);
+    run(
+      () =>
+        acceptOffer(
+          ix,
+          data.entries.filter((e) => ids.has(e.id)),
+          data.series,
+        ),
+      `Ajánlat elfogadva: ${r.name} – bekerült a havi tervbe`,
+    );
   };
   const reject = (r: (typeof rows)[number]) => {
     if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel törlődik a tervből, az elutasítási arányba beszámít)`)) return;

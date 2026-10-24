@@ -1,6 +1,8 @@
 // Kliens oldali műveletek: minden módosítás egy EntryBatch-et állít elő (visszavonható).
-import { addMonths, endOfMonth, ymOf } from '../../shared/model';
-import { effectiveRule, payDate } from '../../shared/workdays';
+import { addMonths, endOfMonth, ymOf, type Index } from '../../shared/model';
+import { partnerIdOf } from '../../shared/partners';
+import { api } from './api';
+import { DEFAULT_PAY_DAYS, ONEOFF_DAYS, effectiveRule, payDate } from '../../shared/workdays';
 import type { DataBundle, Entry, EntryBatch, Rep, Section, Series } from '../../shared/types';
 
 export const uid = (p: string) => p + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -223,4 +225,36 @@ export function ruleDateFor(ix: Parameters<typeof ruleOf>[0], leafId: string | n
     d = payDate(ym, r, Number(date.slice(8)));
   }
   return d;
+}
+
+/** Globális fizetési alapértékek (Beállítások): rendszeres = számla + N nap, egyszeri = felviteltől N nap. */
+export function payDefaults(settings: { default_pay_days?: string; default_oneoff_days?: string }) {
+  const n = (v: string | undefined, d: number) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Math.max(0, Math.min(180, Number(v))) : d);
+  return { payDays: n(settings.default_pay_days, DEFAULT_PAY_DAYS), oneoffDays: n(settings.default_oneoff_days, ONEOFF_DAYS) };
+}
+
+/**
+ * Ajánlat elfogadása: a tételek biztos tervvé válnak (bekerülnek a havi kalkulációba). Ha az ajánlat az „Ajánlatok”
+ * csoportban van, az ügyfélhez kerül a bevételi projektek közé (ugyanazzal a névvel; ha még nincs, létrejön).
+ */
+export async function acceptOffer(ix: Index, entries: Entry[], series: Series[]) {
+  if (!entries.length) return;
+  const leaf = ix.leafById[entries[0].leaf_id];
+  const grp = leaf ? ix.groupById[leaf.group_id] : null;
+  let target = entries[0].leaf_id;
+  if (leaf && grp && grp.section === 'in' && /aj[aá]nlat/i.test(grp.label)) {
+    const tg =
+      ix.groups.find((g) => g.section === 'in' && /projekt/i.test(g.label)) || ix.groups.find((g) => g.section === 'in' && !/aj[aá]nlat/i.test(g.label));
+    if (tg) {
+      const ex = ix.leaves.find((l) => l.group_id === tg.id && !l.archived && partnerIdOf(l.label) === partnerIdOf(leaf.label));
+      target = ex ? ex.id : (await api<{ id: string }>('/api/leaves', { body: { group_id: tg.id, label: leaf.label } })).id;
+    }
+  }
+  const sids = new Set(entries.map((e) => e.series_id).filter(Boolean));
+  await api('/api/entries/batch', {
+    body: {
+      upsert: entries.map((e) => ({ ...e, tentative: 0, leaf_id: target })),
+      series: series.filter((x) => sids.has(x.id)).map((x) => ({ ...x, leaf_id: target })),
+    },
+  });
 }

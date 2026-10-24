@@ -149,6 +149,8 @@ export interface Settings {
   nav_last_error?: string;
   flags_ack?: string; // „rendben” jelölt riasztások (JSON lista)
   profit_target?: string; // havi eredmény-cél (Ft)
+  default_pay_days?: string; // alapértelmezett fizetési határidő (nap a számlától), ha a partnernél nincs megadva
+  default_oneoff_days?: string; // egyszeri tétel várható fizetése: felviteltől N nap
 }
 
 export interface DataBundle {

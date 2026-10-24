@@ -14,6 +14,7 @@ import { APP_BUILD, APP_COMMIT, APP_VERSION } from './version';
 import { readSheetRows } from './sheet';
 import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './aggreg8';
 import { SYNC_HOURS } from '../../shared/aggreg8';
+import { payDefaults } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp } from './ui';
 
@@ -670,6 +671,7 @@ function DataTab() {
           </Pill>
         </div>
       </Section>
+      <PayDefaultsSection />
       <Section
         title="Excel import"
         sub="A korábbi „TÉNYEK” és „TERVEK” xls fájlok formátuma (Dátum · Tétel · Kategória · Összeg). Ismételt importnál a már meglévő sorok nem duplikálódnak. A fájlok csak a böngészőben kerülnek feldolgozásra, nem tároljuk őket."
@@ -1142,5 +1144,55 @@ function AutoPayInfo({ raw }: { raw?: string }) {
       )}
       {r && r.errors.length > 0 && <span style={{ color: C.neg, wordBreak: 'break-word' }}>Hiba: {r.errors.join('; ')}</span>}
     </div>
+  );
+}
+
+/** Globális fizetési alapértékek: ha a partnernél nincs külön fizetési feltétel, ezek számítanak. */
+function PayDefaultsSection() {
+  const { data, run, isAdmin } = useStore();
+  const d = payDefaults(data.settings);
+  const [pay, setPay] = useState(String(d.payDays));
+  const [one, setOne] = useState(String(d.oneoffDays));
+  return (
+    <Section
+      title="Fizetési határidő (alapértelmezett)"
+      sub="Minden partnerre érvényes, akinél az adatlapon (Fizetési feltételek) nincs külön megadva. Rendszeres tételnél: számla a hónap első munkanapján + ennyi nap; egyszeri tételnél: a felviteltől ennyi nap a várható fizetés."
+    >
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
+          Rendszeres: számla +
+          <input
+            value={pay}
+            onChange={(e) => setPay(e.target.value.replace(/\D/g, ''))}
+            disabled={!isAdmin}
+            style={{ ...inputStyle, width: 70, textAlign: 'center' }}
+          />
+          nap
+        </label>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
+          Egyszeri: felviteltől
+          <input
+            value={one}
+            onChange={(e) => setOne(e.target.value.replace(/\D/g, ''))}
+            disabled={!isAdmin}
+            style={{ ...inputStyle, width: 70, textAlign: 'center' }}
+          />
+          nap
+        </label>
+        {isAdmin && (
+          <Pill
+            kind="dark"
+            onClick={() =>
+              run(
+                () => api('/api/settings', { method: 'PUT', body: { default_pay_days: pay || null, default_oneoff_days: one || null } }),
+                `Alapértelmezett fizetési határidő: számla + ${pay || '–'} nap, egyszeri ${one || '–'} nap`,
+              )
+            }
+          >
+            Mentés
+          </Pill>
+        )}
+      </div>
+    </Section>
   );
 }

@@ -5,11 +5,11 @@ import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { addDays, DEFAULT_PAY_DAYS, invoiceDue, ONEOFF_DAYS, payDate, payRuleLabel } from '../../shared/workdays';
+import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
-import { REP, genSeries, repStep, rowKey, signed } from './logic';
+import { REP, acceptOffer, genSeries, payDefaults, repStep, rowKey, signed } from './logic';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
 
@@ -49,7 +49,8 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   const [picking, setPicking] = useState(!initLeaf);
   const [open, setOpen] = useState<string | null>(edit?.key ?? (initLeaf ? null : 'new'));
   const L = partner ? ix.leafById[partner] : null;
-  const payDays = L?.pay_days ?? DEFAULT_PAY_DAYS;
+  const defs = payDefaults(data.settings);
+  const payDays = L?.pay_days ?? defs.payDays;
   const [term, setTerm] = useState<string | null>(null);
 
   // a partner tételei: nyitott (jövőbeli vagy lejárt) tervek tételenként
@@ -114,7 +115,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
           method: 'PATCH',
           body: { pay_days: v, ...(!L?.pay_rule || /^inv:/.test(L.pay_rule) ? { pay_rule: v === null ? null : `inv:${v}` } : {}) },
         }),
-      `${L?.label}: fizetési határidő ${v ?? DEFAULT_PAY_DAYS} nap`,
+      `${L?.label}: fizetési határidő ${v ?? defs.payDays} nap`,
     );
   };
 
@@ -195,7 +196,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
               />
               <span>nap a számlától</span>
               <span style={{ color: C.muted }}>
-                · rendszeres: a hónap első munkanapján számlázunk + {payDays} nap · egyszeri: felviteltől {ONEOFF_DAYS} nap
+                · rendszeres: a hónap első munkanapján számlázunk + {payDays} nap · egyszeri: felviteltől {defs.oneoffDays} nap
               </span>
               {avg && (avg.term !== null || avg.real !== null) && (
                 <span style={{ flexBasis: '100%', color: C.muted, font: `500 12.5px ${FONT}` }}>
@@ -224,6 +225,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                     leaf={L.id}
                     section={section}
                     payDays={payDays}
+                    oneoffDays={defs.oneoffDays}
                     rule={L.pay_rule || null}
                     today={data.today}
                     cur={ix.cur}
@@ -280,7 +282,9 @@ function ItemRow({
   const [date, setDate] = useState(next?.date || '');
   const [tentative, setTentative] = useState(it.tentative);
   const [rep, setRep] = useState<Rep>(it.rep);
-  const { ix, data } = useStore();
+  const { ix, data, run } = useStore();
+  // az „Ajánlatok” csoportban lévő tétel (elfogadás után a Projektekbe kerül)
+  const inOffers = /aj[aá]nlat/i.test(ix.groupById[ix.leafById[it.open[0]?.leaf_id]?.group_id]?.label || '');
   const curLeaf = next?.leaf_id || it.open[0]?.leaf_id || '';
   const [leafTo, setLeafTo] = useState(curLeaf);
   const [pickLeaf, setPickLeaf] = useState(false);
@@ -411,6 +415,20 @@ function ItemRow({
           )}
           <OfferToggle value={tentative} onChange={setTentative} />
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            {(it.tentative || inOffers) && (
+              <Pill
+                small
+                kind="primary"
+                onClick={() =>
+                  run(
+                    () => acceptOffer(ix, it.open, data.series),
+                    `Ajánlat elfogadva: ${it.name} – bekerült a havi tervbe${/aj[aá]nlat/i.test(ix.groupById[ix.leafById[it.open[0]?.leaf_id]?.group_id]?.label || '') ? ' (az ügyfél a Projektek alá került)' : ''}`,
+                  )
+                }
+              >
+                {it.tentative ? '✓ Elfogadva' : '✓ Elfogadva → Projektekbe'}
+              </Pill>
+            )}
             <Pill
               kind="danger"
               small
@@ -437,6 +455,7 @@ function NewItem({
   leaf,
   section,
   payDays,
+  oneoffDays,
   rule,
   today,
   cur,
@@ -446,6 +465,7 @@ function NewItem({
   leaf: string;
   section: Section;
   payDays: number;
+  oneoffDays: number;
   rule?: string | null;
   today: string;
   cur: string;
@@ -455,7 +475,7 @@ function NewItem({
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [rep, setRep] = useState<Rep>('monthly');
-  const [date, setDate] = useState(addDays(today, ONEOFF_DAYS));
+  const [date, setDate] = useState(addDays(today, oneoffDays));
   const [startYm, setStartYm] = useState(addMonths(cur, 1));
   const [count, setCount] = useState(12);
   const [tentative, setTentative] = useState(false);
@@ -515,7 +535,7 @@ function NewItem({
         </div>
         {rep === 'once' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={eyebrow}>Várható fizetés (felvitel + {ONEOFF_DAYS} nap)</span>
+            <span style={eyebrow}>Várható fizetés (felvitel + {oneoffDays} nap)</span>
             <DateField value={date} onChange={setDate} style={{ width: 240 }} />
           </div>
         ) : (
