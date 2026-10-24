@@ -61,6 +61,8 @@ export interface Entry {
   accepted_at?: number | null;
   /** számlához kötött terv eredeti (tervezett) összege – alulszámlázás figyeléséhez */
   plan_amount?: number | null;
+  /** a hónap (YYYY-MM), amelyhez a tétel tartozik (pl. az októberi havidíj), ha később számlázzuk / fizetik; üres = a fizetés hónapja */
+  period?: string | null;
   source: string;
   ext_ref: string | null;
   link_id: string | null;

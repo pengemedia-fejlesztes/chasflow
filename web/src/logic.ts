@@ -269,6 +269,33 @@ export async function acceptOffer(ix: Index, entries: Entry[], series: Series[])
   });
 }
 
+/**
+ * Ajánlat fázisba visszatétel (az elfogadás fordítottja): a bevételi tétel az „Ajánlatok” csoportba kerül az ügyfél nevével
+ * (ha még nincs ilyen alkategória, létrejön). Visszaad: a cél alkategória (ha nincs „Ajánlatok” csoport, a jelenlegi marad).
+ */
+export async function offerLeafFor(ix: Index, leafId: string): Promise<string> {
+  const leaf = ix.leafById[leafId];
+  const grp = leaf ? ix.groupById[leaf.group_id] : null;
+  if (!leaf || !grp || grp.section !== 'in' || /aj[aá]nlat/i.test(grp.label)) return leafId;
+  const og = ix.groups.find((g) => g.section === 'in' && /aj[aá]nlat/i.test(g.label));
+  if (!og) return leafId;
+  const ex = ix.leaves.find((l) => l.group_id === og.id && !l.archived && partnerIdOf(l.label) === partnerIdOf(leaf.label));
+  return ex ? ex.id : (await api<{ id: string }>('/api/leaves', { body: { group_id: og.id, label: leaf.label } })).id;
+}
+
+/** Billingo-számla megnyitása új ablakban (a link a Billingótól jön, rövid ideig érvényes) */
+export async function openBillingoDoc(id: number) {
+  const w = window.open('', '_blank');
+  try {
+    const r = await api<{ url: string }>(`/api/billingo/doc/${id}/url`);
+    if (w) w.location.href = r.url;
+    else window.location.href = r.url;
+  } catch (e: any) {
+    w?.close();
+    alert(e.message || 'Nem sikerült megnyitni a számlát.');
+  }
+}
+
 export interface PlanActual {
   /** biztos terv (nem ajánlat), a terv hónapjában */
   plan: Map<string, number>;

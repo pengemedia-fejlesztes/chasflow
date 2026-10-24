@@ -49,22 +49,19 @@ export function PartnerEditor({
 }) {
   const { ix, data, run, canEdit } = useStore();
   const [name, setName] = useState(p.name);
-  const [kind, setKind] = useState<Kind>(p.info?.kind || 'auto');
+  // a típus mindig egyértelmű: ha a partnertörzsben nincs megadva, a mappák szerint (bevétel / projekt = vevő, kiadás = szállító)
+  const [kind, setKind] = useState<Kind>(p.info?.kind || kindOf(p, ix.sectionOf));
   const [aliases, setAliases] = useState<string[]>(p.info?.aliases || []);
   const [alias, setAlias] = useState('');
   const [tax, setTax] = useState(p.info?.tax_number || '');
   const [note, setNote] = useState(p.info?.note || '');
-  const dirty =
-    name.trim() !== p.name ||
-    kind !== (p.info?.kind || 'auto') ||
-    JSON.stringify(aliases) !== JSON.stringify(p.info?.aliases || []) ||
-    tax !== (p.info?.tax_number || '') ||
-    note !== (p.info?.note || '');
   const addAlias = (a: string) => {
     const s = a.replace(/\s+/g, ' ').trim();
     if (s.length < 2 || aliases.some((x) => normalizeText(x) === normalizeText(s))) return;
-    setAliases([...aliases, s]);
+    const next = [...aliases, s];
+    setAliases(next);
     setAlias('');
+    persist({ aliases: next });
   };
   // javaslat: a Billingo-számlákon és a banki tételekben szereplő nevek, amik még nincsenek az alternatív nevek között
   const suggest = p.billingNames.filter(
@@ -100,14 +97,25 @@ export function PartnerEditor({
     );
     return n?.partner_tax || null;
   }, [p.leaves, data.entries, data.navInvoices]);
-  const save = () =>
+  /** automatikus mentés: a szövegmezők elhagyásakor, a típus és az alternatív nevek változásakor azonnal */
+  const persist = (over: Partial<{ name: string; kind: Kind; aliases: string[]; tax: string; note: string }> = {}) => {
+    const v = { name, kind, aliases, tax, note, ...over };
+    if (!canEdit || !v.name.trim()) return;
+    const same =
+      v.name.trim() === p.name &&
+      v.kind === (p.info?.kind || '') &&
+      JSON.stringify(v.aliases) === JSON.stringify(p.info?.aliases || []) &&
+      v.tax === (p.info?.tax_number || '') &&
+      v.note === (p.info?.note || '');
+    if (same) return;
     run(async () => {
       const r = await api<{ key: string }>(`/api/partners/${encodeURIComponent(p.key)}`, {
         method: 'PUT',
-        body: { name: name.trim(), kind: kind === 'auto' ? null : kind, aliases, tax_number: tax, note },
+        body: { name: v.name.trim(), kind: v.kind === 'auto' ? null : v.kind, aliases: v.aliases, tax_number: v.tax, note: v.note },
       });
       onSaved?.(r.key);
     }, 'Partner mentve');
+  };
   const moveLeaf = (leafId: string, group_id: string) => run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id } }), 'Projekt módosítva');
   const addRole = (group_id: string) => run(() => api('/api/leaves', { body: { group_id, label: p.name } }), 'Hozzáadva');
 
@@ -116,15 +124,25 @@ export function PartnerEditor({
       {part !== 'company' && (
         <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 1fr', gap: 10 }}>
           <Field label="Partner neve (ez jelenik meg mindenhol)">
-            <input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ ...inputStyle, height: 42 }} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => persist()}
+              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              disabled={!canEdit}
+              style={{ ...inputStyle, height: 42 }}
+            />
           </Field>
           <Field label="Típus">
             <Seg
               small
               value={kind}
-              onChange={(v) => canEdit && setKind(v)}
+              onChange={(v) => {
+                if (!canEdit) return;
+                setKind(v);
+                persist({ kind: v });
+              }}
               options={[
-                ['auto', `Automatikus (${KIND_LABEL[kindOf(p, ix.sectionOf)]})`],
                 ['vevo', 'Vevő'],
                 ['szallito', 'Szállító'],
                 ['mindketto', 'Mindkettő'],
@@ -155,7 +173,11 @@ export function PartnerEditor({
                   {a}
                   {canEdit && (
                     <button
-                      onClick={() => setAliases(aliases.filter((x) => x !== a))}
+                      onClick={() => {
+                        const next = aliases.filter((x) => x !== a);
+                        setAliases(next);
+                        persist({ aliases: next });
+                      }}
                       title="Eltávolítás"
                       style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 14px ${FONT}`, padding: '0 4px' }}
                     >
@@ -224,6 +246,7 @@ export function PartnerEditor({
               <input
                 value={tax}
                 onChange={(e) => setTax(e.target.value)}
+                onBlur={() => persist()}
                 disabled={!canEdit}
                 placeholder="12345678-2-13"
                 style={{ ...inputStyle, height: 40 }}
@@ -231,7 +254,10 @@ export function PartnerEditor({
               {canEdit && navTax && navTax !== tax && (
                 <button
                   type="button"
-                  onClick={() => setTax(navTax)}
+                  onClick={() => {
+                    setTax(navTax);
+                    persist({ tax: navTax });
+                  }}
                   style={{
                     alignSelf: 'flex-start',
                     border: 0,
@@ -250,6 +276,7 @@ export function PartnerEditor({
               <input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
+                onBlur={() => persist()}
                 disabled={!canEdit}
                 placeholder="kapcsolattartó, szerződés, egyéb"
                 style={{ ...inputStyle, height: 40 }}
@@ -259,14 +286,7 @@ export function PartnerEditor({
         </>
       )}
 
-      {canEdit && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Pill kind="primary" disabled={!dirty || !name.trim()} onClick={save}>
-            Mentés
-          </Pill>
-          {dirty && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Nem mentett változás</span>}
-        </div>
-      )}
+      {canEdit && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Minden változás automatikusan mentődik.</span>}
 
       {part !== 'basic' && (
         <Field label="Hova tartozik – mappák (a típus szerint: vevő = bevétel, szállító = kiadás)">
@@ -477,21 +497,28 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
   const [mode, setMode] = useState(init()[0]);
   const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : payDefaults(data.settings).payDays)));
   const [resched, setResched] = useState(true);
-  const num = Math.max(0, Math.min(mode === 'day' ? 31 : 120, parseInt(n) || 0));
-  const newRule = mode === 'inv' ? `inv:${num}` : mode === 'day' ? `day:${Math.max(1, num)}` : mode;
+  const clamp = (m: string, v: string) => Math.max(0, Math.min(m === 'day' ? 31 : 120, parseInt(v) || 0));
+  const ruleOf = (m: string, v: string) => (m === 'inv' ? `inv:${clamp(m, v)}` : m === 'day' ? `day:${Math.max(1, clamp(m, v))}` : m);
+  const newRule = ruleOf(mode, n);
   // a nyitott, rendszeres (nem Billingo-számlás) tervek, amiket az új szabály szerint át lehet ütemezni
   const open = data.entries.filter((e) => e.kind === 'plan' && !e.done && e.leaf_id === leafId && e.series_id && e.source !== 'billingo');
-  const moved = open.map((e) => ({ e, to: payDate(e.date.slice(0, 7), newRule, Number(e.date.slice(8)) || 1) })).filter((x) => x.to !== x.e.date);
-  const save = () =>
+  const movedBy = (r: string) => open.map((e) => ({ e, to: payDate(e.date.slice(0, 7), r, Number(e.date.slice(8)) || 1) })).filter((x) => x.to !== x.e.date);
+  const moved = movedBy(newRule);
+  /** automatikus mentés: módváltáskor azonnal, a szám mező elhagyásakor */
+  const save = (m = mode, v = n, rs = resched) => {
+    const r = ruleOf(m, v);
+    if (r === rule) return;
+    const mv = movedBy(r);
     run(
       async () => {
-        await api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { pay_rule: newRule, ...(mode === 'inv' ? { pay_days: num } : {}) } });
-        if (resched && moved.length) await commit({ upsert: moved.map((x) => ({ ...x.e, date: x.to })) }, `${L?.label}: ${moved.length} terv átütemezve`);
+        await api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { pay_rule: r, ...(m === 'inv' ? { pay_days: clamp(m, v) } : {}) } });
+        if (rs && mv.length) await commit({ upsert: mv.map((x) => ({ ...x.e, date: x.to })) }, `${L?.label}: ${mv.length} terv átütemezve`);
       },
-      `${L?.label}: fizetési feltétel mentve – ${payRuleLabel(newRule)}`,
+      `${L?.label}: fizetési feltétel mentve – ${payRuleLabel(r)}`,
     );
+  };
   const ym = data.today.slice(0, 7);
-  const next = [0, 1, 2].map((i) => payDate(addMonths(ym, i), newRule, num || 1));
+  const next = [0, 1, 2].map((i) => payDate(addMonths(ym, i), newRule, clamp(mode, n) || 1));
   return (
     <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <b style={{ font: `700 14px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy }}>
@@ -503,13 +530,24 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
           ? `számla + ${L?.pay_days ?? payDefaults(data.settings).payDays} nap (alapértelmezett)`
           : payRuleLabel(rule)}
       </span>
-      <Seg small value={mode} onChange={(v) => canEdit && setMode(v)} options={TERM_MODES as any} />
+      <Seg
+        small
+        value={mode}
+        onChange={(v: string) => {
+          if (!canEdit) return;
+          setMode(v);
+          save(v);
+        }}
+        options={TERM_MODES as any}
+      />
       {(mode === 'inv' || mode === 'day') && (
         <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
           {mode === 'inv' ? 'Fizetési határidő:' : 'A hónap napja:'}
           <input
             value={n}
             onChange={(e) => setN(e.target.value.replace(/\D/g, ''))}
+            onBlur={() => save()}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
             disabled={!canEdit}
             style={{ ...inputStyle, width: 70, height: 36, textAlign: 'center' }}
           />
@@ -523,9 +561,7 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
             <input type="checkbox" checked={resched} onChange={(e) => setResched(e.target.checked)} />a {open.length} nyitott rendszeres terv átütemezése is (
             {moved.length} változik)
           </label>
-          <Pill small kind="primary" onClick={save}>
-            Mentés
-          </Pill>
+          <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>A változás azonnal mentődik.</span>
         </div>
       )}
     </div>
