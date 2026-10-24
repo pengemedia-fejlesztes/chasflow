@@ -6,7 +6,7 @@ import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
-import { REP, planActual, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
@@ -243,7 +243,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               const b = genSeries({
                 leaf,
                 section,
-                name: r.name,
+                name: planNameOf(r.name),
                 amount,
                 startYm: addMonths(ix.cur, 1),
                 count: 12,
@@ -433,6 +433,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                         upsert: [
                           {
                             ...src,
+                            name: planNameOf(src.name),
                             id: uid('e'),
                             date: dateIn(m, Number(src.date.slice(8))),
                             done: 0,

@@ -120,6 +120,15 @@ export function deleteEntries(d: DataBundle, ids: string[]): EntryBatch {
 /** Sor-kulcs a kategória nézethez: sorozat, vagy (importált terveknél) kategória+név. */
 export const rowKey = (e: Entry) => e.series_id || `n:${e.leaf_id}|${e.name}`;
 
+/**
+ * Terv neve a jövőbeli hónapokra: a számlából jött név („Pharmazone WS Kft. · Penge / 2026-000053”) nem öröklődik –
+ * a számla sorszáma a hónaphoz tartozik, a feladat neve marad (pl. „Havi díj”).
+ */
+export function planNameOf(name: string): string {
+  const n = (name || '').trim();
+  return /^.+? · .+\/ ?\d{4}-\d+$/.test(n) || /^(Számla )?[A-Za-z]+ ?\/ ?\d{4}-\d+$/.test(n) ? 'Havi díj' : n;
+}
+
 /** Sorozat(ok) meghosszabbítása (alapból 3 hónappal) az utolsó tételtől. */
 export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch {
   const keys = new Set(d.entries.filter((e) => ids.includes(e.id)).map(rowKey));
@@ -140,7 +149,7 @@ export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch
         ext_ref: null,
         source: 'manual',
         // a számlából jött terv neve („Partner · Penge / 2026-000056”) ne öröklődjön a jövőbe
-        name: last.ext_ref?.startsWith('billingo:') ? 'Havi díj' : last.name,
+        name: planNameOf(last.name),
       });
   }
   return { upsert: add };

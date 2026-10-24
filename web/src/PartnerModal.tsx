@@ -2,13 +2,13 @@
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
 import { useMemo, useState } from 'react';
-import { displayGroup } from '../../shared/categories';
+import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
-import { REP, acceptOffer, genSeries, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
+import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
 
@@ -460,7 +460,7 @@ function ItemRow({
               <span style={{ color: '#8A6D1C' }}>· terv (még nincs számla)</span>
             )}
           </span>
-          {it.rep !== 'once' && <MonthStatus all={it.all} />}
+          {it.rep !== 'once' && <MonthStatus all={it.all} name={it.name} />}
         </span>
         <b style={{ font: `700 15px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
           {fmt(Math.abs(next?.amount || 0))} Ft
@@ -774,19 +774,40 @@ function TwoPartsEditor({ value, onChange }: { value: Parts; onChange: (p: Parts
  * Havi állapotsáv: melyik hónap díja hol tart – kifizetve, kiszámlázva (nyitott / lejárt), még nincs kiszámlázva, vagy
  * csak terv. Az elmúlt 3 és a következő 3 hónap (a tétel „melyik hónaphoz tartozik” szerint).
  */
-function MonthStatus({ all }: { all: Entry[] }) {
+function MonthStatus({ all, name }: { all: Entry[]; name: string }) {
   const { data } = useStore();
   const cur = data.today.slice(0, 7);
   const from = addMonths(cur, -3),
     to = addMonths(cur, 3);
-  const rows = all.filter((e) => periodOf(e) >= from && periodOf(e) <= to).sort((a, b) => periodOf(a).localeCompare(periodOf(b)));
+  const leaf = all[0]?.leaf_id;
+  const plans = all.filter((e) => periodOf(e) >= from && periodOf(e) <= to);
+  // a terv nélküli, de ugyanilyen nevű tények (pl. régi, importált „Havi díj” befizetések) is a hónapjukhoz kerülnek
+  const linked = new Set(data.entries.filter((e) => e.kind === 'plan' && e.link_id).map((e) => e.link_id));
+  const planMonths = new Set(plans.map(periodOf));
+  const nn = normalizeText(planNameOf(name));
+  const acts = data.entries.filter(
+    (e) =>
+      e.kind === 'actual' &&
+      e.leaf_id === leaf &&
+      !linked.has(e.id) &&
+      normalizeText(planNameOf(e.name)) === nn &&
+      ymOf(e.date) >= from &&
+      ymOf(e.date) <= cur &&
+      !planMonths.has(ymOf(e.date)),
+  );
+  const rows = [...plans, ...acts].sort((a, b) => periodOf(a).localeCompare(periodOf(b)));
   if (!rows.length) return null;
+  // a terv nélküli tényhez tartozó Billingo-számla: azonos összeg, a fizetés ±10 napon belül
+  const docOfActual = (e: Entry) =>
+    data.billingo.find((d) => !d.plan_id && d.gross === e.amount && d.paid_date && Math.abs(Date.parse(d.paid_date) - Date.parse(e.date)) <= 10 * 86400_000);
+  const short = (n?: string | null) => (n ? n.replace(/^.*\/\s*/, '') : '');
   return (
     <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 3 }}>
       {rows.map((e) => {
-        const doc = data.billingo.find((d) => d.plan_id === e.id);
-        const nav = (data.navInvoices || []).find((d) => d.plan_id === e.id);
-        const paid = !!e.done || doc?.payment_status === 'paid' || nav?.status === 'paid';
+        const isAct = e.kind === 'actual';
+        const doc = isAct ? docOfActual(e) : data.billingo.find((d) => d.plan_id === e.id);
+        const nav = isAct ? undefined : (data.navInvoices || []).find((d) => d.plan_id === e.id);
+        const paid = isAct || !!e.done || doc?.payment_status === 'paid' || nav?.status === 'paid';
         const late = e.date < data.today;
         const [txt, fg, bg] = paid
           ? ['fizetve ✓', '#2E7D4F', '#E8F4EC']
@@ -801,7 +822,8 @@ function MonthStatus({ all }: { all: Entry[] }) {
             title={`${monthName(periodOf(e))} · fizetés ${dot(e.date)} · ${fmt(Math.abs(e.amount))} Ft${doc ? ` · számla ${doc.number || ''}` : nav ? ` · NAV-számla ${nav.invoice_number}` : ''}`}
             style={{ borderRadius: 999, padding: '2px 8px', background: bg, color: fg, font: `600 11px ${FONT}`, whiteSpace: 'nowrap' }}
           >
-            {monthLabel(periodOf(e))} · {txt}
+            {monthLabel(periodOf(e))}
+            {doc?.number || nav?.invoice_number ? ` · ${short(doc?.number || nav?.invoice_number)}` : ''} · {txt}
           </span>
         );
       })}
