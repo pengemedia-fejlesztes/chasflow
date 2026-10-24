@@ -56,22 +56,39 @@ export async function fillPartnerTax(env: Env): Promise<number> {
     [p.name, ...p.aliases].forEach((n) => s.add(n));
     names.set(k, s);
   }
+  // saját név (alkategória / partnertörzs neve) – ez erősebb, mint egy alternatív névvel való egyezés
+  const ownNames = new Map<string, string[]>();
+  for (const l of lR.results as any[]) {
+    const k = partnerIdOf(l.label);
+    ownNames.set(k, [...(ownNames.get(k) || []), l.label]);
+  }
+  for (const [k, p] of partners) ownNames.set(k, [...(ownNames.get(k) || []), p.name]);
   const found = new Map<string, string>(); // partner kulcs → adószám
-  const taxOwners = new Map<string, Set<string>>(); // törzsszám → partner kulcsok (több partner = kétes)
+  const taxOwners = new Map<string, { own: Set<string>; alias: Set<string> }>(); // törzsszám → partner kulcsok
   for (const r of [...(nR.results as any[]), ...(bR.results as any[])]) {
     const b = taxBase(r.tax);
     if (b.length !== 8 || !r.name) continue;
     for (const [k, ns] of names) {
       if (![...ns].some((n) => namesMatch(n, r.name))) continue;
+      const own = (ownNames.get(k) || []).some((n) => namesMatch(n, r.name));
+      const o = taxOwners.get(b) || taxOwners.set(b, { own: new Set(), alias: new Set() }).get(b)!;
+      (own ? o.own : o.alias).add(k);
       if (!found.has(k)) found.set(k, r.tax);
-      (taxOwners.get(b) || taxOwners.set(b, new Set()).get(b)!).add(k);
     }
   }
+  // egy adószám egy partnerhez: ha több egyezik, a saját nevén egyező nyer; ha így is több, kétes → kimarad
+  const winner = (b: string) => {
+    const o = taxOwners.get(b);
+    if (!o) return null;
+    if (o.own.size === 1) return [...o.own][0];
+    if (!o.own.size && o.alias.size === 1) return [...o.alias][0];
+    return null;
+  };
   const t = now();
   const stmts: D1PreparedStatement[] = [];
   for (const [k, tax] of found) {
     if (partners.get(k)?.tax) continue;
-    if ((taxOwners.get(taxBase(tax))?.size || 0) > 1) continue;
+    if (winner(taxBase(tax)) !== k) continue;
     const name = partners.get(k)?.name || [...(names.get(k) || [])][0] || k;
     stmts.push(
       env.DB.prepare(
