@@ -231,11 +231,14 @@ export function PartnerDetail({
   onBack,
   embedded,
   onEditItem,
+  part = 'all',
 }: {
   p: PartnerStat;
   mobile?: boolean;
   onBack: () => void;
   embedded?: boolean;
+  /** names = csak a számlázási nevek (adatlap Cégadatok fül), stats = a számlázási nevek nélkül */
+  part?: 'all' | 'names' | 'stats';
   /** a várható tétel szerkesztése (partner adatlapon) */
   onEditItem?: (leaf: string, key: string) => void;
 }) {
@@ -290,144 +293,150 @@ export function PartnerDetail({
         </span>
         <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 28}px/1.1 ${FONT_H}`, color: C.navy }}>{p.name}</h2>
       </div>
-      <Box title="Számlázási nevek (cégadat)">
-        {names.length ? (
-          names.map((b) => (
-            <div key={b.source + b.name} style={{ display: 'flex', gap: 8, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
-              <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>{b.name}</span>
-              <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
-                {b.source} · {b.n}×
-              </span>
-            </div>
-          ))
-        ) : (
-          <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
-            Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.
-          </span>
-        )}
-      </Box>
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
-        {sIn && <Tile label="Bevétel · 12 hó" value={`${fmt(sIn.last12)} Ft`} sub={`${pct(sIn.share12)} az összes bevételből`} />}
-        {sOut && <Tile label="Kiadás · 12 hó" value={`${fmt(sOut.last12)} Ft`} sub={`${pct(sOut.share12)} az összes kiadásból`} />}
-        {sIn && sOut && <Tile label="Nettó · 12 hó" value={`${net12 > 0 ? '+' : ''}${fmt(net12)} Ft`} red={net12 < 0} />}
-        <Tile
-          label="Összesen"
-          value={`${sIn ? '+' + fmtM(sIn.total) : ''}${sIn && sOut ? ' / ' : ''}${sOut ? '−' + fmtM(sOut.total) : ''}`}
-          sub={p.first ? `${dd(p.first)} óta` : undefined}
-        />
-        <Tile label="Utolsó tény" value={dd(p.last)} sub={`${p.past.length} tétel`} />
-        <Tile
-          label="Várható"
-          value={`${fmt((sIn?.openPlan || 0) - (sOut?.openPlan || 0))} Ft`}
-          sub={`${p.future.filter((e) => !e.tentative).length} terv${offersSum ? ` · ajánlat ${fmt(offersSum)}` : ''}`}
-          red={!p.future.length && (sIn?.last12 || 0) > 0}
-        />
-        {p.invoices.length > 0 && (
-          <Tile
-            label="Fizetési fegyelem"
-            value={p.avgLate === null ? '–' : p.avgLate <= 0 ? 'határidőre' : `${Math.round(p.avgLate)} nap késés`}
-            sub={p.avgLate === null ? 'nincs fizetett számla' : `átlag · ${p.lateCount} késve fizetett`}
-            red={(p.avgLate ?? 0) > 3}
-          />
-        )}
-        {p.invoices.length > 0 && <Tile label="Lejárt kintlévőség" value={`${fmt(p.outstanding)} Ft`} red={p.outstanding > 0} />}
-      </div>
-      <DivergingBars
-        title="Havi egyenleg a partnerrel (bevétel − kiadás) · 24 hónap"
-        points={p.months.map((m) => ({ ym: m.ym, v: m.inc - m.out, note: m.out ? `bevétel ${fmt(m.inc)}, kiadás ${fmt(m.out)}` : undefined }))}
-      />
-      <Box title={`Várható tételek (${p.future.length})`}>
-        {p.future.length ? (
-          p.future
-            .slice(0, 24)
-            .map((e) => (
-              <ItemRow key={e.id} e={e} sec={secOf(e)} future onEdit={onEditItem ? () => onEditItem(e.leaf_id, e.series_id || rowKey(e)) : undefined} />
-            ))
-        ) : (
-          <span style={{ font: `500 12.5px ${FONT}`, color: (sIn?.last12 || 0) > 0 ? C.neg : C.muted }}>
-            Nincs betervezett jövőbeli tétel{(sIn?.last12 || 0) > 0 ? ' – pedig az elmúlt 12 hónapban volt bevétel.' : '.'}
-          </span>
-        )}
-      </Box>
-      {p.futureComponents.length > 0 && (
-        <Box title="Várható összetevők">
-          <Comps list={p.futureComponents} />
-        </Box>
-      )}
-      {p.pastComponents.length > 0 && (
-        <Box title="Múltbeli összetevők (miből állt össze)">
-          <Comps list={p.pastComponents} />
-        </Box>
-      )}
-      {years.length > 0 && (
-        <Box title="Évenként">
-          {years.map((y) => (
-            <div
-              key={y}
-              style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: `1px solid ${C.line3}`, font: `500 13.5px ${FONT}`, alignItems: 'baseline' }}
-            >
-              <span style={{ flex: 1 }}>
-                {y}
-                {y === String(new Date().getFullYear()) ? ' (eddig)' : ''}
-              </span>
-              {p.byYear[y].inc ? <b style={{ fontVariantNumeric: 'tabular-nums', color: C.navy }}>+{fmt(p.byYear[y].inc)}</b> : null}
-              {p.byYear[y].out ? <b style={{ fontVariantNumeric: 'tabular-nums', color: C.muted }}>−{fmt(p.byYear[y].out)}</b> : null}
-            </div>
-          ))}
-        </Box>
-      )}
-      {p.invoices.length > 0 && (
-        <Box title="Billingo számlák (utolsó 13 hónap)">
-          {p.invoices.map((i) => (
-            <button
-              key={i.doc.id}
-              onClick={() => openDoc(i.doc.id)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 0',
-                border: 0,
-                borderTop: `1px solid ${C.line3}`,
-                background: 'transparent',
-                textAlign: 'left',
-                cursor: 'pointer',
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                <span style={{ font: `600 13.5px ${FONT}`, color: C.navy }}>🧾 {i.doc.number}</span>
-                <span style={{ font: `500 12px ${FONT}`, color: i.overdue || (i.lateDays ?? 0) > 0 ? C.neg : C.muted }}>
-                  kiállítva {dd(i.doc.invoice_date)} · határidő {dd(i.doc.due_date)} ·{' '}
-                  {i.lateDays !== null
-                    ? `fizetve ${dd(i.doc.paid_date)}${i.lateDays > 0 ? ` (${i.lateDays} nap késés)` : i.lateDays < 0 ? ` (${-i.lateDays} nappal előbb)` : ' (időben)'}`
-                    : i.overdue
-                      ? 'LEJÁRT, nincs fizetve'
-                      : 'nyitott'}
+      {part !== 'stats' && (
+        <Box title="Számlázási nevek (cégadat)">
+          {names.length ? (
+            names.map((b) => (
+              <div key={b.source + b.name} style={{ display: 'flex', gap: 8, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+                <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>{b.name}</span>
+                <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
+                  {b.source} · {b.n}×
                 </span>
-              </span>
-              <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(i.doc.gross)}</b>
-            </button>
-          ))}
+              </div>
+            ))
+          ) : (
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+              Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.
+            </span>
+          )}
         </Box>
       )}
-      <Box
-        title={`Múltbeli tételek (${p.past.length})`}
-        right={
-          p.past.length > 12 ? (
-            <button
-              onClick={() => setAll(!all)}
-              style={{ border: 0, background: 'transparent', color: C.blueDark, font: `600 12.5px ${FONT}`, cursor: 'pointer' }}
-            >
-              {all ? 'Kevesebb' : `Összes (${p.past.length})`}
-            </button>
-          ) : null
-        }
-      >
-        {past.map((e) => (
-          <ItemRow key={e.id} e={e} sec={secOf(e)} />
-        ))}
-      </Box>
+      {part !== 'names' && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
+            {sIn && <Tile label="Bevétel · 12 hó" value={`${fmt(sIn.last12)} Ft`} sub={`${pct(sIn.share12)} az összes bevételből`} />}
+            {sOut && <Tile label="Kiadás · 12 hó" value={`${fmt(sOut.last12)} Ft`} sub={`${pct(sOut.share12)} az összes kiadásból`} />}
+            {sIn && sOut && <Tile label="Nettó · 12 hó" value={`${net12 > 0 ? '+' : ''}${fmt(net12)} Ft`} red={net12 < 0} />}
+            <Tile
+              label="Összesen"
+              value={`${sIn ? '+' + fmtM(sIn.total) : ''}${sIn && sOut ? ' / ' : ''}${sOut ? '−' + fmtM(sOut.total) : ''}`}
+              sub={p.first ? `${dd(p.first)} óta` : undefined}
+            />
+            <Tile label="Utolsó tény" value={dd(p.last)} sub={`${p.past.length} tétel`} />
+            <Tile
+              label="Várható"
+              value={`${fmt((sIn?.openPlan || 0) - (sOut?.openPlan || 0))} Ft`}
+              sub={`${p.future.filter((e) => !e.tentative).length} terv${offersSum ? ` · ajánlat ${fmt(offersSum)}` : ''}`}
+              red={!p.future.length && (sIn?.last12 || 0) > 0}
+            />
+            {p.invoices.length > 0 && (
+              <Tile
+                label="Fizetési fegyelem"
+                value={p.avgLate === null ? '–' : p.avgLate <= 0 ? 'határidőre' : `${Math.round(p.avgLate)} nap késés`}
+                sub={p.avgLate === null ? 'nincs fizetett számla' : `átlag · ${p.lateCount} késve fizetett`}
+                red={(p.avgLate ?? 0) > 3}
+              />
+            )}
+            {p.invoices.length > 0 && <Tile label="Lejárt kintlévőség" value={`${fmt(p.outstanding)} Ft`} red={p.outstanding > 0} />}
+          </div>
+          <DivergingBars
+            title="Havi egyenleg a partnerrel (bevétel − kiadás) · 24 hónap"
+            points={p.months.map((m) => ({ ym: m.ym, v: m.inc - m.out, note: m.out ? `bevétel ${fmt(m.inc)}, kiadás ${fmt(m.out)}` : undefined }))}
+          />
+          <Box title={`Várható tételek (${p.future.length})`}>
+            {p.future.length ? (
+              p.future
+                .slice(0, 24)
+                .map((e) => (
+                  <ItemRow key={e.id} e={e} sec={secOf(e)} future onEdit={onEditItem ? () => onEditItem(e.leaf_id, e.series_id || rowKey(e)) : undefined} />
+                ))
+            ) : (
+              <span style={{ font: `500 12.5px ${FONT}`, color: (sIn?.last12 || 0) > 0 ? C.neg : C.muted }}>
+                Nincs betervezett jövőbeli tétel{(sIn?.last12 || 0) > 0 ? ' – pedig az elmúlt 12 hónapban volt bevétel.' : '.'}
+              </span>
+            )}
+          </Box>
+          {p.futureComponents.length > 0 && (
+            <Box title="Várható összetevők">
+              <Comps list={p.futureComponents} />
+            </Box>
+          )}
+          {p.pastComponents.length > 0 && (
+            <Box title="Múltbeli összetevők (miből állt össze)">
+              <Comps list={p.pastComponents} />
+            </Box>
+          )}
+          {years.length > 0 && (
+            <Box title="Évenként">
+              {years.map((y) => (
+                <div
+                  key={y}
+                  style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: `1px solid ${C.line3}`, font: `500 13.5px ${FONT}`, alignItems: 'baseline' }}
+                >
+                  <span style={{ flex: 1 }}>
+                    {y}
+                    {y === String(new Date().getFullYear()) ? ' (eddig)' : ''}
+                  </span>
+                  {p.byYear[y].inc ? <b style={{ fontVariantNumeric: 'tabular-nums', color: C.navy }}>+{fmt(p.byYear[y].inc)}</b> : null}
+                  {p.byYear[y].out ? <b style={{ fontVariantNumeric: 'tabular-nums', color: C.muted }}>−{fmt(p.byYear[y].out)}</b> : null}
+                </div>
+              ))}
+            </Box>
+          )}
+          {p.invoices.length > 0 && (
+            <Box title="Billingo számlák (utolsó 13 hónap)">
+              {p.invoices.map((i) => (
+                <button
+                  key={i.doc.id}
+                  onClick={() => openDoc(i.doc.id)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 0',
+                    border: 0,
+                    borderTop: `1px solid ${C.line3}`,
+                    background: 'transparent',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ font: `600 13.5px ${FONT}`, color: C.navy }}>🧾 {i.doc.number}</span>
+                    <span style={{ font: `500 12px ${FONT}`, color: i.overdue || (i.lateDays ?? 0) > 0 ? C.neg : C.muted }}>
+                      kiállítva {dd(i.doc.invoice_date)} · határidő {dd(i.doc.due_date)} ·{' '}
+                      {i.lateDays !== null
+                        ? `fizetve ${dd(i.doc.paid_date)}${i.lateDays > 0 ? ` (${i.lateDays} nap késés)` : i.lateDays < 0 ? ` (${-i.lateDays} nappal előbb)` : ' (időben)'}`
+                        : i.overdue
+                          ? 'LEJÁRT, nincs fizetve'
+                          : 'nyitott'}
+                    </span>
+                  </span>
+                  <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(i.doc.gross)}</b>
+                </button>
+              ))}
+            </Box>
+          )}
+          <Box
+            title={`Múltbeli tételek (${p.past.length})`}
+            right={
+              p.past.length > 12 ? (
+                <button
+                  onClick={() => setAll(!all)}
+                  style={{ border: 0, background: 'transparent', color: C.blueDark, font: `600 12.5px ${FONT}`, cursor: 'pointer' }}
+                >
+                  {all ? 'Kevesebb' : `Összes (${p.past.length})`}
+                </button>
+              ) : null
+            }
+          >
+            {past.map((e) => (
+              <ItemRow key={e.id} e={e} sec={secOf(e)} />
+            ))}
+          </Box>
+        </>
+      )}
     </div>
   );
 }

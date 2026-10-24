@@ -24,7 +24,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const { ix, data, filters, setFilters, toast, canEdit } = st;
   const [view, setView] = useState<View>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'overview'));
   const [modal, setModal] = useState<{ leaf?: string | null; edit?: EditTarget | null } | null>(null);
-  const matrix = useMemo(() => buildMatrix(ix, filters), [ix, filters]);
+  // az Áttekintés nem a kiválasztott kategóriára szűr (az csak a kategória nézeté) – különben pl. csak az Ajánlatok látszanának
+  const matrix = useMemo(() => buildMatrix(ix, view === 'cat' ? filters : { ...filters, groupId: null }), [ix, filters, view]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {

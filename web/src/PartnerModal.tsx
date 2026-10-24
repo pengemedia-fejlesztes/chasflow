@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { addDays, DEFAULT_PAY_DAYS, invoiceDue, ONEOFF_DAYS } from '../../shared/workdays';
+import { addDays, DEFAULT_PAY_DAYS, invoiceDue, ONEOFF_DAYS, payDate, payRuleLabel } from '../../shared/workdays';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
@@ -108,7 +108,14 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
     const v = term.trim() === '' ? null : Math.min(180, num(term));
     setTerm(null);
     if (v === (L?.pay_days ?? null)) return;
-    run(() => api(`/api/leaves/${partner}`, { method: 'PATCH', body: { pay_days: v } }), `${L?.label}: fizetési határidő ${v ?? DEFAULT_PAY_DAYS} nap`);
+    run(
+      () =>
+        api(`/api/leaves/${partner}`, {
+          method: 'PATCH',
+          body: { pay_days: v, ...(!L?.pay_rule || /^inv:/.test(L.pay_rule) ? { pay_rule: v === null ? null : `inv:${v}` } : {}) },
+        }),
+      `${L?.label}: fizetési határidő ${v ?? DEFAULT_PAY_DAYS} nap`,
+    );
   };
 
   return (
@@ -217,6 +224,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                     leaf={L.id}
                     section={section}
                     payDays={payDays}
+                    rule={L.pay_rule || null}
                     today={data.today}
                     cur={ix.cur}
                     onCancel={() => setOpen(null)}
@@ -429,6 +437,7 @@ function NewItem({
   leaf,
   section,
   payDays,
+  rule,
   today,
   cur,
   onCancel,
@@ -437,6 +446,7 @@ function NewItem({
   leaf: string;
   section: Section;
   payDays: number;
+  rule?: string | null;
   today: string;
   cur: string;
   onCancel: () => void;
@@ -451,7 +461,9 @@ function NewItem({
   const [tentative, setTentative] = useState(false);
   const amt = num(amount);
   const step = repStep(rep);
-  const firstDue = rep === 'once' ? date : invoiceDue(startYm, payDays);
+  // a partner fizetési feltétele (Fizetési feltételek fül), különben számla a hónap első munkanapján + határidő
+  const ruleUsed = rule || `inv:${payDays}`;
+  const firstDue = rep === 'once' ? date : rule ? payDate(startYm, rule, 1) : invoiceDue(startYm, payDays);
   const n = rep === 'once' ? 1 : Math.ceil(count / step);
   const save = () => {
     if (!name.trim()) return alert('Add meg a tétel nevét (pl. SEO, PPC, Marketing tanácsadás).');
@@ -466,7 +478,7 @@ function NewItem({
       rep,
       day: Number(firstDue.slice(8)),
       tentative,
-      payRule: rep === 'once' ? null : `inv:${payDays}`,
+      payRule: rep === 'once' ? null : ruleUsed,
     });
     if (rep === 'once' && b.upsert?.[0]) b.upsert[0].date = date;
     onSave(b, `${name.trim()}: ${b.upsert!.length} tétel felvéve${tentative ? ' (ajánlat)' : ''}`);
@@ -542,7 +554,7 @@ function NewItem({
         <span style={{ flex: 1, minWidth: 220, font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
           {rep === 'once'
             ? `Fizetés: ${dot(date)}`
-            : `${n} tétel · első fizetés ${dot(firstDue)} (számlázás ${monthLong(startYm)} első munkanapján + ${payDays} nap)`}
+            : `${n} tétel · első fizetés ${dot(firstDue)} (${rule ? payRuleLabel(rule) : `számlázás ${monthLong(startYm)} első munkanapján + ${payDays} nap`})`}
           {amt ? ` · ${fmt(amt)} Ft` : ''}
         </span>
         <Pill small onClick={onCancel}>

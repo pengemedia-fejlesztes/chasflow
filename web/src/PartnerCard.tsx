@@ -4,9 +4,10 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
-import { fmt } from '../../shared/model';
+import { addMonths, fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
+import { DEFAULT_PAY_DAYS, payDate, payRuleLabel } from '../../shared/workdays';
 import { api } from './api';
 import { rowKey } from './logic';
 import { PartnerModal } from './PartnerModal';
@@ -34,7 +35,18 @@ export function kindOf(p: PartnerStat, sectionOf: (leaf: string) => Section): No
   return secs.has('in') && secs.has('out') ? 'mindketto' : secs.has('in') ? 'vevo' : 'szallito';
 }
 
-export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved?: (key: string) => void; compact?: boolean }) {
+export function PartnerEditor({
+  p,
+  onSaved,
+  compact,
+  part = 'all',
+}: {
+  p: PartnerStat;
+  onSaved?: (key: string) => void;
+  compact?: boolean;
+  /** basic = név + típus (adatlap 1. fül), company = cégadatok + mappák (2. fül), all = minden (partnertörzs) */
+  part?: 'basic' | 'company' | 'all';
+}) {
   const { ix, data, run, canEdit } = useStore();
   const [name, setName] = useState(p.name);
   const [kind, setKind] = useState<Kind>(p.info?.kind || 'auto');
@@ -101,139 +113,151 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 1fr', gap: 10 }}>
-        <Field label="Partner neve (ez jelenik meg mindenhol)">
-          <input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ ...inputStyle, height: 42 }} />
-        </Field>
-        <Field label="Típus">
-          <Seg
-            small
-            value={kind}
-            onChange={(v) => canEdit && setKind(v)}
-            options={[
-              ['auto', `Automatikus (${KIND_LABEL[kindOf(p, ix.sectionOf)]})`],
-              ['vevo', 'Vevő'],
-              ['szallito', 'Szállító'],
-              ['mindketto', 'Mindkettő'],
-            ]}
-          />
-        </Field>
-      </div>
+      {part !== 'company' && (
+        <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 1fr', gap: 10 }}>
+          <Field label="Partner neve (ez jelenik meg mindenhol)">
+            <input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit} style={{ ...inputStyle, height: 42 }} />
+          </Field>
+          <Field label="Típus">
+            <Seg
+              small
+              value={kind}
+              onChange={(v) => canEdit && setKind(v)}
+              options={[
+                ['auto', `Automatikus (${KIND_LABEL[kindOf(p, ix.sectionOf)]})`],
+                ['vevo', 'Vevő'],
+                ['szallito', 'Szállító'],
+                ['mindketto', 'Mindkettő'],
+              ]}
+            />
+          </Field>
+        </div>
+      )}
 
-      <Field label="Alternatív nevek – cégnév, Billingo-számlanév, banki név, üzlet/kút neve (ezek alapján párosít és összevon)">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          {aliases.map((a) => (
-            <span
-              key={a}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '5px 6px 5px 12px',
-                borderRadius: 999,
-                background: C.bg2,
-                font: `600 13px ${FONT}`,
-                color: C.navy,
-              }}
-            >
-              {a}
-              {canEdit && (
-                <button
-                  onClick={() => setAliases(aliases.filter((x) => x !== a))}
-                  title="Eltávolítás"
-                  style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 14px ${FONT}`, padding: '0 4px' }}
+      {part !== 'basic' && (
+        <>
+          <Field label="Alternatív nevek – cégnév, Billingo-számlanév, banki név, üzlet/kút neve (ezek alapján párosít és összevon)">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {aliases.map((a) => (
+                <span
+                  key={a}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 6px 5px 12px',
+                    borderRadius: 999,
+                    background: C.bg2,
+                    font: `600 13px ${FONT}`,
+                    color: C.navy,
+                  }}
                 >
-                  ×
+                  {a}
+                  {canEdit && (
+                    <button
+                      onClick={() => setAliases(aliases.filter((x) => x !== a))}
+                      title="Eltávolítás"
+                      style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 14px ${FONT}`, padding: '0 4px' }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+              {canEdit && (
+                <input
+                  value={alias}
+                  list={listId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // a listából választott név azonnal bekerül; begépelt új név Enterre
+                    if (known.includes(v)) addAlias(v);
+                    else setAlias(v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      addAlias(alias);
+                    }
+                  }}
+                  onBlur={() => alias.trim() && addAlias(alias)}
+                  placeholder={
+                    aliases.length
+                      ? 'Kezdd gépelni – válassz a listából, vagy új név + Enter'
+                      : 'Kezdd gépelni (pl. SZIGNETTA) – válassz a listából, vagy új név + Enter'
+                  }
+                  style={{ ...inputStyle, height: 36, flex: '1 1 220px', minWidth: 180 }}
+                />
+              )}
+              <datalist id={listId}>
+                {known.slice(0, 400).map((k) => (
+                  <option key={k} value={k} />
+                ))}
+              </datalist>
+            </div>
+            {canEdit && suggest.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
+                <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Javaslat a számlákból / bankból:</span>
+                {suggest.slice(0, 8).map((b) => (
+                  <button
+                    key={b.source + b.name}
+                    onClick={() => addAlias(b.name)}
+                    style={{
+                      border: `1px dashed ${C.line2}`,
+                      background: '#fff',
+                      borderRadius: 999,
+                      padding: '4px 10px',
+                      font: `600 12px ${FONT}`,
+                      color: C.blueDark,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + {b.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Field>
+
+          <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 2fr', gap: 10 }}>
+            <Field label="Adószám">
+              <input
+                value={tax}
+                onChange={(e) => setTax(e.target.value)}
+                disabled={!canEdit}
+                placeholder="12345678-2-13"
+                style={{ ...inputStyle, height: 40 }}
+              />
+              {canEdit && navTax && navTax !== tax && (
+                <button
+                  type="button"
+                  onClick={() => setTax(navTax)}
+                  style={{
+                    alignSelf: 'flex-start',
+                    border: 0,
+                    background: 'transparent',
+                    padding: '4px 0 0',
+                    color: C.blueDark,
+                    font: `600 12px ${FONT}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  NAV-számla szerint: {navTax} – beírom
                 </button>
               )}
-            </span>
-          ))}
-          {canEdit && (
-            <input
-              value={alias}
-              list={listId}
-              onChange={(e) => {
-                const v = e.target.value;
-                // a listából választott név azonnal bekerül; begépelt új név Enterre
-                if (known.includes(v)) addAlias(v);
-                else setAlias(v);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ',') {
-                  e.preventDefault();
-                  addAlias(alias);
-                }
-              }}
-              onBlur={() => alias.trim() && addAlias(alias)}
-              placeholder={
-                aliases.length
-                  ? 'Kezdd gépelni – válassz a listából, vagy új név + Enter'
-                  : 'Kezdd gépelni (pl. SZIGNETTA) – válassz a listából, vagy új név + Enter'
-              }
-              style={{ ...inputStyle, height: 36, flex: '1 1 220px', minWidth: 180 }}
-            />
-          )}
-          <datalist id={listId}>
-            {known.slice(0, 400).map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
-        </div>
-        {canEdit && suggest.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
-            <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Javaslat a számlákból / bankból:</span>
-            {suggest.slice(0, 8).map((b) => (
-              <button
-                key={b.source + b.name}
-                onClick={() => addAlias(b.name)}
-                style={{
-                  border: `1px dashed ${C.line2}`,
-                  background: '#fff',
-                  borderRadius: 999,
-                  padding: '4px 10px',
-                  font: `600 12px ${FONT}`,
-                  color: C.blueDark,
-                  cursor: 'pointer',
-                }}
-              >
-                + {b.name}
-              </button>
-            ))}
+            </Field>
+            <Field label="Megjegyzés">
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                disabled={!canEdit}
+                placeholder="kapcsolattartó, szerződés, egyéb"
+                style={{ ...inputStyle, height: 40 }}
+              />
+            </Field>
           </div>
-        )}
-      </Field>
-
-      <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 2fr', gap: 10 }}>
-        <Field label="Adószám">
-          <input value={tax} onChange={(e) => setTax(e.target.value)} disabled={!canEdit} placeholder="12345678-2-13" style={{ ...inputStyle, height: 40 }} />
-          {canEdit && navTax && navTax !== tax && (
-            <button
-              type="button"
-              onClick={() => setTax(navTax)}
-              style={{
-                alignSelf: 'flex-start',
-                border: 0,
-                background: 'transparent',
-                padding: '4px 0 0',
-                color: C.blueDark,
-                font: `600 12px ${FONT}`,
-                cursor: 'pointer',
-              }}
-            >
-              NAV-számla szerint: {navTax} – beírom
-            </button>
-          )}
-        </Field>
-        <Field label="Megjegyzés">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            disabled={!canEdit}
-            placeholder="kapcsolattartó, szerződés, egyéb"
-            style={{ ...inputStyle, height: 40 }}
-          />
-        </Field>
-      </div>
+        </>
+      )}
 
       {canEdit && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -244,9 +268,11 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
         </div>
       )}
 
-      <Field label="Hova tartozik – mappák (bevétel = vevőként, kiadás = szállítóként)">
-        <FolderTree p={p} canEdit={canEdit} onMove={moveLeaf} onAdd={addRole} />
-      </Field>
+      {part !== 'basic' && (
+        <Field label="Hova tartozik – mappák (a típus szerint: vevő = bevétel, szállító = kiadás)">
+          <FolderTree p={p} kind={kind === 'auto' ? kindOf(p, ix.sectionOf) : kind} canEdit={canEdit} onMove={moveLeaf} onAdd={addRole} />
+        </Field>
+      )}
     </div>
   );
 }
@@ -257,11 +283,13 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
  */
 function FolderTree({
   p,
+  kind,
   canEdit,
   onMove,
   onAdd,
 }: {
   p: PartnerStat;
+  kind: NonNullable<Partner['kind']>;
   canEdit: boolean;
   onMove: (leafId: string, groupId: string) => void;
   onAdd: (groupId: string) => void;
@@ -404,8 +432,99 @@ function FolderTree({
   };
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-      {col('in')}
-      {col('out')}
+      {/* a típus szerinti oldal(ak); ha a partnernek a másik oldalon is van szerepe, az is látszik */}
+      {(kind !== 'szallito' || p.leaves.some((l) => ix.sectionOf(l.id) === 'in')) && col('in')}
+      {(kind !== 'vevo' || p.leaves.some((l) => ix.sectionOf(l.id) === 'out')) && col('out')}
+    </div>
+  );
+}
+
+const TERM_MODES: [string, string][] = [
+  ['inv', 'Számla a hónap 1. munkanapján + N nap'],
+  ['day', 'Minden hónap adott napján'],
+  ['first_workday', 'Hónap első munkanapja'],
+  ['last_workday', 'Hónap utolsó munkanapja'],
+];
+
+/** Fizetési feltételek partnerenként (alkategóriánként): mikor esedékes a rendszeres tétel – a tervek ehhez igazodnak. */
+function PaymentTerms({ p }: { p: PartnerStat }) {
+  const { ix } = useStore();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <span style={{ font: `500 13px/1.5 ${FONT}`, color: C.muted }}>
+        Itt adod meg, hogy ennél a partnernél általában mikor esedékes a fizetés. Ez minden hónapban így ismétlődik: az új rendszeres tervek ehhez a naphoz
+        kerülnek, és a meglévő nyitott terveket is átütemezheted.
+      </span>
+      {p.leaves.map((l) => (
+        <TermRow key={l.id} leafId={l.id} sec={ix.sectionOf(l.id)} />
+      ))}
+    </div>
+  );
+}
+
+function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
+  const { ix, data, run, commit, canEdit } = useStore();
+  const L = ix.leafById[leafId];
+  const rule = L?.pay_rule || '';
+  const init = (): [string, number] => {
+    const inv = rule.match(/^inv:(\d+)$/);
+    if (inv) return ['inv', Number(inv[1])];
+    const d = rule.match(/^day:(\d+)$/);
+    if (d) return ['day', Number(d[1])];
+    if (rule === 'first_workday' || rule === 'last_workday') return [rule, 0];
+    return ['inv', L?.pay_days ?? DEFAULT_PAY_DAYS];
+  };
+  const [mode, setMode] = useState(init()[0]);
+  const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : DEFAULT_PAY_DAYS)));
+  const [resched, setResched] = useState(true);
+  const num = Math.max(0, Math.min(mode === 'day' ? 31 : 120, parseInt(n) || 0));
+  const newRule = mode === 'inv' ? `inv:${num}` : mode === 'day' ? `day:${Math.max(1, num)}` : mode;
+  // a nyitott, rendszeres (nem Billingo-számlás) tervek, amiket az új szabály szerint át lehet ütemezni
+  const open = data.entries.filter((e) => e.kind === 'plan' && !e.done && e.leaf_id === leafId && e.series_id && e.source !== 'billingo');
+  const moved = open.map((e) => ({ e, to: payDate(e.date.slice(0, 7), newRule, Number(e.date.slice(8)) || 1) })).filter((x) => x.to !== x.e.date);
+  const save = () =>
+    run(
+      async () => {
+        await api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { pay_rule: newRule, ...(mode === 'inv' ? { pay_days: num } : {}) } });
+        if (resched && moved.length) await commit({ upsert: moved.map((x) => ({ ...x.e, date: x.to })) }, `${L?.label}: ${moved.length} terv átütemezve`);
+      },
+      `${L?.label}: fizetési feltétel mentve – ${payRuleLabel(newRule)}`,
+    );
+  const ym = data.today.slice(0, 7);
+  const next = [0, 1, 2].map((i) => payDate(addMonths(ym, i), newRule, num || 1));
+  return (
+    <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <b style={{ font: `700 14px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy }}>
+        {sec === 'in' ? 'Vevőként (bevétel)' : 'Szállítóként (kiadás)'} · {displayGroup(ix.groupById[L?.group_id || '']?.label || '')}
+      </b>
+      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+        Jelenleg: {payRuleLabel(rule || null) === 'nincs szabály' ? `számla + ${L?.pay_days ?? DEFAULT_PAY_DAYS} nap (alapértelmezett)` : payRuleLabel(rule)}
+      </span>
+      <Seg small value={mode} onChange={(v) => canEdit && setMode(v)} options={TERM_MODES as any} />
+      {(mode === 'inv' || mode === 'day') && (
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
+          {mode === 'inv' ? 'Fizetési határidő:' : 'A hónap napja:'}
+          <input
+            value={n}
+            onChange={(e) => setN(e.target.value.replace(/\D/g, ''))}
+            disabled={!canEdit}
+            style={{ ...inputStyle, width: 70, height: 36, textAlign: 'center' }}
+          />
+          {mode === 'inv' ? 'nap a számlától' : '. nap (hétvégén az előző munkanap)'}
+        </label>
+      )}
+      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Következő esedékességek: {next.map((d) => d.replace(/-/g, '.') + '.').join(' · ')}</span>
+      {canEdit && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `500 13px ${FONT}`, color: C.ink, cursor: 'pointer' }}>
+            <input type="checkbox" checked={resched} onChange={(e) => setResched(e.target.checked)} />a {open.length} nyitott rendszeres terv átütemezése is (
+            {moved.length} változik)
+          </label>
+          <Pill small kind="primary" onClick={save}>
+            Mentés
+          </Pill>
+        </div>
+      )}
     </div>
   );
 }
@@ -459,7 +578,15 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
   const ago = (ms: number | null) => (ms ? Math.max(0, Math.round((Date.now() - ms) / 86400000)) : null);
   return (
     <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={eyebrow}>Tervezett feladatok – mit számlázunk / mit fizetünk</span>
+      <span style={eyebrow}>
+        {
+          {
+            vevo: 'Tervezett feladatok – mit számlázunk',
+            szallito: 'Tervezett kiadások – mit fizetünk',
+            mindketto: 'Tervezett feladatok – mit számlázunk / mit fizetünk',
+          }[kindOf(p, ix.sectionOf)]
+        }
+      </span>
       {rows.length ? (
         rows.map((r) => (
           <div
@@ -540,6 +667,8 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const { partnerCard, openPartner, ix } = useStore();
   const all = useAllPartners();
   const [task, setTask] = useState<{ leaf: string; key?: string } | null>(null);
+  const [tab, setTab] = useState<'main' | 'company' | 'terms'>('main');
+  useEffect(() => setTab('main'), [partnerCard]);
   const taskLeaf = task?.leaf ?? null;
   useEffect(() => {
     if (!partnerCard || taskLeaf) return;
@@ -567,11 +696,50 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
         </div>
         {p ? (
           <>
-            <div style={{ ...card, padding: 14 }}>
-              <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} compact={mobile} onSaved={(k) => openPartner(k)} />
+            <div style={{ display: 'flex', gap: 6, borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
+              {(
+                [
+                  ['main', 'Áttekintés'],
+                  ['company', 'Cégadatok'],
+                  ['terms', 'Fizetési feltételek'],
+                ] as const
+              ).map(([k, l]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setTab(k)}
+                  style={{
+                    border: 0,
+                    background: 'transparent',
+                    padding: '8px 14px',
+                    font: `700 14px ${FONT}`,
+                    color: tab === k ? C.navy : C.muted,
+                    borderBottom: `3px solid ${tab === k ? C.blue : 'transparent'}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {l}
+                </button>
+              ))}
             </div>
-            <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
-            <PartnerDetail p={p} mobile={mobile} embedded onBack={close} onEditItem={(leaf, key) => setTask({ leaf, key })} />
+            {tab === 'main' && (
+              <>
+                <div style={{ ...card, padding: 14 }}>
+                  <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="basic" compact={mobile} onSaved={(k) => openPartner(k)} />
+                </div>
+                <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
+                <PartnerDetail p={p} mobile={mobile} embedded part="stats" onBack={close} onEditItem={(leaf, key) => setTask({ leaf, key })} />
+              </>
+            )}
+            {tab === 'company' && (
+              <>
+                <div style={{ ...card, padding: 14 }}>
+                  <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="company" compact={mobile} onSaved={(k) => openPartner(k)} />
+                </div>
+                <PartnerDetail p={p} mobile={mobile} embedded part="names" onBack={close} />
+              </>
+            )}
+            {tab === 'terms' && <PaymentTerms p={p} />}
           </>
         ) : (
           <span style={{ font: `500 13.5px ${FONT}`, color: C.muted }}>Ehhez a névhez nem tartozik partner.</span>

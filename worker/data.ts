@@ -10,7 +10,7 @@ import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from 
 /** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
 function cleanPayRule(v: unknown): string | null {
   const r = v == null ? '' : String(v);
-  return /^(first_workday|last_workday|day:([1-9]|[12]\d|3[01]))$/.test(r) ? r : null;
+  return /^(first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r) ? r : null;
 }
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
