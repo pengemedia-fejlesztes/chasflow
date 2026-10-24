@@ -13,14 +13,25 @@ function cleanPayRule(v: unknown): string | null {
   return /^(first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r) ? r : null;
 }
 
+/** Van-e már az entries.period oszlop (0016-os migráció). A telepítés a migráció hibája esetén is kirakja a kódot – addig nélküle fut. */
+let periodCol: boolean | null = null;
+async function hasPeriod(env: Env) {
+  if (periodCol === null) {
+    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('entries') WHERE name = 'period'").first<{ n: number }>();
+    periodCol = !!r?.n;
+  }
+  return periodCol;
+}
+
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
+  const P = (await hasPeriod(env)) ? 'period, ' : '';
   const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers, navInvoices, partners] =
     await env.DB.batch([
       env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
       env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
       env.DB.prepare('SELECT * FROM series'),
       env.DB.prepare(
-        'SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date',
+        `SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
       ),
       env.DB.prepare(
         'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
@@ -97,6 +108,7 @@ function cleanEntry(e: Entry): Entry {
     note: e.note ? String(e.note).slice(0, 1000) : null,
     done: e.done ? 1 : 0,
     tentative: e.tentative ? 1 : 0,
+    period: typeof e.period === 'string' && /^\d{4}-\d{2}$/.test(e.period) ? e.period : null,
     series_id: e.series_id || null,
     link_id: e.link_id || null,
     ext_ref: e.ext_ref || null,
@@ -108,6 +120,7 @@ const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tent
 
 export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
+  const P = await hasPeriod(env);
   const stmts: D1PreparedStatement[] = [];
   for (const s of b.series || []) {
     const rep = ['once', 'monthly', 'quarterly', 'yearly'].includes(s.rep) ? s.rep : 'once';
@@ -121,15 +134,15 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     const e = cleanEntry(raw);
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, offer_at, source, ext_ref, link_id, note, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, offer_at, ${P ? 'period, ' : ''}source, ext_ref, link_id, note, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${P ? '?, ' : ''}?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, date = excluded.date, leaf_id = excluded.leaf_id, name = excluded.name,
            amount = excluded.amount, series_id = excluded.series_id, done = excluded.done, tentative = excluded.tentative,
            was_offer = MAX(entries.was_offer, excluded.was_offer), offer_at = COALESCE(entries.offer_at, excluded.offer_at),
            accepted_at = CASE WHEN excluded.tentative = 1 AND excluded.done = 0 THEN NULL
              WHEN entries.accepted_at IS NULL AND entries.tentative = 1 AND (excluded.tentative = 0 OR excluded.done = 1)
              THEN excluded.updated_at ELSE entries.accepted_at END,
-           source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
+           ${P ? 'period = excluded.period, ' : ''}source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       ).bind(
         e.id,
@@ -143,6 +156,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
         e.tentative,
         e.tentative || (raw as any).was_offer ? 1 : 0,
         e.tentative ? t : null,
+        ...(P ? [e.period ?? null] : []),
         e.source,
         e.ext_ref,
         e.link_id,
