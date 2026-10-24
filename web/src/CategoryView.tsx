@@ -28,9 +28,11 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   if (!G) return null;
   const qaLeaf = leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
 
-  const allMonths = monthRange(filters.from, filters.to);
+  // a kategória utolsó tervezett hónapjáig látszik (pl. 2027. decemberig tervezett tétel), legfeljebb 24 hónap –
   // a múltbeli hónapok is látszanak (terv vs. tény), lapozni a fejléc nyilaival lehet
-  const months = allMonths.slice(0, 12);
+  const lastPlanYm = data.entries.reduce((a, e) => (e.kind === 'plan' && !e.done && leafIds.has(e.leaf_id) && ymOf(e.date) > a ? ymOf(e.date) : a), filters.to);
+  const allMonths = monthRange(filters.from, lastPlanYm);
+  const months = allMonths.slice(0, 24);
   const visibleSet = new Set(months);
   const groupEntries = data.entries.filter((e) => leafIds.has(e.leaf_id));
   const planEntries = groupEntries.filter((e) => e.kind === 'plan');
@@ -192,12 +194,14 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       // csak rendszeres költség/bevétel: van jövő havi terv, vagy legalább 2 hónapban volt tény
       if (!plan && used.length < 2) continue;
       const suggested = Math.ceil(avg / 1000) * 1000;
-      const diff = suggested - plan;
+      const diff = avg - plan;
       const over = section === 'out' ? diff > Math.max(2000, plan * 0.05) : -diff > Math.max(2000, plan * 0.05);
       if (over) out.push({ leaf, avg, plan, suggested, diff });
     }
     return out.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
   })();
+
+  const sugMap = new Map(suggest.map((x) => [x.leaf, x]));
 
   const renderActualRow = (leaf: string, r: ActRow) => (
     <div
@@ -714,13 +718,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
           {suggest.length > 0 && (
             <div style={{ ...card, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8, border: `1px solid ${C.neg}` }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <b style={{ font: `700 15px ${FONT_H}`, color: C.neg }}>
-                  {section === 'out' ? 'Túllépés – javasolt havi keret' : 'Elmaradás – javasolt havi terv'}
-                </b>
+                <b style={{ font: `700 15px ${FONT_H}`, color: C.neg }}>▲ Tartós túllépés várható</b>
                 <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-                  az elmúlt hónapok tényleges átlaga alapján ({monthLabel(sugMonths[0])}–{monthLabel(sugMonths[sugMonths.length - 1])}) a jövő havi tervhez
-                  képest · összesen {section === 'out' ? '+' : '−'}
-                  {fmt(suggest.reduce((a, x) => a + Math.abs(x.diff), 0))} Ft / hó
+                  a terv nem változik, csak jelzés: az elmúlt hónapok ({monthLabel(sugMonths[0])}–{monthLabel(sugMonths[sugMonths.length - 1])}) tényleges
+                  átlaga több, mint a terv · a táblázatban „≈ várható” · összesen +{fmt(suggest.reduce((a, x) => a + Math.abs(x.diff), 0))} Ft / hó
                 </span>
               </div>
               {suggest.map((x) => (
@@ -743,47 +744,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     tény átlag <b style={{ color: C.neg }}>{fmt(x.avg)}</b>/hó · jövő havi terv <b style={{ color: C.navy }}>{fmt(x.plan)}</b>
                   </span>
                   <span style={{ color: C.navy }}>
-                    javasolt: <b>{fmt(x.suggested)} Ft/hó</b> ({x.diff > 0 ? '+' : ''}
-                    {fmt(x.diff)})
+                    várható túllépés: <b style={{ color: C.neg }}>+{fmt(x.diff)} Ft/hó</b> (reális keret ≈ {fmt(x.suggested)})
                   </span>
-                  {canEdit && (
-                    <button
-                      onClick={() =>
-                        x.diff > 0
-                          ? commit(
-                              genSeries({
-                                leaf: x.leaf,
-                                section,
-                                name: section === 'out' ? 'Várható többletköltség' : 'Várható többletbevétel',
-                                amount: x.diff,
-                                startYm: addMonths(ix.cur, 1),
-                                count: 12,
-                                rep: 'monthly',
-                                day: 10,
-                                payRule: ruleOf(ix, x.leaf),
-                              }),
-                              `${ix.leafById[x.leaf]?.label}: +${fmt(x.diff)} Ft/hó tervbe (12 hó) – a szerkesztőben módosíthatod`,
-                            )
-                          : openModal(x.leaf)
-                      }
-                      title={
-                        x.diff > 0
-                          ? 'A különbözet havi tételként a tervbe kerül 12 hónapra (a meglévő tételek maradnak) – utána szerkeszthető'
-                          : 'A partner tételei – itt csökkentheted a tervet'
-                      }
-                      style={{
-                        border: 0,
-                        borderRadius: 999,
-                        background: C.blue,
-                        color: '#fff',
-                        padding: '5px 12px',
-                        font: `600 12px ${FONT}`,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {x.diff > 0 ? `+${fmt(x.diff)} tervbe` : 'Terv csökkentése…'}
-                    </button>
-                  )}
                 </div>
               ))}
             </div>
@@ -864,7 +826,17 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                         {names.join(' · ') || 'nincs tétel'}
                       </span>
                     </div>
-                    <div style={{ padding: '0 8px', font: `600 11.5px ${FONT}`, color: C.blueDark }}>{prows.length + extra.length} tétel</div>
+                    <div style={{ padding: '0 8px', font: `600 11.5px ${FONT}`, color: C.blueDark, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span>{prows.length + extra.length} tétel</span>
+                      {sugMap.get(leaf) && (
+                        <span
+                          title={`Tartós túllépés: a tényleges átlag ${fmt(sugMap.get(leaf)!.avg)} Ft/hó, a terv ${fmt(sugMap.get(leaf)!.plan)} Ft – a terv nem változik`}
+                          style={{ color: C.neg, font: `700 11px ${FONT}` }}
+                        >
+                          ▲ +{fmt(sugMap.get(leaf)!.diff)}/hó
+                        </span>
+                      )}
+                    </div>
                     {months.map((m) => {
                       const plan = leafPlan(leaf, m);
                       const offer = leafOffer(leaf, m);
@@ -941,6 +913,9 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                           >
                             <b style={{ font: `700 12.5px ${FONT}`, color: bad ? C.neg : good ? GOOD : cmp ? C.blueDark : C.navy }}>{fmt(cmp ? act : plan)}</b>
                             {cmp && plan !== 0 && <span style={{ font: `500 10px ${FONT}`, color: C.muted }}>terv {fmt(plan)}</span>}
+                            {!cmp && plan !== 0 && sugMap.get(leaf) && (
+                              <span style={{ font: `700 10px ${FONT}`, color: C.neg }}>≈ {fmt(sugMap.get(leaf)!.avg)} várható</span>
+                            )}
                             {!cmp && offer !== 0 && <span style={{ font: `500 10px ${FONT}`, color: '#8A6D1C' }}>+ ajánlat {fmt(offer)}</span>}
                           </div>
                         </div>
