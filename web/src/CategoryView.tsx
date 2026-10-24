@@ -186,28 +186,33 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
         </span>
       </div>
       <div style={{ padding: '0 8px' }}>
-        {canEdit && r.recurring >= 3 && !r.planned && (
+        {canEdit && !r.planned && !r.merged && (
           <button
-            onClick={() =>
-              commit(
-                genSeries({
-                  leaf,
-                  section,
-                  name: r.name,
-                  amount: r.avg,
-                  startYm: addMonths(ix.cur, 1),
-                  count: 12,
-                  rep: 'monthly',
-                  day: 10,
-                  payRule: ruleOf(ix, leaf),
-                }),
-                `${r.name}: beütemezve havonta ${fmt(r.avg)} Ft, 12 hónap`,
-              )
-            }
-            title={`Havonta ${fmt(r.avg)} Ft (az elmúlt hónapok átlaga), 12 hónapra`}
+            onClick={() => {
+              // havi terv a következő hónaptól 12 hónapra (az eddigi összeggel és fizetési nappal), majd megnyílik a
+              // tételszerkesztő: ott állítható az ismétlődés, a fizetés napja, a kezdés és az utolsó hónap
+              const last = actualsIn
+                .filter((e) => e.leaf_id === leaf && nz(e.name) === nz(r.name))
+                .reduce<Entry | null>((x, e) => (!x || e.date > x.date ? e : x), null);
+              const amount = r.recurring >= 3 ? r.avg : Math.abs(last?.amount || r.byMonth[Object.keys(r.byMonth).sort().pop() || ''] || 0);
+              const b = genSeries({
+                leaf,
+                section,
+                name: r.name,
+                amount,
+                startYm: addMonths(ix.cur, 1),
+                count: 12,
+                rep: 'monthly',
+                day: Number(last?.date.slice(8)) || 10,
+                payRule: ruleOf(ix, leaf),
+              });
+              commit(b, `${r.name}: beütemezve havonta ${fmt(amount)} Ft, 12 hónap – a szerkesztőben módosíthatod`);
+              openModal(null, { key: b.series![0].id });
+            }}
+            title="Tervbe veszem: havonta, a következő hónaptól – utána a szerkesztőben beállíthatod a fizetés napját, az ismétlődést és hogy meddig tartson"
             style={{ border: 0, borderRadius: 999, background: C.blue, color: '#fff', padding: '5px 10px', font: `600 11.5px ${FONT}`, cursor: 'pointer' }}
           >
-            Tervbe 12 hó
+            Beütemezés
           </button>
         )}
       </div>
