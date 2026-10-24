@@ -33,6 +33,8 @@ interface Item {
   name: string;
   rep: Rep;
   open: Entry[];
+  /** a tétel összes terve (a már kifizetettek is) – a havi állapotsávhoz */
+  all: Entry[];
   next: Entry | null;
   tentative: boolean;
   billingo: boolean;
@@ -57,7 +59,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   const [picking, setPicking] = useState(!initLeaf);
   const [open, setOpen] = useState<string | null>(edit?.key ?? (initLeaf ? null : 'new'));
   const L = partner ? ix.leafById[partner] : null;
-  const defs = payDefaults(data.settings);
+  const defs = payDefaults(data.settings, section);
   const payDays = L?.pay_days ?? defs.payDays;
 
   // a partner tételei: nyitott (jövőbeli vagy lejárt) tervek tételenként
@@ -65,20 +67,23 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
     if (!partner) return [];
     const m = new Map<string, Entry[]>();
     for (const e of data.entries) {
-      if (e.kind !== 'plan' || e.leaf_id !== partner || e.done) continue;
+      if (e.kind !== 'plan' || e.leaf_id !== partner) continue;
       const k = keyOf(e);
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(e);
     }
     return [...m.entries()]
-      .map(([key, es]) => {
-        es.sort((a, b) => a.date.localeCompare(b.date));
+      .filter(([, all]) => all.some((e) => !e.done))
+      .map(([key, all]) => {
+        all.sort((a, b) => a.date.localeCompare(b.date));
+        const es = all.filter((e) => !e.done);
         const s = data.series.find((x) => x.id === es.find((e) => e.series_id)?.series_id);
         return {
           key,
           name: es[0].name || L?.label || '',
           rep: (s?.rep || (es.length > 1 ? 'monthly' : 'once')) as Rep,
           open: es,
+          all,
           next: es.find((e) => e.date >= data.today) || es[0],
           tentative: es.some((e) => e.tentative),
           billingo: es.some((e) => e.source === 'billingo'),
@@ -455,6 +460,7 @@ function ItemRow({
               <span style={{ color: '#8A6D1C' }}>· terv (még nincs számla)</span>
             )}
           </span>
+          {it.rep !== 'once' && <MonthStatus all={it.all} />}
         </span>
         <b style={{ font: `700 15px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
           {fmt(Math.abs(next?.amount || 0))} Ft
@@ -764,6 +770,45 @@ function TwoPartsEditor({ value, onChange }: { value: Parts; onChange: (p: Parts
 }
 
 // ───────── Rendszeres tétel hónaponként: melyik hónaphoz tartozik, kiszámlázva-e, később számlázzuk / kihagyjuk ─────────
+/**
+ * Havi állapotsáv: melyik hónap díja hol tart – kifizetve, kiszámlázva (nyitott / lejárt), még nincs kiszámlázva, vagy
+ * csak terv. Az elmúlt 3 és a következő 3 hónap (a tétel „melyik hónaphoz tartozik” szerint).
+ */
+function MonthStatus({ all }: { all: Entry[] }) {
+  const { data } = useStore();
+  const cur = data.today.slice(0, 7);
+  const from = addMonths(cur, -3),
+    to = addMonths(cur, 3);
+  const rows = all.filter((e) => periodOf(e) >= from && periodOf(e) <= to).sort((a, b) => periodOf(a).localeCompare(periodOf(b)));
+  if (!rows.length) return null;
+  return (
+    <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 3 }}>
+      {rows.map((e) => {
+        const doc = data.billingo.find((d) => d.plan_id === e.id);
+        const nav = (data.navInvoices || []).find((d) => d.plan_id === e.id);
+        const paid = !!e.done || doc?.payment_status === 'paid' || nav?.status === 'paid';
+        const late = e.date < data.today;
+        const [txt, fg, bg] = paid
+          ? ['fizetve ✓', '#2E7D4F', '#E8F4EC']
+          : doc || nav
+            ? [late ? 'kiszámlázva, nincs fizetve' : 'kiszámlázva', late ? C.neg : C.blueDark, late ? C.negBg : C.bg2]
+            : late
+              ? ['nincs kiszámlázva', C.neg, C.negBg]
+              : ['terv', '#8A6D1C', '#FFF9E6'];
+        return (
+          <span
+            key={e.id}
+            title={`${monthName(periodOf(e))} · fizetés ${dot(e.date)} · ${fmt(Math.abs(e.amount))} Ft${doc ? ` · számla ${doc.number || ''}` : nav ? ` · NAV-számla ${nav.invoice_number}` : ''}`}
+            style={{ borderRadius: 999, padding: '2px 8px', background: bg, color: fg, font: `600 11px ${FONT}`, whiteSpace: 'nowrap' }}
+          >
+            {monthLabel(periodOf(e))} · {txt}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onApply: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void }) {
   const { data } = useStore();
   const [moving, setMoving] = useState<string | null>(null);

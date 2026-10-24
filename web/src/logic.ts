@@ -238,9 +238,13 @@ export function ruleDateFor(ix: Parameters<typeof ruleOf>[0], leafId: string | n
 }
 
 /** Globális fizetési alapértékek (Beállítások): rendszeres = számla + N nap, egyszeri = felviteltől N nap. */
-export function payDefaults(settings: { default_pay_days?: string; default_oneoff_days?: string }) {
+/** Globális fizetési határidő; vevőre (bevétel) és szállítóra (kiadás) külön is megadható – ha nincs, a közös érték. */
+export function payDefaults(settingsObj: object, section?: Section) {
+  const settings = settingsObj as Record<string, string | undefined>;
   const n = (v: string | undefined, d: number) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Math.max(0, Math.min(180, Number(v))) : d);
-  return { payDays: n(settings.default_pay_days, DEFAULT_PAY_DAYS), oneoffDays: n(settings.default_oneoff_days, ONEOFF_DAYS) };
+  const base = { payDays: n(settings.default_pay_days, DEFAULT_PAY_DAYS), oneoffDays: n(settings.default_oneoff_days, ONEOFF_DAYS) };
+  if (!section) return base;
+  return { payDays: n(settings[`default_pay_days_${section}`], base.payDays), oneoffDays: n(settings[`default_oneoff_days_${section}`], base.oneoffDays) };
 }
 
 /**

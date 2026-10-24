@@ -7,7 +7,7 @@ import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
 import { fillPartnerTax } from './partnertax';
 import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
-import { navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
+import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
@@ -433,6 +433,14 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (bdoc && req.method === 'GET') {
     // Billingo számlakép egy kattintással (nyilvános, időkorlátos link a Billingótól)
     return json({ url: await billingoPublicUrl(env, Number(bdoc[1])) });
+  }
+  if (path === '/api/nav/invoice' && req.method === 'GET') {
+    // egy bejövő számla teljes tartalma a NAV-ból (tételsorokkal) – a riasztásoknál a sorszámra kattintva
+    const n = String(url.searchParams.get('n') || '').slice(0, 60);
+    if (!n) throw new HttpError(400, 'Hiányzó számlaszám.');
+    const row = await env.DB.prepare('SELECT partner_tax FROM nav_invoices WHERE invoice_number = ? LIMIT 1').bind(n).first<{ partner_tax: string | null }>();
+    if (!row) throw new HttpError(404, 'Ismeretlen számla.');
+    return json(await fetchInvoiceData(env, n, row.partner_tax || ''));
   }
   if (path === '/api/nav/resolve' && req.method === 'POST') {
     // NAV-számla terv nélkül: havonta tervbe / előre nem látható költség / nem kell terv

@@ -1147,50 +1147,62 @@ function AutoPayInfo({ raw }: { raw?: string }) {
   );
 }
 
-/** Globális fizetési alapértékek: ha a partnernél nincs külön fizetési feltétel, ezek számítanak. */
+/** Globális fizetési alapértékek: ha a partnernél nincs külön fizetési feltétel, ezek számítanak – vevőre és szállítóra külön is. */
 function PayDefaultsSection() {
   const { data, run, isAdmin } = useStore();
+  const st = data.settings as Record<string, string | undefined>;
   const d = payDefaults(data.settings);
-  const [pay, setPay] = useState(String(d.payDays));
-  const [one, setOne] = useState(String(d.oneoffDays));
+  const [v, setV] = useState<Record<string, string>>(() => ({
+    default_pay_days: String(d.payDays),
+    default_oneoff_days: String(d.oneoffDays),
+    default_pay_days_in: st.default_pay_days_in || '',
+    default_oneoff_days_in: st.default_oneoff_days_in || '',
+    default_pay_days_out: st.default_pay_days_out || '',
+    default_oneoff_days_out: st.default_oneoff_days_out || '',
+  }));
+  const inp = (k: string, ph?: string) => (
+    <input
+      value={v[k]}
+      placeholder={ph}
+      onChange={(e) => setV({ ...v, [k]: e.target.value.replace(/\D/g, '') })}
+      disabled={!isAdmin}
+      style={{ ...inputStyle, width: 70, textAlign: 'center' }}
+    />
+  );
+  const row = (label: string, suf: string) => (
+    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+      <b style={{ minWidth: 150, font: `700 13.5px ${FONT}`, color: C.navy }}>{label}</b>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
+        Rendszeres: számla + {inp('default_pay_days' + suf, suf ? v.default_pay_days : undefined)} nap
+      </label>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
+        Egyszeri: felviteltől {inp('default_oneoff_days' + suf, suf ? v.default_oneoff_days : undefined)} nap
+      </label>
+    </div>
+  );
   return (
     <Section
       title="Fizetési határidő (alapértelmezett)"
-      sub="Minden partnerre érvényes, akinél az adatlapon (Fizetési feltételek) nincs külön megadva. Rendszeres tételnél: számla a hónap első munkanapján + ennyi nap; egyszeri tételnél: a felviteltől ennyi nap a várható fizetés."
+      sub="Minden partnerre érvényes, akinél az adatlapon (Fizetési feltételek) nincs külön megadva. Vevőre (bevétel) és szállítóra (kiadás) külön is megadhatod – üresen hagyva a közös érték számít. Rendszeres tételnél: számla a hónap első munkanapján + ennyi nap; egyszeri tételnél: a felviteltől ennyi nap a várható fizetés."
     >
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
-          Rendszeres: számla +
-          <input
-            value={pay}
-            onChange={(e) => setPay(e.target.value.replace(/\D/g, ''))}
-            disabled={!isAdmin}
-            style={{ ...inputStyle, width: 70, textAlign: 'center' }}
-          />
-          nap
-        </label>
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
-          Egyszeri: felviteltől
-          <input
-            value={one}
-            onChange={(e) => setOne(e.target.value.replace(/\D/g, ''))}
-            disabled={!isAdmin}
-            style={{ ...inputStyle, width: 70, textAlign: 'center' }}
-          />
-          nap
-        </label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {row('Közös', '')}
+        {row('Vevők (bevétel)', '_in')}
+        {row('Szállítók (kiadás)', '_out')}
         {isAdmin && (
-          <Pill
-            kind="dark"
-            onClick={() =>
-              run(
-                () => api('/api/settings', { method: 'PUT', body: { default_pay_days: pay || null, default_oneoff_days: one || null } }),
-                `Alapértelmezett fizetési határidő: számla + ${pay || '–'} nap, egyszeri ${one || '–'} nap`,
-              )
-            }
-          >
-            Mentés
-          </Pill>
+          <div>
+            <Pill
+              kind="dark"
+              onClick={() =>
+                run(
+                  () => api('/api/settings', { method: 'PUT', body: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x || null])) }),
+                  `Fizetési határidő: közös ${v.default_pay_days || '–'} nap · vevők ${v.default_pay_days_in || v.default_pay_days} · szállítók ${v.default_pay_days_out || v.default_pay_days} nap`,
+                )
+              }
+            >
+              Mentés
+            </Pill>
+          </div>
         )}
       </div>
     </Section>

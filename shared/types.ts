@@ -153,6 +153,10 @@ export interface Settings {
   profit_target?: string; // havi eredmény-cél (Ft)
   default_pay_days?: string; // alapértelmezett fizetési határidő (nap a számlától), ha a partnernél nincs megadva
   default_oneoff_days?: string; // egyszeri tétel várható fizetése: felviteltől N nap
+  default_pay_days_in?: string; // vevőknek (bevétel) – ha üres, a közös érték
+  default_pay_days_out?: string; // szállítóknak (kiadás)
+  default_oneoff_days_in?: string;
+  default_oneoff_days_out?: string;
 }
 
 export interface DataBundle {

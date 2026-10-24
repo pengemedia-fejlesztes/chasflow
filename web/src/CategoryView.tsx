@@ -25,6 +25,20 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const firstLeaf = ix.leaves.find((l) => l.group_id === groupId && !l.archived)?.id || '';
   const [qa, setQa] = useState({ name: '', amount: '', leaf: firstLeaf, m: ix.cur, rep: 'monthly' as Rep, count: 6 });
   const [showAll, setShowAll] = useState(false);
+  // „Tények a szűrt időszakban” lista: becsukható, az állapot megmarad
+  const [factsOpen, setFactsOpenS] = useState(() => {
+    try {
+      return localStorage.getItem('cf_facts_open') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const setFactsOpen = (v: boolean) => {
+    setFactsOpenS(v);
+    try {
+      localStorage.setItem('cf_facts_open', v ? '1' : '0');
+    } catch {}
+  };
   if (!G) return null;
   const qaLeaf = leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
 
@@ -1018,13 +1032,36 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             flexWrap: 'wrap',
           }}
         >
-          <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Tények a szűrt időszakban</span>
-          <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
-            {actuals.length} tétel · {fmt(actSum)} Ft
+          <button
+            onClick={() => setFactsOpen(!factsOpen)}
+            style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', font: `700 15px ${FONT_H}`, color: C.navy }}
+          >
+            {factsOpen ? '▾' : '▸'} Tények a szűrt időszakban
+          </button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+              {actuals.length} tétel · {fmt(actSum)} Ft
+            </span>
+            <button
+              onClick={() => setFactsOpen(!factsOpen)}
+              style={{
+                border: `1px solid ${C.line2}`,
+                background: '#fff',
+                borderRadius: 999,
+                padding: '4px 12px',
+                font: `600 12px ${FONT}`,
+                color: C.blueDark,
+                cursor: 'pointer',
+              }}
+            >
+              {factsOpen ? 'Becsukás' : 'Kinyitás'}
+            </button>
           </span>
         </div>
-        {actuals.length === 0 && <div style={{ padding: 20, color: C.muted, font: `500 13.5px ${FONT}` }}>Nincs tényleges tétel ebben az időszakban.</div>}
-        {(showAll ? actuals : actuals.slice(0, 60)).map((e) => (
+        {factsOpen && actuals.length === 0 && (
+          <div style={{ padding: 20, color: C.muted, font: `500 13.5px ${FONT}` }}>Nincs tényleges tétel ebben az időszakban.</div>
+        )}
+        {(factsOpen ? (showAll ? actuals : actuals.slice(0, 60)) : []).map((e) => (
           <div
             key={e.id}
             style={{
@@ -1075,7 +1112,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             )}
           </div>
         ))}
-        {!showAll && actuals.length > 60 && (
+        {factsOpen && !showAll && actuals.length > 60 && (
           <button
             onClick={() => setShowAll(true)}
             style={{

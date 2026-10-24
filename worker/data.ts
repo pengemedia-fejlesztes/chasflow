@@ -335,7 +335,17 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (path === '/api/settings' && req.method === 'PUT') {
     requireRole(u, 'admin');
     const b = await readJson<Record<string, unknown>>(req);
-    const allowed = ['opening_balance', 'billingo_leaf_default', 'profit_target', 'default_pay_days', 'default_oneoff_days'];
+    const allowed = [
+      'opening_balance',
+      'billingo_leaf_default',
+      'profit_target',
+      'default_pay_days',
+      'default_oneoff_days',
+      'default_pay_days_in',
+      'default_pay_days_out',
+      'default_oneoff_days_in',
+      'default_oneoff_days_out',
+    ];
     for (const k of allowed) if (k in b) await setSetting(env, k, b[k] == null ? null : String(b[k]).slice(0, 200));
     await audit(env, u.id, 'settings', b);
     return json({ ok: true });

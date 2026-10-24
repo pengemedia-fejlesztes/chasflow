@@ -84,13 +84,19 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
           e,
           dd: Math.abs(Date.parse(t.date) - Date.parse(e.date)) / 86400000,
           da: Math.abs(Math.abs(e.amount) - Math.abs(t.amount)) / Math.max(1, Math.abs(t.amount)),
+          // hónap-távolság a tranzakció hónapjától: elöl a tranzakció hónapjának tervei, utána a szomszédos hónapoké
+          dm: Math.abs((Number(e.date.slice(0, 4)) - Number(t.date.slice(0, 4))) * 12 + Number(e.date.slice(5, 7)) - Number(t.date.slice(5, 7))),
         }))
         .filter((x) => x.dd <= 60)
         .sort(
           (a, b) =>
-            Number(b.e.id === plan) - Number(a.e.id === plan) || Number(b.e.leaf_id === leaf) - Number(a.e.leaf_id === leaf) || a.da - b.da || a.dd - b.dd,
+            Number(b.e.id === plan) - Number(a.e.id === plan) ||
+            a.dm - b.dm ||
+            Number(b.e.leaf_id === leaf) - Number(a.e.leaf_id === leaf) ||
+            a.da - b.da ||
+            a.dd - b.dd,
         )
-        .slice(0, 4)
+        .slice(0, 5)
         .map((x) => x.e);
 
   const step = repStep(rep);
@@ -221,6 +227,11 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                 placeholder="🔍 terv keresése…"
                 style={{ ...inputStyle, height: 32, width: 160, borderRadius: 999, fontSize: 12.5 }}
               />
+              {!pq && !planChips.some((e) => ymOf(e.date) === ymOf(t.date)) && (
+                <span style={{ alignSelf: 'center', font: `500 12px ${FONT}`, color: C.muted }}>
+                  {monthLabel(ymOf(t.date))}-ban/-ben nincs nyitott terv – a szomszédos hónapok tervei látszanak
+                </span>
+              )}
             </div>
           </div>
 

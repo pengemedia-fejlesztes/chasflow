@@ -492,10 +492,10 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
     const d = rule.match(/^day:(\d+)$/);
     if (d) return ['day', Number(d[1])];
     if (rule === 'first_workday' || rule === 'last_workday') return [rule, 0];
-    return ['inv', L?.pay_days ?? payDefaults(data.settings).payDays];
+    return ['inv', L?.pay_days ?? payDefaults(data.settings, sec).payDays];
   };
   const [mode, setMode] = useState(init()[0]);
-  const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : payDefaults(data.settings).payDays)));
+  const [n, setN] = useState(String(init()[1] || (mode === 'day' ? 10 : payDefaults(data.settings, sec).payDays)));
   const [resched, setResched] = useState(true);
   const clamp = (m: string, v: string) => Math.max(0, Math.min(m === 'day' ? 31 : 120, parseInt(v) || 0));
   const ruleOf = (m: string, v: string) => (m === 'inv' ? `inv:${clamp(m, v)}` : m === 'day' ? `day:${Math.max(1, clamp(m, v))}` : m);
@@ -527,7 +527,7 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
         Jelenleg:{' '}
         {payRuleLabel(rule || null) === 'nincs szabály'
-          ? `számla + ${L?.pay_days ?? payDefaults(data.settings).payDays} nap (alapértelmezett)`
+          ? `számla + ${L?.pay_days ?? payDefaults(data.settings, sec).payDays} nap (alapértelmezett)`
           : payRuleLabel(rule)}
       </span>
       <Seg
@@ -817,20 +817,49 @@ export function PartnerLink({ leaf, children, style }: { leaf: string; children:
 
 /** Partnertörzs: az összes partner (vevő, szállító) egy helyen – név, típus, alternatív nevek, projektek szerkesztése. */
 export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
-  const { ix, openPartner } = useStore();
+  const { ix, data, openPartner } = useStore();
   const all = useAllPartners();
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<'all' | 'vevo' | 'szallito'>('all');
   const [open, setOpen] = useState<string | null>(null);
+  // aktív partnerek: volt tranzakciója a választott időszakban, vagy van nyitott jövőbeli terve (alapból az elmúlt 3 hónap)
+  const [period, setPeriod] = useState(3);
+  const [sortBy, setSortBy] = useState<'name' | 'amount'>('name');
   const nq = normalizeText(q);
+  const activity = useMemo(() => {
+    const since = period ? addMonths(data.today.slice(0, 7), -period) + '-01' : '';
+    const m = new Map<string, { sum: number; n: number; open: boolean }>();
+    for (const e of data.entries) {
+      const x = m.get(e.leaf_id) || { sum: 0, n: 0, open: false };
+      if (e.kind === 'actual' && e.date >= since && e.date <= data.today) {
+        x.sum += Math.abs(e.amount);
+        x.n++;
+      } else if (e.kind === 'plan' && !e.done && e.date >= data.today) x.open = true;
+      m.set(e.leaf_id, x);
+    }
+    return m;
+  }, [data.entries, data.today, period]);
+  const actOf = (p: (typeof all)[number]) =>
+    p.leaves.reduce(
+      (a, l) => {
+        const x = activity.get(l.id);
+        return x ? { sum: a.sum + x.sum, n: a.n + x.n, open: a.open || x.open } : a;
+      },
+      { sum: 0, n: 0, open: false },
+    );
   const list = all
     .filter((p) => !p.leaves.every((l) => l.archived))
+    .filter((p) => {
+      if (!period || nq) return true;
+      const a = actOf(p);
+      return a.n > 0 || a.open;
+    })
     .filter((p) => {
       const k = kindOf(p, ix.sectionOf);
       return kind === 'all' || k === kind || k === 'mindketto';
     })
     .filter((p) => !nq || normalizeText([p.name, ...(p.info?.aliases || []), ...p.billingNames.map((b) => b.name)].join(' ')).includes(nq))
-    .sort((a, b) => a.name.localeCompare(b.name, 'hu'));
+    .sort((a, b) => (sortBy === 'amount' ? actOf(b).sum - actOf(a).sum : 0) || a.name.localeCompare(b.name, 'hu'));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
@@ -854,8 +883,26 @@ export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
           placeholder="Keresés névben, alternatív névben…"
           style={{ ...inputStyle, height: 42, flex: '1 1 240px' }}
         />
+        <select value={period} onChange={(e) => setPeriod(Number(e.target.value))} style={{ ...inputStyle, height: 42, width: 230 }}>
+          <option value={1}>Aktív: elmúlt 1 hónap</option>
+          <option value={3}>Aktív: elmúlt 3 hónap</option>
+          <option value={6}>Aktív: elmúlt 6 hónap</option>
+          <option value={12}>Aktív: elmúlt 12 hónap</option>
+          <option value={0}>Mind (inaktívak is)</option>
+        </select>
+        <Seg
+          value={sortBy}
+          onChange={setSortBy}
+          options={[
+            ['name', 'Név szerint'],
+            ['amount', 'Összeg szerint'],
+          ]}
+        />
       </div>
-      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{list.length} partner</span>
+      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+        {list.length} partner
+        {period ? ` · tranzakció az elmúlt ${period} hónapban, vagy nyitott terv (keresésnél mind)` : ''}
+      </span>
       {list.map((p) => {
         const k = kindOf(p, ix.sectionOf);
         const isOpen = open === p.key;
@@ -882,6 +929,11 @@ export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
                 {p.sides.out ? `−${fmt(p.sides.out.last12)}` : ''}
                 {p.sides.in || p.sides.out ? ' · 12 hó' : ''}
               </span>
+              {period > 0 && actOf(p).n > 0 && (
+                <span style={{ font: `600 12px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>
+                  {period} hó: {fmt(actOf(p).sum)} · {actOf(p).n} tétel
+                </span>
+              )}
               <Pill small kind={isOpen ? 'primary' : 'light'} onClick={() => setOpen(isOpen ? null : p.key)}>
                 {isOpen ? 'Bezár' : 'Szerkesztés'}
               </Pill>

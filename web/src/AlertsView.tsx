@@ -1,5 +1,5 @@
 // Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
-import { useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
 import { DEFAULT_PAY_DAYS } from '../../shared/workdays';
@@ -12,7 +12,7 @@ import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card } from './ui';
+import { C, FONT, FONT_H, Modal, Pill, card } from './ui';
 
 export function useFlags(): Flag[] {
   const { data, ix } = useStore();
@@ -86,6 +86,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   const st = useStore();
   const { data, ix, canEdit, run, commit } = st;
   const flags = useFlags();
+  const [invoice, setInvoice] = useState<string | null>(null);
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const from = flagsFrom(data.entries, data.today);
   const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
@@ -110,6 +111,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   const pad = mobile ? '14px 16px 24px' : '28px 32px 120px';
   return (
     <div style={{ padding: pad, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 980 }}>
+      {invoice && <NavInvoiceModal number={invoice} onClose={() => setInvoice(null)} />}
       {!mobile && (
         <div>
           <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.neg, marginBottom: 8 }}>Riasztások</div>
@@ -171,7 +173,20 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                       {f.kind === 'target' ? (
                         'havi eredmény-cél (Beállítások → Statisztikák)'
                       ) : f.nav ? (
-                        `${f.nav.invoice_number} · kelt ${dot(f.nav.issue_date || f.date)} · fizetendő ${dot(f.date)}`
+                        <>
+                          <a
+                            href="#"
+                            title="A számla megnyitása (NAV Online Számla)"
+                            onClick={(ev) => {
+                              ev.preventDefault();
+                              setInvoice(f.nav!.invoice_number);
+                            }}
+                            style={{ color: C.blueDark, fontWeight: 700, textDecoration: 'underline' }}
+                          >
+                            {f.nav.invoice_number} ↗
+                          </a>
+                          {` · kelt ${dot(f.nav.issue_date || f.date)} · fizetendő ${dot(f.date)}`}
+                        </>
                       ) : (
                         <>
                           {dot(f.date)} ·{' '}
@@ -423,5 +438,115 @@ export function FlagBanner({ n, kinds, onClick, mobile }: { n: number; kinds: st
       </span>
       <span style={{ font: `600 13px ${FONT}`, color: C.neg }}>Megnézem →</span>
     </button>
+  );
+}
+
+interface NavInvoiceData {
+  number: string;
+  supplier: string;
+  supplierTax: string;
+  supplierAddress: string;
+  customer: string;
+  issueDate: string;
+  deliveryDate: string;
+  paymentDate: string;
+  paymentMethod: string;
+  currency: string;
+  lines: { desc: string; qty: number | null; unit: string; unitPrice: number | null; net: number; vat: string; gross: number }[];
+  net: number;
+  vat: number;
+  gross: number;
+}
+
+const PAY_METHOD: Record<string, string> = { TRANSFER: 'átutalás', CASH: 'készpénz', CARD: 'bankkártya', VOUCHER: 'utalvány', OTHER: 'egyéb' };
+const UNIT: Record<string, string> = { PIECE: 'db', HOUR: 'óra', DAY: 'nap', MONTH: 'hó', KILOGRAM: 'kg', LITER: 'l', KWH: 'kWh', KILOMETER: 'km' };
+
+/** Bejövő számla a NAV Online Számlából: fejadatok, tételsorok, összesítő. */
+export function NavInvoiceModal({ number, onClose }: { number: string; onClose: () => void }) {
+  const { data } = useStore();
+  const [inv, setInv] = useState<NavInvoiceData | null>(null);
+  const [err, setErr] = useState('');
+  const local = (data.navInvoices || []).find((n) => n.invoice_number === number);
+  useEffect(() => {
+    let off = false;
+    api<NavInvoiceData>(`/api/nav/invoice?n=${encodeURIComponent(number)}`)
+      .then((r) => !off && setInv(r))
+      .catch((e) => !off && setErr(e.message || 'Nem sikerült lekérni a számlát.'));
+    return () => {
+      off = true;
+    };
+  }, [number]);
+  const dt = (d?: string | null) => (d ? d.replace(/-/g, '.') + '.' : '–');
+  const cell = { padding: '7px 8px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, fontVariantNumeric: 'tabular-nums' as const };
+  return (
+    <Modal onClose={onClose} width={820}>
+      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <span style={{ font: `600 12px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted }}>Bejövő számla · NAV Online Számla</span>
+        <b style={{ font: `800 22px ${FONT_H}`, color: C.navy }}>{inv?.supplier || local?.partner_name || number}</b>
+        <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+          {number}
+          {inv?.supplierTax || local?.partner_tax ? ` · adószám ${inv?.supplierTax || local?.partner_tax}` : ''}
+          {inv?.supplierAddress ? ` · ${inv.supplierAddress}` : ''}
+        </span>
+        {!inv && !err && <span style={{ color: C.muted, font: `500 13px ${FONT}` }}>Számla lekérése a NAV-tól…</span>}
+        {err && (
+          <span style={{ color: C.neg, font: `500 13px ${FONT}` }}>
+            {err}
+            {local ? ` · a tárolt adatok: kelt ${dt(local.issue_date)}, fizetendő ${dt(local.payment_date)}, ${fmt(Math.abs(local.gross))} Ft` : ''}
+          </span>
+        )}
+        {inv && (
+          <>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', font: `500 13px ${FONT}`, color: C.ink }}>
+              <span>
+                Kelt: <b>{dt(inv.issueDate)}</b>
+              </span>
+              <span>
+                Teljesítés: <b>{dt(inv.deliveryDate)}</b>
+              </span>
+              <span>
+                Fizetési határidő: <b>{dt(inv.paymentDate)}</b>
+              </span>
+              <span>
+                Fizetés: <b>{PAY_METHOD[inv.paymentMethod] || inv.paymentMethod || '–'}</b>
+              </span>
+              {inv.customer && (
+                <span>
+                  Vevő: <b>{inv.customer}</b>
+                </span>
+              )}
+            </div>
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 90px 110px 110px 60px 110px', minWidth: 700 }}>
+                {['Megnevezés', 'Mennyiség', 'Egységár', 'Nettó', 'ÁFA', 'Bruttó'].map((h, i) => (
+                  <div key={h} style={{ padding: '8px', background: C.bg, font: `700 12px ${FONT}`, color: C.navy, textAlign: i ? 'right' : 'left' }}>
+                    {h}
+                  </div>
+                ))}
+                {inv.lines.map((l, i) => (
+                  <Fragment key={i}>
+                    <div style={cell}>{l.desc}</div>
+                    <div style={{ ...cell, textAlign: 'right' }}>{l.qty != null ? `${l.qty} ${UNIT[l.unit] || l.unit.toLowerCase()}` : ''}</div>
+                    <div style={{ ...cell, textAlign: 'right' }}>{l.unitPrice != null ? fmt(l.unitPrice) : ''}</div>
+                    <div style={{ ...cell, textAlign: 'right' }}>{fmt(l.net)}</div>
+                    <div style={{ ...cell, textAlign: 'right' }}>{l.vat}</div>
+                    <div style={{ ...cell, textAlign: 'right', fontWeight: 700 }}>{fmt(l.gross)}</div>
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 18, justifyContent: 'flex-end', font: `600 14px ${FONT}`, color: C.navy }}>
+              <span>Nettó {fmt(inv.net)} Ft</span>
+              <span>ÁFA {fmt(inv.vat)} Ft</span>
+              <span style={{ font: `800 16px ${FONT_H}` }}>Bruttó {fmt(inv.gross)} Ft</span>
+              {inv.currency !== 'HUF' && <span style={{ color: C.muted }}>(eredeti pénznem: {inv.currency})</span>}
+            </div>
+          </>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Pill onClick={onClose}>Bezárás</Pill>
+        </div>
+      </div>
+    </Modal>
   );
 }

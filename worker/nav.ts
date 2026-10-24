@@ -111,12 +111,12 @@ async function contactEmail(env: Env): Promise<string> {
 }
 
 /** POST a NAV-nak; átmeneti hálózati hibánál egyszer újrapróbálja, és érthető hibaüzenetet ad. */
-async function navPost(env: Env, body: string): Promise<string> {
+async function navPost(env: Env, body: string, op = 'queryInvoiceDigest'): Promise<string> {
   let last = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     let res: Response;
     try {
-      res = await fetch((env.NAV_API_URL || BASE) + '/queryInvoiceDigest', {
+      res = await fetch((env.NAV_API_URL || BASE) + '/' + op, {
         method: 'POST',
         headers: { 'Content-Type': 'application/xml', Accept: 'application/xml', 'User-Agent': 'CashflowTervezo/1.0 (+360 Marketing)' },
         body,
@@ -399,4 +399,112 @@ export async function navInvoiceRefs(env: Env): Promise<Record<string, string>> 
   const out: Record<string, string> = {};
   r.results.forEach((x) => (out[x.plan_id] = x.invoice_number));
   return out;
+}
+
+// ── Egy számla teljes tartalma (tételsorokkal) – a riasztásoknál a számla sorszámára kattintva ──
+export interface NavInvoiceData {
+  number: string;
+  supplier: string;
+  supplierTax: string;
+  supplierAddress: string;
+  customer: string;
+  issueDate: string;
+  deliveryDate: string;
+  paymentDate: string;
+  paymentMethod: string;
+  currency: string;
+  lines: { desc: string; qty: number | null; unit: string; unitPrice: number | null; net: number; vat: string; gross: number }[];
+  net: number;
+  vat: number;
+  gross: number;
+}
+
+export function dataRequestXml(env: Env, o: { requestId: string; timestamp: string; contact: string; number: string; supplierTax: string }): string {
+  // a lekérdezés fejléce ugyanaz, mint a digestnél – csak a törzs más
+  const head = digestRequestXml(env, { ...o, page: 1, from: '2000-01-01', to: '2000-01-01' })
+    .replace('QueryInvoiceDigestRequest', 'QueryInvoiceDataRequest')
+    .replace(/<page>[\s\S]*<\/QueryInvoiceDigestRequest>/, '');
+  return (
+    head +
+    `<invoiceNumberQuery><invoiceNumber>${esc(o.number)}</invoiceNumber><invoiceDirection>INBOUND</invoiceDirection>` +
+    (o.supplierTax ? `<supplierTaxNumber>${esc(o.supplierTax.replace(/\D/g, '').slice(0, 8))}</supplierTaxNumber>` : '') +
+    `</invoiceNumberQuery>\n</QueryInvoiceDataRequest>`
+  );
+}
+
+async function gunzip(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const ds = new DecompressionStream('gzip');
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return await new Response(stream).text();
+}
+
+export function parseInvoiceXml(raw: string, number: string): NavInvoiceData {
+  const x = stripNs(raw);
+  const num = (v: string) => (v === '' ? null : Math.round(parseFloat(v) * 100) / 100);
+  const sup = tag(x, 'supplierInfo');
+  const cus = tag(x, 'customerInfo');
+  const det = tag(x, 'invoiceDetail');
+  const addr = tag(sup, 'supplierAddress');
+  const lines: NavInvoiceData['lines'] = [];
+  for (const m of x.matchAll(/<line>([\s\S]*?)<\/line>/g)) {
+    const l = m[1];
+    const net = Math.round(parseFloat(tag(l, 'lineNetAmountHUF') || tag(l, 'lineNetAmount') || '0'));
+    const vatAmt = Math.round(parseFloat(tag(l, 'lineVatAmountHUF') || tag(l, 'lineVatAmount') || '0'));
+    const gross = Math.round(parseFloat(tag(l, 'lineGrossAmountNormalHUF') || tag(l, 'lineGrossAmountNormal') || '')) || net + vatAmt;
+    const pct = tag(l, 'vatPercentage');
+    lines.push({
+      desc: tag(l, 'lineDescription') || '—',
+      qty: num(tag(l, 'quantity')),
+      unit: tag(l, 'unitOfMeasureOwn') || tag(l, 'unitOfMeasure'),
+      unitPrice: num(tag(l, 'unitPrice')),
+      net,
+      vat: pct ? `${Math.round(parseFloat(pct) * 100)}%` : tag(l, 'vatExemption') ? 'mentes' : '',
+      gross,
+    });
+  }
+  const sum = tag(x, 'invoiceSummary');
+  const net = Math.round(parseFloat(tag(sum, 'invoiceNetAmountHUF') || tag(sum, 'invoiceNetAmount') || '0'));
+  const vat = Math.round(parseFloat(tag(sum, 'invoiceVatAmountHUF') || tag(sum, 'invoiceVatAmount') || '0'));
+  const gross = Math.round(parseFloat(tag(sum, 'invoiceGrossAmountHUF') || tag(sum, 'invoiceGrossAmount') || '')) || net + vat;
+  return {
+    number: tag(x, 'invoiceNumber') || number,
+    supplier: tag(sup, 'supplierName'),
+    supplierTax: [tag(sup, 'taxpayerId'), tag(sup, 'vatCode'), tag(sup, 'countyCode')].filter(Boolean).join('-'),
+    supplierAddress: [
+      tag(addr, 'postalCode'),
+      tag(addr, 'city'),
+      tag(addr, 'streetName'),
+      tag(addr, 'publicPlaceCategory'),
+      tag(addr, 'number'),
+      tag(addr, 'additionalAddressDetail'),
+    ]
+      .filter(Boolean)
+      .join(' '),
+    customer: tag(cus, 'customerName'),
+    issueDate: tag(x, 'invoiceIssueDate'),
+    deliveryDate: tag(det, 'invoiceDeliveryDate'),
+    paymentDate: tag(det, 'paymentDate'),
+    paymentMethod: tag(det, 'paymentMethod'),
+    currency: tag(det, 'currencyCode') || 'HUF',
+    lines,
+    net,
+    vat,
+    gross,
+  };
+}
+
+/** NAV queryInvoiceData: a bejövő számla teljes tartalma (base64, esetleg gzip-pel tömörítve). */
+export async function fetchInvoiceData(env: Env, number: string, supplierTax: string): Promise<NavInvoiceData> {
+  if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat.');
+  const requestId = ('RID' + randomId().replace(/[^A-Za-z0-9]/g, '')).slice(0, 30);
+  const timestamp = new Date().toISOString().replace(/\.\d+Z$/, '.000Z');
+  const body = dataRequestXml(env, { requestId, timestamp, contact: await contactEmail(env), number, supplierTax });
+  const text = stripNs(await navPost(env, body, 'queryInvoiceData'));
+  const func = tag(text, 'funcCode');
+  if (func && func !== 'OK') throw new HttpError(502, `NAV hiba: ${tag(text, 'errorCode') || func} – ${tag(text, 'message') || 'ismeretlen'}`);
+  const b64 = tag(text, 'invoiceData');
+  if (!b64) throw new HttpError(404, 'A NAV nem adott vissza számlaadatot ehhez a sorszámhoz.');
+  const bin = Uint8Array.from(atob(b64.replace(/\s+/g, '')), (c) => c.charCodeAt(0));
+  const xml = tag(text, 'compressedContentIndicator') === 'true' ? await gunzip(bin) : new TextDecoder().decode(bin);
+  return parseInvoiceXml(xml, number);
 }
