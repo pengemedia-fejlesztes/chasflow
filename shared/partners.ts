@@ -65,12 +65,13 @@ function components(es: Entry[], sectionOf: (leaf: string) => Section): Componen
     const name = (e.name || '').replace(/\s*·\s*Penge.*$/i, '').trim() || '(név nélkül)';
     const k = sec + '|' + name.toLowerCase();
     const c = m.get(k) || { name, section: sec, total: 0, count: 0, last: e.date };
-    c.total += Math.abs(e.amount);
+    // előjeles: a bevételi oldalon a jóváíró számla (mínusz) csökkenti, a kiadásin a visszatérítés
+    c.total += sec === 'in' ? e.amount : -e.amount;
     c.count++;
     if (e.date > c.last) c.last = e.date;
     m.set(k, c);
   }
-  return [...m.values()].sort((a, b) => b.total - a.total);
+  return [...m.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
 }
 
 export function partnerStats(

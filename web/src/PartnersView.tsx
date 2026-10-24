@@ -192,8 +192,15 @@ function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: 
           {future ? (e.tentative ? ' · ajánlat' : late ? ' · lejárt terv' : ' · terv') : ''}
         </span>
       </span>
-      <b style={{ font: `700 13.5px ${FONT}`, color: sec === 'in' ? C.navy : C.muted, fontVariantNumeric: 'tabular-nums' }}>
-        {sec === 'in' ? '+' : '−'}
+      {/* előjel a pénzmozgás iránya szerint: a jóváíró (mínuszos) számla a bevételi oldalon is mínusz */}
+      <b
+        style={{
+          font: `700 13.5px ${FONT}`,
+          color: e.amount < 0 && sec === 'in' ? C.neg : sec === 'in' ? C.navy : C.muted,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {e.amount < 0 ? '−' : '+'}
         {fmt(Math.abs(e.amount))}
       </b>
       {click && <span style={{ font: `600 12px ${FONT}`, color: C.blueDark }}>Szerkesztés ›</span>}
@@ -202,7 +209,7 @@ function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: 
 }
 
 function Comps({ list }: { list: Component[] }) {
-  const tot = list.reduce((s, c) => s + c.total, 0) || 1;
+  const tot = list.reduce((s, c) => s + Math.abs(c.total), 0) || 1;
   return (
     <>
       {list.slice(0, 8).map((c) => (
@@ -214,10 +221,13 @@ function Comps({ list }: { list: Component[] }) {
                 · {c.section === 'in' ? 'bevétel' : 'kiadás'} · {c.count} db
               </span>
             </span>
-            <b style={{ font: `700 13px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(c.total)}</b>
+            <b style={{ font: `700 13px ${FONT}`, color: c.total < 0 ? C.neg : C.navy, fontVariantNumeric: 'tabular-nums' }}>
+              {c.total < 0 ? '−' : ''}
+              {fmt(Math.abs(c.total))}
+            </b>
           </div>
           <div style={{ height: 4, borderRadius: 999, background: C.line3 }}>
-            <div style={{ width: pct(c.total / tot), height: '100%', borderRadius: 999, background: c.section === 'in' ? C.blue : C.muted2 }} />
+            <div style={{ width: pct(Math.abs(c.total) / tot), height: '100%', borderRadius: 999, background: c.section === 'in' ? C.blue : C.muted2 }} />
           </div>
         </div>
       ))}
