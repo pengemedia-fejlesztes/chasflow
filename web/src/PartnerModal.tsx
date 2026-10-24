@@ -157,7 +157,12 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                   section={section}
                   expanded={open === it.key}
                   onToggle={() => setOpen(open === it.key ? null : it.key)}
-                  onSave={(b, msg) => commit(b, msg).then(() => setOpen(null))}
+                  onSave={(b, msg) => {
+                    // a szerkesztő nyitva marad (újraütemezéskor a tétel új sorozat-azonosítót kap → azt nyitjuk meg)
+                    commit(b, msg);
+                    const nk = (b as { series?: { id: string }[] }).series?.[0]?.id || (b.upsert?.[0] ? keyOf(b.upsert[0]) : null);
+                    setOpen(nk && b.upsert?.some((e) => e.leaf_id === partner) ? nk : null);
+                  }}
                   onApply={(b, msg) => commit(b, msg)}
                 />
               ))}
@@ -275,8 +280,15 @@ function ItemRow({
   const firstOpen = regular[0] || editable[0] || next;
   const series = data.series.find((x) => x.id === it.open.find((e) => e.series_id)?.series_id);
   const initDay = (() => {
+    // a tervek dátumaiból: ha mind a hónap első / utolsó munkanapjára esik (és nem egy fix napra), az a választás
+    const ds = regular.map((e) => e.date);
+    const fixed = series?.day && ds.every((d) => d === payDate(ymOf(d), `day:${series.day}`, series.day));
+    if (!fixed && ds.length) {
+      if (ds.every((d) => d === payDate(ymOf(d), 'last_workday', 1))) return 'last_workday';
+      if (ds.every((d) => d === payDate(ymOf(d), 'first_workday', 1))) return 'first_workday';
+    }
     const r = ix.leafById[curLeaf]?.pay_rule || '';
-    if (r === 'first_workday' || r === 'last_workday') return r;
+    if (!ds.length && (r === 'first_workday' || r === 'last_workday')) return r;
     // a sorozat beállított napja (a hétvégére eső fizetés az előző munkanapra kerül, ezért nem a dátumból olvassuk)
     return `day:${series?.day || Number((firstOpen?.date || '').slice(8)) || 1}`;
   })();
