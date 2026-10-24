@@ -6,7 +6,6 @@ import { displayGroup } from '../../shared/categories';
 import { addMonths, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
-import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
 import { REP, acceptOffer, genSeries, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
@@ -44,7 +43,7 @@ interface Item {
 }
 
 export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; edit?: EditTarget | null; onClose: () => void }) {
-  const { ix, data, commit, run } = useStore();
+  const { ix, data, commit } = useStore();
   // a sorozaton kívüli, azonos nevű tervek a sorozat tételéhez tartoznak (mint a táblázatban)
   const keyOf = useMemo(() => {
     const sk = new Map<string, string>();
@@ -60,7 +59,6 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   const L = partner ? ix.leafById[partner] : null;
   const defs = payDefaults(data.settings);
   const payDays = L?.pay_days ?? defs.payDays;
-  const [term, setTerm] = useState<string | null>(null);
 
   // a partner tételei: nyitott (jövőbeli vagy lejárt) tervek tételenként
   const items: Item[] = useMemo(() => {
@@ -96,43 +94,11 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
       .sort((a, b) => (a.next?.date || '').localeCompare(b.next?.date || ''));
   }, [partner, data.entries, data.series, data.today, data.billingo, data.navInvoices, keyOf, L]);
 
-  // fizetési fegyelem: Billingo számlák szerinti határidő és a tényleges beérkezés átlaga (nap)
-  const avg = useMemo(() => {
-    if (!partner) return null;
-    const byId = new Map(data.entries.map((e) => [e.id, e]));
-    const terms: number[] = [];
-    const real: number[] = [];
-    for (const d of data.billingo) {
-      const p = d.plan_id ? byId.get(d.plan_id) : undefined;
-      if (!p || p.leaf_id !== partner || !d.invoice_date) continue;
-      if (d.due_date) terms.push((Date.parse(d.due_date) - Date.parse(d.invoice_date)) / 864e5);
-      const a = p.done && p.link_id ? byId.get(p.link_id) : undefined;
-      if (a) real.push((Date.parse(a.date) - Date.parse(d.invoice_date)) / 864e5);
-    }
-    const mean = (xs: number[]) => (xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : null);
-    return { term: mean(terms), real: mean(real), n: real.length };
-  }, [partner, data.billingo, data.entries]);
-
-  const saveTerm = () => {
-    if (!partner || term === null) return;
-    const v = term.trim() === '' ? null : Math.min(180, num(term));
-    setTerm(null);
-    if (v === (L?.pay_days ?? null)) return;
-    run(
-      () =>
-        api(`/api/leaves/${partner}`, {
-          method: 'PATCH',
-          body: { pay_days: v, ...(!L?.pay_rule || /^inv:/.test(L.pay_rule) ? { pay_rule: v === null ? null : `inv:${v}` } : {}) },
-        }),
-      `${L?.label}: fizetési határidő ${v ?? defs.payDays} nap`,
-    );
-  };
-
   return (
     <Modal onClose={onClose} width={760}>
       <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <span style={eyebrow}>{section === 'in' ? 'Partner · bevétel' : 'Partner · kiadás'}</span>
+          <span style={eyebrow}>{section === 'in' ? 'Vevő · bevétel' : 'Szállító · kiadás'}</span>
           {L && !picking ? (
             <span style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
               <b style={{ font: `800 26px/1.1 ${FONT_H}`, color: C.navy }}>{L.label}</b>
@@ -181,40 +147,6 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
 
         {L && !picking && (
           <>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                flexWrap: 'wrap',
-                padding: '10px 12px',
-                borderRadius: 12,
-                background: C.bg,
-                font: `500 13px ${FONT}`,
-                color: C.ink,
-              }}
-            >
-              <span style={eyebrow}>Fizetési határidő</span>
-              <input
-                inputMode="numeric"
-                value={term ?? String(payDays)}
-                onChange={(e) => setTerm(e.target.value.replace(/\D/g, '').slice(0, 3))}
-                onBlur={saveTerm}
-                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                style={{ width: 52, height: 32, border: `1px solid ${C.line2}`, borderRadius: 8, textAlign: 'center', font: `700 14px ${FONT}` }}
-              />
-              <span>nap a számlától</span>
-              <span style={{ color: C.muted }}>
-                · rendszeres: a hónap első munkanapján számlázunk + {payDays} nap · egyszeri: felviteltől {defs.oneoffDays} nap
-              </span>
-              {avg && (avg.term !== null || avg.real !== null) && (
-                <span style={{ flexBasis: '100%', color: C.muted, font: `500 12.5px ${FONT}` }}>
-                  Eddigi számlák: {avg.term !== null ? `átlagos határidő ${avg.term} nap` : ''}
-                  {avg.real !== null ? ` · ténylegesen átlag ${avg.real} nap alatt fizetett (${avg.n} számla)` : ''}
-                </span>
-              )}
-            </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
               {items.length === 0 && <div style={{ padding: '14px 16px', color: C.muted, font: `500 13.5px ${FONT}` }}>Még nincs nyitott tétele.</div>}
               {items.map((it, i) => (
@@ -271,6 +203,35 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   );
 }
 
+/** Fizetés napja: a hónap adott napja, vagy első / utolsó munkanap (a hétvégi nap az előző munkanapra kerül) */
+const DAY_OPTS: [string, string][] = [
+  ['first_workday', 'Első munkanap'],
+  ...Array.from({ length: 31 }, (_, i) => [`day:${i + 1}`, `${i + 1}.`] as [string, string]),
+  ['last_workday', 'Utolsó munkanap'],
+];
+const MONTH_OPTS: [number, string][] = [
+  [3, '3 hó'],
+  [6, '6 hó'],
+  [12, '12 hó'],
+  [24, '24 hó'],
+  [36, '36 hó'],
+];
+function DaySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, height: 36, width: 170, padding: '0 10px' }}>
+      {DAY_OPTS.map(([v, l]) => (
+        <option key={v} value={v}>
+          {l}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Egy tétel szerkesztése – minden változás azonnal mentődik (nincs „Mentés” gomb): a név és az összeg a mező elhagyásakor,
+ * a többi (ismétlődés, fizetés napja, tervezés hossza, dátum, ajánlat, áthelyezés) a választáskor.
+ */
 function ItemRow({
   it,
   first,
@@ -286,91 +247,123 @@ function ItemRow({
   expanded: boolean;
   onToggle: () => void;
   onSave: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void;
-  /** mentés a szerkesztő nyitva hagyásával (egy hónap áthelyezése / kihagyása) */
+  /** mentés a szerkesztő nyitva hagyásával */
   onApply: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void;
 }) {
   const next = it.next;
+  const { ix, data, run, canEdit } = useStore();
+  const editable = it.open.filter((e) => e.source !== 'billingo');
+  // a „később számlázzuk” hónapok (más hónapra tett fizetés) újraütemezéskor megmaradnak
+  const shifted = editable.filter((e) => e.period && e.period !== ymOf(e.date));
+  const regular = editable.filter((e) => !shifted.includes(e));
+  const curLeaf = next?.leaf_id || it.open[0]?.leaf_id || '';
+  // az „Ajánlatok” csoportban lévő tétel (elfogadás után a Projektekbe kerül)
+  const inOffers = /aj[aá]nlat/i.test(ix.groupById[ix.leafById[curLeaf]?.group_id]?.label || '');
+  const firstOpen = regular[0] || editable[0] || next;
+  const series = data.series.find((x) => x.id === it.open.find((e) => e.series_id)?.series_id);
+  const initDay = (() => {
+    const r = ix.leafById[curLeaf]?.pay_rule || '';
+    if (r === 'first_workday' || r === 'last_workday') return r;
+    // a sorozat beállított napja (a hétvégére eső fizetés az előző munkanapra kerül, ezért nem a dátumból olvassuk)
+    return `day:${series?.day || Number((firstOpen?.date || '').slice(8)) || 1}`;
+  })();
+  const initMonths = Math.max(1, regular.length * repStep(it.rep));
   const [name, setName] = useState(it.name);
   const [amount, setAmount] = useState(String(Math.abs(next?.amount || 0)));
-  const [date, setDate] = useState(next?.date || '');
-  const [tentative, setTentative] = useState(it.tentative);
-  const [rep, setRep] = useState<Mode>(it.rep);
-  const [parts, setParts] = useState<Parts>(() => halves(Math.abs(next?.amount || 0), next?.date || new Date().toISOString().slice(0, 10)));
-  const { ix, data, run } = useStore();
-  // az „Ajánlatok” csoportban lévő tétel (elfogadás után a Projektekbe kerül)
-  const inOffers = /aj[aá]nlat/i.test(ix.groupById[ix.leafById[it.open[0]?.leaf_id]?.group_id]?.label || '');
-  const curLeaf = next?.leaf_id || it.open[0]?.leaf_id || '';
-  const [leafTo, setLeafTo] = useState(curLeaf);
+  const [day, setDay] = useState(initDay);
+  const [months, setMonths] = useState(initMonths);
   const [pickLeaf, setPickLeaf] = useState(false);
-  const moved = !!leafTo && leafTo !== curLeaf;
-  const amt = num(amount);
-  const editable = it.open.filter((e) => e.source !== 'billingo');
-  /** másik partnerhez / projekthez áthelyezés: a nyitott tételek és a sorozatuk is átkerül */
-  const moveTo = <T extends { upsert?: Entry[]; series?: any[] }>(b: T, target: string): T => {
-    if (!target || target === curLeaf) return b;
-    b.upsert = (b.upsert || []).map((e) => ({ ...e, leaf_id: target }));
-    const sids = new Set((b.upsert || []).map((e) => e.series_id).filter(Boolean));
-    const ser = data.series.filter((x) => sids.has(x.id) && !(b.series || []).some((y: any) => y.id === x.id)).map((x) => ({ ...x, leaf_id: target }));
-    b.series = [...(b.series || []).map((x: any) => ({ ...x, leaf_id: target })), ...ser];
+
+  /** a nyitott, nem kiszámlázott tervek újragenerálása (ismétlődés, fizetés napja, tervezés hossza változásakor) */
+  const regen = (o: { rep: Rep; day: string; months: number; tentative?: boolean; startDate?: string }) => {
+    const start = o.startDate || firstOpen?.date || data.today;
+    const dnum = Number(o.day.replace(/\D/g, '')) || 1;
+    const b = genSeries({
+      leaf: curLeaf,
+      section,
+      name: name.trim() || it.name,
+      amount: num(amount),
+      startYm: ymOf(start),
+      count: o.rep === 'once' ? 1 : o.months,
+      rep: o.rep,
+      day: dnum,
+      tentative: o.tentative ?? it.tentative,
+      payRule: o.rep === 'once' ? null : o.day,
+    });
+    if (o.rep === 'once' && b.upsert?.[0]) {
+      b.upsert[0].date = start;
+      b.upsert[0].series_id = null;
+      b.series = [];
+    }
+    // a később számlázott hónap nem jön létre újra (megmarad a saját, későbbi fizetésével)
+    const keep = new Set(shifted.map((e) => e.period));
+    b.upsert = (b.upsert || []).filter((e) => !keep.has(ymOf(e.date)));
+    b.delete = regular.map((e) => e.id);
     return b;
   };
-  const whereMsg = (target: string) =>
-    target && target !== curLeaf
-      ? ` → ${ix.leafById[target]?.label || 'Ajánlatok'} (${displayGroup(ix.groupById[ix.leafById[target]?.group_id]?.label || 'Ajánlatok')})`
-      : '';
-  const save = async () => {
-    if (rep !== 'twice' && !amt) return alert('Adj meg összeget.');
-    // ajánlat fázisba téve: a bevételi tétel az „Ajánlatok” csoportba kerül (ha nem választottál kézzel másik helyet)
-    const toOffer = section === 'in' && tentative && !inOffers && !moved;
-    const target = moved ? leafTo : toOffer ? await offerLeafFor(ix, curLeaf) : curLeaf;
-    const movedMsg = whereMsg(target);
-    if (rep === 'twice') {
+  const scheduleMsg = (r: Rep, d: string, m: number) =>
+    r === 'once' ? 'egyszeri' : `${REP[r].toLowerCase()}, fizetés: ${DAY_OPTS.find(([v]) => v === d)?.[1] || d}, ${m} hónapra`;
+
+  // ── azonnali mentések ──
+  const saveName = () => {
+    const n = name.trim();
+    if (!n || n === it.name) return;
+    onApply({ upsert: it.open.map((e) => ({ ...e, name: n })) }, `${it.name} → ${n}: átnevezve`);
+  };
+  const saveAmount = () => {
+    const a = num(amount);
+    if (!a || a === Math.abs(next?.amount || 0)) return;
+    // a már kiszámlázott (Billingo) tétel összege a számláé
+    onApply({ upsert: editable.map((e) => ({ ...e, amount: signed(section, a) })) }, `${it.name}: ${fmt(a)} Ft (${editable.length} nyitott tétel)`);
+  };
+  const saveDate = (d: string) => next && onApply({ upsert: [{ ...next, date: d }] }, `${it.name}: fizetés ${dot(d)}`);
+  const saveRep = (r: Mode) => {
+    if (r === it.rep || !num(amount)) return;
+    if (r === 'twice') {
+      // két részlet: fele-fele (a 2. egy hónappal később) – utána részletenként szerkeszthető
       const base = (name.trim() || it.name).replace(/\s*[–-]\s*\d\. részlet$/, '');
-      const b = twoPartBatch(next?.leaf_id || curLeaf, section, base, parts, tentative);
+      const b = twoPartBatch(curLeaf, section, base, halves(num(amount), firstOpen?.date || data.today), it.tentative);
       if (!b) return;
       b.delete = editable.map((e) => e.id);
-      onSave(moveTo(b, target), `${base}: 2 részlet (${fmt(num(parts.a1))} + ${fmt(num(parts.a2))} Ft)${movedMsg}`);
+      onSave(b, `${base}: 2 részletre bontva – a részletek összege és dátuma külön állítható`);
       return;
     }
-    if (rep !== it.rep && next) {
-      // ismétlődés váltás: a nyitott (nem kiszámlázott) tervek újragenerálódnak a következő dátumtól
-      const start = (rep === 'once' ? date : next.date) || next.date;
-      const b = genSeries({
-        leaf: next.leaf_id,
-        section,
-        name: name.trim() || it.name,
-        amount: amt,
-        startYm: ymOf(start),
-        count: rep === 'once' ? 1 : rep === 'yearly' ? 36 : 12,
-        rep,
-        day: Number(start.slice(8)) || 1,
-        tentative,
-      });
-      if (rep === 'once' && b.upsert?.[0]) {
-        b.upsert[0].date = start;
-        b.series = [];
-        b.upsert[0].series_id = null;
-      }
-      b.delete = editable.map((e) => e.id);
-      onSave(moveTo(b, target), `${name || it.name}: ${REP[rep].toLowerCase()} · ${b.upsert!.length} tétel${movedMsg}`);
-      return;
-    }
-    const upsert = editable.map((e) => ({
-      ...e,
-      name: name.trim() || e.name,
-      amount: signed(section, amt),
-      tentative: tentative ? 1 : 0,
-      ...(it.rep === 'once' && date ? { date } : {}),
-    }));
-    // a már kiszámlázott (Billingo) tétel összege a számláé – csak a név változik
-    it.open.filter((e) => e.source === 'billingo').forEach((e) => upsert.push({ ...e, name: name.trim() || e.name }));
-    onSave(
-      moveTo({ upsert }, target),
-      target !== curLeaf
-        ? `${name || it.name}: ${toOffer ? 'ajánlat fázisba téve' : 'áthelyezve'}${movedMsg}`
-        : `${name}: frissítve (${editable.length} nyitott tétel)`,
-    );
+    const m = r === 'yearly' ? Math.max(months, 36) : months;
+    onSave(regen({ rep: r, day, months: m }), `${it.name}: ${scheduleMsg(r, day, m)}`);
   };
+  const saveDay = (d: string) => {
+    setDay(d);
+    onSave(regen({ rep: it.rep, day: d, months }), `${it.name}: ${scheduleMsg(it.rep, d, months)}`);
+  };
+  const saveMonths = (m: number) => {
+    setMonths(m);
+    onSave(regen({ rep: it.rep, day, months: m }), `${it.name}: ${scheduleMsg(it.rep, day, m)}`);
+  };
+  const moveAll = (target: string, msg: string) => {
+    const upsert = it.open.map((e) => ({ ...e, leaf_id: target }));
+    const sids = new Set(upsert.map((e) => e.series_id).filter(Boolean));
+    onSave({ upsert, series: data.series.filter((x) => sids.has(x.id)).map((x) => ({ ...x, leaf_id: target })) } as any, msg);
+  };
+  const saveTentative = async (t: boolean) => {
+    const upsert = editable.map((e) => ({ ...e, tentative: t ? 1 : 0 }));
+    // ajánlat fázisba téve: a bevételi tétel az „Ajánlatok” csoportba kerül (az elfogadás fordítottja)
+    if (t && section === 'in' && !inOffers) {
+      const target = await offerLeafFor(ix, curLeaf);
+      if (target !== curLeaf) {
+        const sids = new Set(upsert.map((e) => e.series_id).filter(Boolean));
+        onSave(
+          {
+            upsert: upsert.map((e) => ({ ...e, leaf_id: target })),
+            series: data.series.filter((x) => sids.has(x.id)).map((x) => ({ ...x, leaf_id: target })),
+          } as any,
+          `${it.name}: ajánlat fázisba téve → Ajánlatok`,
+        );
+        return;
+      }
+    }
+    onApply({ upsert }, `${it.name}: ${t ? 'ajánlat (még nem biztos)' : 'biztos terv'}`);
+  };
+
   return (
     <div style={{ borderTop: first ? 0 : `1px solid ${C.line3}`, background: expanded ? C.bg3 : '#fff' }}>
       <button
@@ -428,50 +421,62 @@ function ItemRow({
         <span style={{ color: C.muted, font: `700 14px ${FONT}` }}>{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && (
-        <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <fieldset disabled={!canEdit} style={{ border: 0, margin: 0, padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Tétel neve" style={{ ...inputStyle, flex: '1 1 220px' }} />
-            {rep !== 'twice' && <AmountInput value={amount} onChange={setAmount} />}
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              placeholder="Tétel neve"
+              style={{ ...inputStyle, flex: '1 1 220px' }}
+            />
+            <span onBlur={saveAmount} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} style={{ display: 'flex' }}>
+              <AmountInput value={amount} onChange={setAmount} />
+            </span>
           </div>
-          {it.rep === 'once' && rep === 'once' && date && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={eyebrow}>Várható fizetés</span>
-              <DateField value={date} onChange={setDate} style={{ width: 240 }} />
-            </div>
-          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={eyebrow}>Ismétlődés</span>
-            <Seg small value={rep} onChange={setRep} options={REP_OPTS} />
-            {rep !== it.rep && rep !== 'twice' && (
-              <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
-                {rep === 'once' ? 'csak a következő tétel marad' : `${rep === 'yearly' ? '3 évre' : '12 hónapra'} újratervezve ${dot(next?.date || '')}-tól`}
-              </span>
-            )}
+            <Seg small value={it.rep as Mode} onChange={saveRep} options={REP_OPTS} />
           </div>
-          {rep === 'twice' && <TwoPartsEditor value={parts} onChange={setParts} />}
-          {it.rep !== 'once' && rep === it.rep && <MonthList it={it} editable={editable} onApply={onApply} />}
+          {it.rep === 'once' && next && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={eyebrow}>Fizetés napja</span>
+              <DateField value={next.date} onChange={saveDate} style={{ width: 240 }} />
+            </div>
+          )}
+          {it.rep !== 'once' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={eyebrow}>Fizetés napja</span>
+              <DaySelect value={day} onChange={saveDay} />
+              <span style={eyebrow}>Tervezés</span>
+              <Seg small value={months} onChange={saveMonths} options={MONTH_OPTS} />
+            </div>
+          )}
+          {it.rep !== 'once' && <MonthList it={it} editable={editable} onApply={onApply} />}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={eyebrow}>Projekt / partner</span>
-            <b style={{ font: `700 13.5px ${FONT}`, color: moved ? C.blueDark : C.navy }}>
-              {ix.leafById[leafTo]?.label} · {displayGroup(ix.groupById[ix.leafById[leafTo]?.group_id]?.label || '')}
+            <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>
+              {ix.leafById[curLeaf]?.label} · {displayGroup(ix.groupById[ix.leafById[curLeaf]?.group_id]?.label || '')}
             </b>
             <Pill small onClick={() => setPickLeaf((x) => !x)}>
               {pickLeaf ? 'Bezár' : 'Másik projekt / partner…'}
             </Pill>
-            {moved && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>mentéskor átkerül ide ({it.open.length} nyitott tétel)</span>}
           </div>
           {pickLeaf && (
             <LeafPicker
               section={section}
-              value={leafTo}
+              value={curLeaf}
               onChange={(id) => {
-                setLeafTo(id);
                 setPickLeaf(false);
+                if (id !== curLeaf)
+                  moveAll(id, `${it.name}: áthelyezve → ${ix.leafById[id]?.label} (${displayGroup(ix.groupById[ix.leafById[id]?.group_id]?.label || '')})`);
               }}
             />
           )}
-          <OfferToggle value={tentative} onChange={setTentative} />
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <OfferToggle value={it.tentative} onChange={saveTentative} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ flex: 1, font: `500 12px ${FONT}`, color: C.muted }}>Minden változás azonnal mentődik.</span>
             {(it.tentative || inOffers) && (
               <Pill
                 small
@@ -479,7 +484,7 @@ function ItemRow({
                 onClick={() =>
                   run(
                     () => acceptOffer(ix, it.open, data.series),
-                    `Ajánlat elfogadva: ${it.name} – bekerült a havi tervbe${/aj[aá]nlat/i.test(ix.groupById[ix.leafById[it.open[0]?.leaf_id]?.group_id]?.label || '') ? ' (az ügyfél a Projektek alá került)' : ''}`,
+                    `Ajánlat elfogadva: ${it.name} – bekerült a havi tervbe${inOffers ? ' (az ügyfél a Projektek alá került)' : ''}`,
                   )
                 }
               >
@@ -496,13 +501,10 @@ function ItemRow({
               Törlés
             </Pill>
             <Pill small onClick={onToggle}>
-              Mégse
-            </Pill>
-            <Pill small kind="primary" onClick={save}>
-              Mentés
+              Bezár
             </Pill>
           </div>
-        </div>
+        </fieldset>
       )}
     </div>
   );
@@ -537,11 +539,14 @@ function NewItem({
   const [startYm, setStartYm] = useState(addMonths(cur, 1));
   const [count, setCount] = useState(12);
   const [tentative, setTentative] = useState(false);
+  // fizetés napja: a partner szabálya (hónap napja / első-utolsó munkanap), különben a számlázás + határidő szerinti nap
+  const [day, setDay] = useState(() =>
+    rule && /^(day:\d+|first_workday|last_workday)$/.test(rule) ? rule : `day:${Number(invoiceDue(addMonths(cur, 1), payDays).slice(8)) || 10}`,
+  );
   const amt = num(amount);
   const step = repStep(rep === 'twice' ? 'once' : rep);
-  // a partner fizetési feltétele (Fizetési feltételek fül), különben számla a hónap első munkanapján + határidő
-  const ruleUsed = rule || `inv:${payDays}`;
-  const firstDue = rep === 'once' || rep === 'twice' ? date : rule ? payDate(startYm, rule, 1) : invoiceDue(startYm, payDays);
+  const ruleUsed = day;
+  const firstDue = rep === 'once' || rep === 'twice' ? date : payDate(startYm, day, Number(day.replace(/\D/g, '')) || 1);
   const n = rep === 'once' ? 1 : rep === 'twice' ? 2 : Math.ceil(count / step);
   const save = () => {
     if (!name.trim()) return alert('Add meg a tétel nevét (pl. SEO, PPC, Marketing tanácsadás).');
@@ -607,11 +612,15 @@ function NewItem({
         ) : (
           <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={eyebrow}>Fizetés napja</span>
+              <DaySelect value={day} onChange={setDay} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={eyebrow}>Első fizetés hónapja</span>
               <Seg small value={startYm} onChange={setStartYm} options={months.map((m) => [m, monthLabel(m)] as [string, string])} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={eyebrow}>Időtartam</span>
+              <span style={eyebrow}>Tervezés (hány hónapig)</span>
               <Seg
                 small
                 value={count}
@@ -623,12 +632,7 @@ function NewItem({
                         [24, '2 év'],
                         [36, '3 év'],
                       ]
-                    : [
-                        [3, '3 hó'],
-                        [6, '6 hó'],
-                        [12, '12 hó'],
-                        [24, '24 hó'],
-                      ]
+                    : MONTH_OPTS
                 }
               />
             </div>
@@ -642,7 +646,7 @@ function NewItem({
             ? `1. részlet ${dot(parts.d1)} · 2. részlet ${dot(parts.d2)} · összesen ${fmt(num(parts.a1) + num(parts.a2))} Ft`
             : rep === 'once'
               ? `Fizetés: ${dot(date)}`
-              : `${n} tétel · első fizetés ${dot(firstDue)} (${rule ? payRuleLabel(rule) : `számlázás ${monthLong(startYm)} első munkanapján + ${payDays} nap`})`}
+              : `${n} tétel · első fizetés ${dot(firstDue)} (${payRuleLabel(day)}, ${count} hónapig)`}
           {amt && rep !== 'twice' ? ` · ${fmt(amt)} Ft` : ''}
         </span>
         <Pill small onClick={onCancel}>
