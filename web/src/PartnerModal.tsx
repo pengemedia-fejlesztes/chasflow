@@ -153,7 +153,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         )}
       </div>
 
-      <div style={{ padding: '14px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '72vh', overflow: 'auto' }}>
+      <div style={{ padding: '14px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         {(picking || !L) && (
           <div style={{ maxHeight: 280, overflow: 'auto' }}>
             <LeafPicker
@@ -409,7 +409,7 @@ function ItemRow({
               }}
             />
           )}
-          {section === 'in' && <OfferToggle value={tentative} onChange={setTentative} />}
+          <OfferToggle value={tentative} onChange={setTentative} />
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <Pill
               kind="danger"
@@ -549,7 +549,7 @@ function NewItem({
           </>
         )}
       </div>
-      {section === 'in' && <OfferToggle value={tentative} onChange={setTentative} />}
+      <OfferToggle value={tentative} onChange={setTentative} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ flex: 1, minWidth: 220, font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
           {rep === 'once'
