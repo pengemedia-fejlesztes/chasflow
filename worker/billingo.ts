@@ -5,6 +5,7 @@ import type { Leaf } from '../shared/types';
 import { CategoryCache } from './data';
 import { matchPayments, namesMatch } from '../shared/billingopay';
 import { partnerIdOf } from '../shared/partners';
+import { taxBase, taxLeafMap } from './partnertax';
 import { Env, HttpError, audit, getSetting, now, setSetting, todayHu } from './util';
 
 const BASE = 'https://api.billingo.hu/v3';
@@ -21,7 +22,7 @@ interface BillingoDocument {
   invoice_date?: string;
   due_date?: string;
   paid_date?: string;
-  partner?: { name?: string };
+  partner?: { name?: string; taxcode?: string };
 }
 
 const INCOME_TYPES = new Set(['invoice', 'advance']);
@@ -77,6 +78,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
 
   const cache = await new CategoryCache(env).load();
   const contains = await loadContains(env).catch(() => [] as ContainsRule[]);
+  const byTax = await taxLeafMap(env).catch(() => new Map<string, { in?: string; out?: string }>());
   const [leavesR, groupsR, rulesR, existingR, docsR, openR] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM leaves'),
     env.DB.prepare('SELECT id, section FROM groups'),
@@ -199,7 +201,8 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       plans++;
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
     } else if (gross > 0) {
-      const lid = await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains);
+      // adószám (partnertörzs) alapján a partner bevételi alkategóriája, különben név/szabály alapján
+      const lid = byTax.get(taxBase(d.partner?.taxcode))?.in || (await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains));
       const matched = findPlan(lid, gross, due);
       if (matched) {
         // a meglévő tervből „kiszámlázott” tétel lesz
@@ -227,9 +230,9 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     }
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO billingo_docs (id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id, synced_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET number = excluded.number, partner = excluded.partner, gross = excluded.gross, currency = excluded.currency,
+        `INSERT INTO billingo_docs (id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id, synced_at, partner_tax)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET number = excluded.number, partner = excluded.partner, partner_tax = COALESCE(excluded.partner_tax, billingo_docs.partner_tax), gross = excluded.gross, currency = excluded.currency,
            invoice_date = excluded.invoice_date, due_date = excluded.due_date, payment_status = excluded.payment_status,
            paid_date = excluded.paid_date, cancelled = excluded.cancelled, plan_id = COALESCE(excluded.plan_id, billingo_docs.plan_id), synced_at = excluded.synced_at`,
       ).bind(
@@ -245,6 +248,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         cancelled ? 1 : 0,
         planId,
         t,
+        d.partner?.taxcode || null,
       ),
     );
   }

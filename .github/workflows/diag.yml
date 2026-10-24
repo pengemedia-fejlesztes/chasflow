@@ -12,6 +12,10 @@ on:
         description: 'NAV szinkron próba'
         type: boolean
         default: false
+      full_sync:
+        description: 'Teljes szinkron (Billingo, NAV, adószámok, párosítás) – csak darabszámok'
+        type: boolean
+        default: false
       autopay:
         description: 'Billingo automatikus fizetve: próba (dry) vagy éles (run)'
         type: choice
@@ -83,4 +87,16 @@ jobs:
           sleep 20
           Q=""; [ "$MODE" = "run" ] && Q="?run=1"
           curl -s -m 120 -X POST "https://cashflow-tervezo.pengemedia.workers.dev/api/diag/autopay$Q" -H "X-Requested-With: cashflow" -H "X-Diag-Token: $T" | jq . || true
+          npx wrangler secret delete DIAG_TOKEN --name cashflow-tervezo >/dev/null <<< 'y' || true
+      - name: Teljes szinkron
+        if: ${{ inputs.full_sync }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          T=$(openssl rand -hex 32)
+          echo "::add-mask::$T"
+          printf '%s' "$T" | npx wrangler secret put DIAG_TOKEN --name cashflow-tervezo >/dev/null
+          sleep 20
+          curl -s -m 300 -X POST "https://cashflow-tervezo.pengemedia.workers.dev/api/diag/sync" -H "X-Requested-With: cashflow" -H "X-Diag-Token: $T" | jq -c . || true
           npx wrangler secret delete DIAG_TOKEN --name cashflow-tervezo >/dev/null <<< 'y' || true

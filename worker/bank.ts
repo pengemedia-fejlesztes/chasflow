@@ -5,6 +5,7 @@ import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
+import { fillPartnerTax } from './partnertax';
 import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
 import { navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
@@ -151,6 +152,8 @@ export async function reapplyRules(env: Env): Promise<{ updated: number; auto: n
 
 export async function syncAll(env: Env) {
   const res: Record<string, unknown> = {};
+  // partnertörzs adószámai a már meglévő NAV/Billingo adatokból (a szinkron párosítása így már adószám alapján megy)
+  res.taxFilled = await fillPartnerTax(env).catch((e) => String(e?.message || e));
   if (env.BILLINGO_API_KEY) {
     try {
       res.billingo = await syncBillingo(env);
@@ -177,6 +180,14 @@ export async function syncAll(env: Env) {
     res.auto = await autoApprove(env, approve);
   } catch (e: any) {
     res.autoError = e.message;
+  }
+  try {
+    // a friss számlákból újabb adószámok → a terv nélküli NAV-számlák újrapárosítása
+    const more = await fillPartnerTax(env);
+    if (more) await rematchNav(env);
+    res.taxFilled2 = more;
+  } catch (e: any) {
+    res.taxError = e.message;
   }
   try {
     res.billingoPaid = await payBillingoFromBank(env);

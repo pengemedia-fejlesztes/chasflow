@@ -266,8 +266,15 @@ function FolderTree({
   onMove: (leafId: string, groupId: string) => void;
   onAdd: (groupId: string) => void;
 }) {
-  const { ix } = useStore();
+  const { ix, openPartner } = useStore();
   const [pick, setPick] = useState<string | null>(null);
+  const [openG, setOpenG] = useState<Set<string>>(() => new Set(p.leaves.map((l) => l.group_id)));
+  const toggle = (id: string) =>
+    setOpenG((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   const col = (sec: Section) => {
     const mine = p.leaves.filter((l) => ix.sectionOf(l.id) === sec);
     return (
@@ -291,12 +298,13 @@ function FolderTree({
           .map((g) => {
             const here = mine.filter((l) => l.group_id === g.id);
             const on = here.length > 0;
+            const members = ix.leaves.filter((l) => l.group_id === g.id && !l.archived).sort((a, b) => a.label.localeCompare(b.label, 'hu'));
+            const expanded = openG.has(g.id);
             return (
               <div key={g.id}>
                 <button
                   type="button"
-                  disabled={!canEdit || on}
-                  onClick={() => setPick(pick === g.id ? null : g.id)}
+                  onClick={() => toggle(g.id)}
                   style={{
                     width: '100%',
                     textAlign: 'left',
@@ -306,15 +314,62 @@ function FolderTree({
                     background: on ? C.bg3 : pick === g.id ? C.bg2 : 'transparent',
                     font: `${on ? 700 : 500} 13px ${FONT}`,
                     color: on ? C.navy : C.ink,
-                    cursor: canEdit && !on ? 'pointer' : 'default',
+                    cursor: 'pointer',
                     display: 'flex',
                     gap: 6,
                   }}
                 >
-                  <span>{on ? '📁✓' : '📁'}</span>
+                  <span style={{ width: 12, color: C.muted }}>{expanded ? '▾' : '▸'}</span>
+                  <span>{on ? '📂' : '📁'}</span>
                   <span style={{ flex: 1 }}>{displayGroup(g.label)}</span>
+                  <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{members.length}</span>
                 </button>
-                {on && <div style={{ padding: '0 0 4px 34px', font: `500 12px ${FONT}`, color: C.muted }}>└ {here.map((l) => l.label).join(', ')}</div>}
+                {expanded && (
+                  <div style={{ padding: '0 0 6px 30px', display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 260, overflowY: 'auto' }}>
+                    {members.map((l) => {
+                      const self = here.some((h) => h.id === l.id);
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() => !self && openPartner(l.id)}
+                          title={self ? 'Ez a partner' : 'Partner adatlapja'}
+                          style={{
+                            border: 0,
+                            background: self ? C.bg3 : 'transparent',
+                            textAlign: 'left',
+                            padding: '3px 8px',
+                            borderRadius: 6,
+                            font: `${self ? 700 : 500} 12.5px ${FONT}`,
+                            color: self ? C.navy : C.blueDark,
+                            cursor: self ? 'default' : 'pointer',
+                          }}
+                        >
+                          {self ? '● ' : '└ '}
+                          {l.label}
+                        </button>
+                      );
+                    })}
+                    {!members.length && <span style={{ font: `500 12px ${FONT}`, color: C.muted, padding: '2px 8px' }}>üres mappa</span>}
+                    {canEdit && !on && (
+                      <button
+                        type="button"
+                        onClick={() => setPick(pick === g.id ? null : g.id)}
+                        style={{
+                          border: 0,
+                          background: 'transparent',
+                          textAlign: 'left',
+                          padding: '4px 8px',
+                          font: `700 12.5px ${FONT}`,
+                          color: C.blueDark,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {pick === g.id ? '× mégse' : `+ ${p.name} ide…`}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {pick === g.id && !on && (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '4px 0 6px 30px' }}>
                     {mine.map((l) => (

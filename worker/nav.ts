@@ -8,6 +8,7 @@ import { normalizeText } from '../shared/categories';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
 import type { Entry } from '../shared/types';
 import { matchingContext } from './bank';
+import { taxBase, taxLeafMap } from './partnertax';
 import { Env, HttpError, audit, getSetting, now, randomId, setSetting, todayHu } from './util';
 
 const BASE = 'https://api.onlineszamla.nav.gov.hu/invoiceService/v3';
@@ -231,6 +232,7 @@ interface NavRow {
   id: string;
   invoice_number: string;
   partner_name: string;
+  partner_tax?: string | null;
   issue_date: string | null;
   payment_date: string | null;
   gross: number;
@@ -243,6 +245,7 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
   const rows = (await env.DB.prepare("SELECT * FROM nav_invoices WHERE status = 'new'").all<NavRow>()).results;
   if (!rows.length) return { unplanned: 0 };
   const ctx = await matchingContext(env);
+  const byTax = await taxLeafMap(env).catch(() => new Map<string, { in?: string; out?: string }>());
   const actuals = (
     await env.DB.prepare(
       "SELECT id, date, amount, leaf_id, name, link_id FROM entries WHERE kind = 'actual' AND amount < 0 AND date >= date('now', '-200 days')",
@@ -259,7 +262,8 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
   for (const r of rows) {
     const date = r.payment_date || r.issue_date || todayHu();
     const tx = { date, amount: r.gross, partner: r.partner_name || '', memo: r.invoice_number };
-    const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
+    // az adószám (partnertörzs) megelőzi a név- és kategóriaszabályokat
+    const leaf = byTax.get(taxBase(r.partner_tax))?.out || suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
     // 1) már kifizetve (banki tény ugyanazzal az összeggel, a kiállítás után)
     const key = partnerKey(r.partner_name || '');
     const paid = actuals.find(

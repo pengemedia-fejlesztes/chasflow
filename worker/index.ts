@@ -26,6 +26,12 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (req.headers.get('X-Requested-With') !== 'cashflow') throw new HttpError(403, 'Hiányzó kliens fejléc.');
   }
 
+  // diagnosztika: teljes szinkron (Billingo, NAV, adószámok, párosítás) – csak darabszámokat ad vissza
+  if (path === '/api/diag/sync' && req.method === 'POST') {
+    const t = req.headers.get('X-Diag-Token') || '';
+    if (!env.DIAG_TOKEN || env.DIAG_TOKEN.length < 32 || !safeEqual(t, env.DIAG_TOKEN)) throw new HttpError(404, 'Nincs ilyen végpont.');
+    return json(await syncAll(env));
+  }
   // diagnosztika: Billingo automatikus „fizetve” – próba (dry) vagy éles futtatás
   if (path === '/api/diag/autopay' && req.method === 'POST') {
     const t = req.headers.get('X-Diag-Token') || '';
