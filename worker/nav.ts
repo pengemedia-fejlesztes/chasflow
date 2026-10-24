@@ -179,6 +179,7 @@ async function syncNavInner(env: Env, opts: { from?: string }): Promise<{ invoic
   const from = opts.from || (last ? addDays(last, -10) : addDays(today, -FIRST_DAYS));
   const digests = await fetchDigests(env, from, today);
   await storeDigests(env, digests);
+  await fillZeroGross(env).catch((e) => console.error('nav zero gross', e));
   const res = await rematchNav(env);
   await setSetting(env, 'nav_last_date', today);
   await setSetting(env, 'nav_last_sync', String(now()));
@@ -197,7 +198,10 @@ export async function storeDigests(env: Env, digests: NavDigest[]) {
       env.DB.prepare(
         `INSERT INTO nav_invoices (id, direction, invoice_number, operation, partner_tax, partner_name, issue_date, delivery_date, payment_date, payment_method, currency, gross, net, status, created_at, updated_at)
          VALUES (?, 'INBOUND', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET payment_date = excluded.payment_date, gross = excluded.gross, net = excluded.net, partner_name = excluded.partner_name, updated_at = excluded.updated_at`,
+         ON CONFLICT(id) DO UPDATE SET payment_date = excluded.payment_date,
+           gross = CASE WHEN excluded.gross = 0 THEN nav_invoices.gross ELSE excluded.gross END,
+           net = CASE WHEN excluded.gross = 0 THEN nav_invoices.net ELSE excluded.net END,
+           partner_name = excluded.partner_name, updated_at = excluded.updated_at`,
       ).bind(
         id,
         d.invoiceNumber,
@@ -450,22 +454,38 @@ export function parseInvoiceXml(raw: string, number: string): NavInvoiceData {
     const l = m[1];
     const net = Math.round(parseFloat(tag(l, 'lineNetAmountHUF') || tag(l, 'lineNetAmount') || '0'));
     const vatAmt = Math.round(parseFloat(tag(l, 'lineVatAmountHUF') || tag(l, 'lineVatAmount') || '0'));
-    const gross = Math.round(parseFloat(tag(l, 'lineGrossAmountNormalHUF') || tag(l, 'lineGrossAmountNormal') || '')) || net + vatAmt;
+    // egyszerűsített számla (pl. üzemanyag-blokk): csak bruttó összeg és ÁFA-tartalom van
+    const simpl = Math.round(parseFloat(tag(l, 'lineGrossAmountSimplifiedHUF') || tag(l, 'lineGrossAmountSimplified') || '0'));
+    const vatContent = parseFloat(tag(l, 'vatContent') || '0');
+    const gross = Math.round(parseFloat(tag(l, 'lineGrossAmountNormalHUF') || tag(l, 'lineGrossAmountNormal') || '')) || simpl || net + vatAmt;
     const pct = tag(l, 'vatPercentage');
     lines.push({
       desc: tag(l, 'lineDescription') || '—',
       qty: num(tag(l, 'quantity')),
       unit: tag(l, 'unitOfMeasureOwn') || tag(l, 'unitOfMeasure'),
       unitPrice: num(tag(l, 'unitPrice')),
-      net,
-      vat: pct ? `${Math.round(parseFloat(pct) * 100)}%` : tag(l, 'vatExemption') ? 'mentes' : '',
+      net: net || (simpl ? Math.round(simpl * (1 - vatContent)) : 0),
+      vat: pct
+        ? `${Math.round(parseFloat(pct) * 100)}%`
+        : vatContent
+          ? `${Math.round(vatContent * 10000) / 100}% tart.`
+          : tag(l, 'vatExemption')
+            ? 'mentes'
+            : '',
       gross,
     });
   }
   const sum = tag(x, 'invoiceSummary');
-  const net = Math.round(parseFloat(tag(sum, 'invoiceNetAmountHUF') || tag(sum, 'invoiceNetAmount') || '0'));
-  const vat = Math.round(parseFloat(tag(sum, 'invoiceVatAmountHUF') || tag(sum, 'invoiceVatAmount') || '0'));
-  const gross = Math.round(parseFloat(tag(sum, 'invoiceGrossAmountHUF') || tag(sum, 'invoiceGrossAmount') || '')) || net + vat;
+  const lineGross = lines.reduce((a, l) => a + l.gross, 0);
+  const lineNet = lines.reduce((a, l) => a + l.net, 0);
+  let net = Math.round(parseFloat(tag(sum, 'invoiceNetAmountHUF') || tag(sum, 'invoiceNetAmount') || '0'));
+  let vat = Math.round(parseFloat(tag(sum, 'invoiceVatAmountHUF') || tag(sum, 'invoiceVatAmount') || '0'));
+  const gross = Math.round(parseFloat(tag(sum, 'invoiceGrossAmountHUF') || tag(sum, 'invoiceGrossAmount') || '')) || net + vat || lineGross;
+  // egyszerűsített számlánál a nettó / ÁFA a tételsorok ÁFA-tartalmából
+  if (!net && !vat && gross) {
+    net = lineNet;
+    vat = gross - lineNet;
+  }
   return {
     number: tag(x, 'invoiceNumber') || number,
     supplier: tag(sup, 'supplierName'),
@@ -491,6 +511,32 @@ export function parseInvoiceXml(raw: string, number: string): NavInvoiceData {
     vat,
     gross,
   };
+}
+
+/**
+ * A 0 Ft-os számlák (egyszerűsített számla, pl. üzemanyag-blokk: a listában nincs nettó/ÁFA) bruttó összege a számla
+ * teljes adatából – egy szinkronban legfeljebb 25.
+ */
+export async function fillZeroGross(env: Env): Promise<number> {
+  const rows = (
+    await env.DB.prepare(
+      "SELECT id, invoice_number, partner_tax FROM nav_invoices WHERE gross = 0 AND COALESCE(operation, 'CREATE') = 'CREATE' ORDER BY issue_date DESC LIMIT 25",
+    ).all<{ id: string; invoice_number: string; partner_tax: string | null }>()
+  ).results;
+  let n = 0;
+  for (const r of rows) {
+    try {
+      const d = await fetchInvoiceData(env, r.invoice_number, r.partner_tax || '');
+      if (!d.gross) continue;
+      await env.DB.prepare('UPDATE nav_invoices SET gross = ?, net = ?, updated_at = ? WHERE id = ?')
+        .bind(-Math.abs(d.gross), -Math.abs(d.net), now(), r.id)
+        .run();
+      n++;
+    } catch (e) {
+      console.error('nav invoice data', r.invoice_number, e);
+    }
+  }
+  return n;
 }
 
 /** NAV queryInvoiceData: a bejövő számla teljes tartalma (base64, esetleg gzip-pel tömörítve). */

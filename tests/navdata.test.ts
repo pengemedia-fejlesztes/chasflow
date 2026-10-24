@@ -44,4 +44,17 @@ describe('NAV számla-adat', () => {
     expect(r.lines).toEqual([{ desc: 'Tárhely szolgáltatás', qty: 2, unit: 'PIECE', unitPrice: 5000, net: 10000, vat: '27%', gross: 12700 }]);
     expect([r.net, r.vat, r.gross]).toEqual([10000, 2700, 12700]);
   });
+
+  it('egyszerűsített számla (üzemanyag): bruttó és ÁFA-tartalom', () => {
+    const xml = `<InvoiceData><invoiceNumber>A/1</invoiceNumber><invoiceMain><invoice>
+      <invoiceLines><line><lineDescription>*02 FS 95</lineDescription><quantity>46.84</quantity><unitOfMeasure>PIECE</unitOfMeasure>
+        <lineAmountsSimplified><lineVatRate><vatContent>0.2126</vatContent></lineVatRate><lineGrossAmountSimplified>27074</lineGrossAmountSimplified><lineGrossAmountSimplifiedHUF>27074</lineGrossAmountSimplifiedHUF></lineAmountsSimplified></line></invoiceLines>
+      <invoiceSummary><summarySimplified><vatRate><vatContent>0.2126</vatContent></vatRate><vatContentGrossAmount>27074</vatContentGrossAmount><vatContentGrossAmountHUF>27074</vatContentGrossAmountHUF></summarySimplified>
+        <summaryGrossData><invoiceGrossAmount>27074</invoiceGrossAmount><invoiceGrossAmountHUF>27074</invoiceGrossAmountHUF></summaryGrossData></invoiceSummary>
+      </invoice></invoiceMain></InvoiceData>`;
+    const r = parseInvoiceXml(xml, 'A/1');
+    expect(r.gross).toBe(27074);
+    expect(r.lines[0]).toMatchObject({ gross: 27074, net: 21318, vat: '21.26% tart.' });
+    expect(r.net + r.vat).toBe(27074);
+  });
 });

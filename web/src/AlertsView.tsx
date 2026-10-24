@@ -1,5 +1,5 @@
 // Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
 import { DEFAULT_PAY_DAYS } from '../../shared/workdays';
@@ -477,7 +477,6 @@ export function NavInvoiceModal({ number, onClose }: { number: string; onClose: 
     };
   }, [number]);
   const dt = (d?: string | null) => (d ? d.replace(/-/g, '.') + '.' : '–');
-  const cell = { padding: '7px 8px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, fontVariantNumeric: 'tabular-nums' as const };
   return (
     <Modal onClose={onClose} width={820}>
       <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -516,26 +515,30 @@ export function NavInvoiceModal({ number, onClose }: { number: string; onClose: 
                 </span>
               )}
             </div>
-            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'auto' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 90px 110px 110px 60px 110px', minWidth: 700 }}>
-                {['Megnevezés', 'Mennyiség', 'Egységár', 'Nettó', 'ÁFA', 'Bruttó'].map((h, i) => (
-                  <div key={h} style={{ padding: '8px', background: C.bg, font: `700 12px ${FONT}`, color: C.navy, textAlign: i ? 'right' : 'left' }}>
-                    {h}
-                  </div>
-                ))}
-                {inv.lines.map((l, i) => (
-                  <Fragment key={i}>
-                    <div style={cell}>{l.desc}</div>
-                    <div style={{ ...cell, textAlign: 'right' }}>{l.qty != null ? `${l.qty} ${UNIT[l.unit] || l.unit.toLowerCase()}` : ''}</div>
-                    <div style={{ ...cell, textAlign: 'right' }}>{l.unitPrice != null ? fmt(l.unitPrice) : ''}</div>
-                    <div style={{ ...cell, textAlign: 'right' }}>{fmt(l.net)}</div>
-                    <div style={{ ...cell, textAlign: 'right' }}>{l.vat}</div>
-                    <div style={{ ...cell, textAlign: 'right', fontWeight: 700 }}>{fmt(l.gross)}</div>
-                  </Fragment>
-                ))}
-              </div>
+            {/* tételsorok: keskeny kijelzőn is olvasható (név, alatta mennyiség × egységár · nettó · ÁFA, jobbra a bruttó) */}
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+              {inv.lines.map((l, i) => (
+                <div
+                  key={i}
+                  style={{ display: 'flex', gap: 12, alignItems: 'baseline', padding: '9px 12px', borderTop: i ? `1px solid ${C.line3}` : 0, flexWrap: 'wrap' }}
+                >
+                  <span style={{ flex: '1 1 220px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ font: `600 13.5px ${FONT}`, color: C.navy, wordBreak: 'break-word' }}>{l.desc}</span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>
+                      {[
+                        l.qty != null ? `${l.qty} ${UNIT[l.unit] || l.unit.toLowerCase()}` + (l.unitPrice != null ? ` × ${fmt(l.unitPrice)}` : '') : '',
+                        l.net ? `nettó ${fmt(l.net)}` : '',
+                        l.vat ? `ÁFA ${l.vat}` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                  <b style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' }}>{fmt(l.gross)} Ft</b>
+                </div>
+              ))}
             </div>
-            <div style={{ display: 'flex', gap: 18, justifyContent: 'flex-end', font: `600 14px ${FONT}`, color: C.navy }}>
+            <div style={{ display: 'flex', gap: 14, justifyContent: 'flex-end', flexWrap: 'wrap', font: `600 14px ${FONT}`, color: C.navy }}>
               <span>Nettó {fmt(inv.net)} Ft</span>
               <span>ÁFA {fmt(inv.vat)} Ft</span>
               <span style={{ font: `800 16px ${FONT_H}` }}>Bruttó {fmt(inv.gross)} Ft</span>
