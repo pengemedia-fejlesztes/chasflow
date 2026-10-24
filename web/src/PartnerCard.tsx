@@ -8,6 +8,7 @@ import { fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
 import { api } from './api';
+import { rowKey } from './logic';
 import { PartnerModal } from './PartnerModal';
 import { PartnerDetail } from './PartnersView';
 import { useStore } from './store';
@@ -34,7 +35,7 @@ export function kindOf(p: PartnerStat, sectionOf: (leaf: string) => Section): No
 }
 
 export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved?: (key: string) => void; compact?: boolean }) {
-  const { ix, run, canEdit } = useStore();
+  const { ix, data, run, canEdit } = useStore();
   const [name, setName] = useState(p.name);
   const [kind, setKind] = useState<Kind>(p.info?.kind || 'auto');
   const [aliases, setAliases] = useState<string[]>(p.info?.aliases || []);
@@ -58,6 +59,27 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
   const suggest = p.billingNames.filter(
     (b) => normalizeText(b.name) !== normalizeText(name) && !aliases.some((a) => normalizeText(a) === normalizeText(b.name)),
   );
+  // választható nevek: banki küldők/kedvezményezettek, Billingo- és NAV-partnerek, a többi partner neve
+  const known = useMemo(() => {
+    const seen = new Set<string>([normalizeText(name), ...aliases.map(normalizeText)]);
+    const out: string[] = [];
+    const add = (s: string | null | undefined) => {
+      const t = String(s || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const n = normalizeText(t);
+      if (n.length < 2 || seen.has(n)) return;
+      seen.add(n);
+      out.push(t);
+    };
+    data.bankTx.forEach((t) => add(t.partner));
+    (data.partnerNames || []).forEach((x) => add(x.partner));
+    data.billingo.forEach((d) => add(d.partner));
+    (data.navInvoices || []).forEach((n) => add(n.partner_name));
+    ix.leaves.forEach((l) => add(l.label));
+    return out.sort((a, b) => a.localeCompare(b, 'hu'));
+  }, [data.bankTx, data.partnerNames, data.billingo, data.navInvoices, ix.leaves, name, aliases]);
+  const listId = 'aliases-' + p.key;
   const save = () =>
     run(async () => {
       const r = await api<{ key: string }>(`/api/partners/${encodeURIComponent(p.key)}`, {
@@ -123,7 +145,13 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
           {canEdit && (
             <input
               value={alias}
-              onChange={(e) => setAlias(e.target.value)}
+              list={listId}
+              onChange={(e) => {
+                const v = e.target.value;
+                // a listából választott név azonnal bekerül; begépelt új név Enterre
+                if (known.includes(v)) addAlias(v);
+                else setAlias(v);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ',') {
                   e.preventDefault();
@@ -131,10 +159,19 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
                 }
               }}
               onBlur={() => alias.trim() && addAlias(alias)}
-              placeholder={aliases.length ? 'Újabb név + Enter' : 'pl. OMV 135, Shell 27, Kovács és Társa Kft. + Enter'}
+              placeholder={
+                aliases.length
+                  ? 'Kezdd gépelni – válassz a listából, vagy új név + Enter'
+                  : 'Kezdd gépelni (pl. SZIGNETTA) – válassz a listából, vagy új név + Enter'
+              }
               style={{ ...inputStyle, height: 36, flex: '1 1 220px', minWidth: 180 }}
             />
           )}
+          <datalist id={listId}>
+            {known.slice(0, 400).map((k) => (
+              <option key={k} value={k} />
+            ))}
+          </datalist>
         </div>
         {canEdit && suggest.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' }}>
@@ -238,16 +275,28 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
 }
 
 /** Tervezett feladatok: mit számlázunk a partnernek / mit fizetünk neki (havidíj, SEO, weboldal részlet…). */
-function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) => void }) {
+function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, key?: string) => void }) {
   const { ix, data, canEdit, commit } = useStore();
   const byName = new Map<
     string,
-    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null }
+    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null; leaf: string; key: string }
   >();
   for (const e of p.future) {
     const sec = ix.sectionOf(e.leaf_id);
-    const k = sec + '|' + e.name + '|' + (e.tentative ? 'o' : 'p');
-    const x = byName.get(k) || { name: e.name || '(név nélkül)', sec, next: e.date, n: 0, sum: 0, offer: !!e.tentative, ids: [], offer_at: null };
+    // sorozatonként külön sor (így a duplán betervezett, azonos nevű sorozatok is látszanak)
+    const k = sec + '|' + e.leaf_id + '|' + (e.series_id || e.name) + '|' + (e.tentative ? 'o' : 'p');
+    const x = byName.get(k) || {
+      name: e.name || '(név nélkül)',
+      sec,
+      next: e.date,
+      n: 0,
+      sum: 0,
+      offer: !!e.tentative,
+      ids: [],
+      offer_at: null,
+      leaf: e.leaf_id,
+      key: e.series_id || rowKey(e),
+    };
     x.n++;
     x.sum += Math.abs(e.amount);
     x.ids.push(e.id);
@@ -278,10 +327,15 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) =>
       {rows.length ? (
         rows.map((r) => (
           <div
-            key={r.sec + r.name + r.offer}
+            key={r.leaf + r.key + r.offer}
             style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 6 }}
           >
-            <span style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <span
+              role="button"
+              title="Tétel szerkesztése"
+              onClick={() => canEdit && onEdit(r.leaf, r.key)}
+              style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', cursor: canEdit ? 'pointer' : 'default' }}
+            >
               <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>
                 {r.name}
                 {r.offer && <span style={{ font: `600 11px ${FONT}`, color: C.blue }}> · ajánlat</span>}
@@ -306,6 +360,11 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) =>
               {r.sec === 'in' ? '+' : '−'}
               {fmt(r.sum)}
             </b>
+            {canEdit && (
+              <Pill small onClick={() => onEdit(r.leaf, r.key)}>
+                Szerkesztés
+              </Pill>
+            )}
           </div>
         ))
       ) : (
@@ -344,7 +403,8 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string) =>
 export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const { partnerCard, openPartner, ix } = useStore();
   const all = useAllPartners();
-  const [taskLeaf, setTaskLeaf] = useState<string | null>(null);
+  const [task, setTask] = useState<{ leaf: string; key?: string } | null>(null);
+  const taskLeaf = task?.leaf ?? null;
   useEffect(() => {
     if (!partnerCard || taskLeaf) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && openPartner(null);
@@ -355,7 +415,7 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const key = ix.leafById[partnerCard] ? partnerIdOf(ix.leafById[partnerCard].label) : partnerCard;
   const p = all.find((x) => x.key === key);
   const close = () => openPartner(null);
-  if (taskLeaf) return <PartnerModal leaf={taskLeaf} onClose={() => setTaskLeaf(null)} />;
+  if (task) return <PartnerModal leaf={task.leaf} edit={task.key ? { key: task.key } : null} onClose={() => setTask(null)} />;
   return (
     <Modal onClose={close} width={1000}>
       <div style={{ padding: mobile ? 16 : 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -374,7 +434,7 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
             <div style={{ ...card, padding: 14 }}>
               <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} compact={mobile} onSaved={(k) => openPartner(k)} />
             </div>
-            <PlannedTasks p={p} onEdit={setTaskLeaf} />
+            <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
             <PartnerDetail p={p} mobile={mobile} embedded onBack={close} />
           </>
         ) : (
