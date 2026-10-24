@@ -6,7 +6,7 @@ import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
-import { REP, planActual, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { REP, planActual, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
@@ -287,6 +287,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     const anySel = openEs.some((e) => sel[e.id]);
     const typical = (openEs[0] || es[es.length - 1]).amount;
     const inferred: Rep = s?.rep || (es.length > 1 ? 'monthly' : 'once');
+    const lastE = es.reduce((a, e) => (e.date > a.date ? e : a), es[0]);
+    const lastYm = ymOf(lastE.date);
     const tentative = es.some((e) => e.tentative);
     const fromBillingo = es.some((e) => e.source === 'billingo');
     const day = s?.day || Number(es[0].date.slice(8));
@@ -357,6 +359,12 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             return (
               <div key={m} style={{ padding: '6px 4px' }}>
                 <DeletedCell ds={dl} sign={sign} canEdit={canEdit} onRestore={restore} />
+              </div>
+            );
+          if (!list.length && canEdit && inferred !== 'once' && m === addMonths(lastYm, repStep(inferred)))
+            return (
+              <div key={m} style={{ padding: '6px 4px' }}>
+                <ContinueBtn onClick={() => commit(extendRows(data, [lastE.id], 12), `${itemLabel(lastE.name, '') || 'Sorozat'} folytatva 12 hónappal`)} />
               </div>
             );
           if (!list.length)
@@ -689,6 +697,20 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               const prows = rows.filter(([k, es]) => ((es[0] || (delMap.get(k) || [])[0]) as Entry | undefined)?.leaf_id === leaf);
               const extra = actualRows(leaf);
               const isOpen = !!openP[leaf];
+              // a partner ismétlődő (nem ajánlat) sorozatai közül a legkésőbb végződők folytathatók a fejlécből is
+              const recur = prows
+                .map(([, es]) => es)
+                .filter((es) => es.length && !es.some((e) => e.tentative))
+                .map((es) => {
+                  const last = es.reduce((a, e) => (e.date > a.date ? e : a), es[0]);
+                  const rep = data.series.find((x) => x.id === es[0].series_id)?.rep || (es.length > 1 ? 'monthly' : 'once');
+                  return { last, step: repStep(rep), once: rep === 'once' };
+                })
+                .filter((x) => !x.once);
+              const maxYm = recur.reduce((a, x) => (ymOf(x.last.date) > a ? ymOf(x.last.date) : a), '');
+              const contRows = recur.filter((x) => ymOf(x.last.date) === maxYm);
+              const cont = contRows.map((x) => x.last);
+              const contYm = contRows.length ? addMonths(maxYm, Math.min(...contRows.map((x) => x.step))) : '';
               const names = [...new Set([...prows.map(([, es]) => itemLabel(es[0]?.name || '', L?.label || '')), ...extra.map((x) => x.name)])].filter(Boolean);
               return (
                 <div key={leaf}>
@@ -736,7 +758,25 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       const offer = leafOffer(leaf, m);
                       const act = m <= ix.cur ? leafAct(leaf, m) : 0;
                       const hasAct = m <= ix.cur && act !== 0;
-                      if (!plan && !hasAct && !offer) return <div key={m} />;
+                      if (!plan && !hasAct && !offer)
+                        return canEdit && cont.length && m === contYm ? (
+                          <div key={m} style={{ padding: '6px 4px' }} onClick={(ev) => ev.stopPropagation()}>
+                            <ContinueBtn
+                              onClick={() =>
+                                commit(
+                                  extendRows(
+                                    data,
+                                    cont.map((e) => e.id),
+                                    12,
+                                  ),
+                                  `${L?.label || 'Partner'}: ${cont.length} sorozat folytatva 12 hónappal`,
+                                )
+                              }
+                            />
+                          </div>
+                        ) : (
+                          <div key={m} />
+                        );
                       if (!plan && !hasAct)
                         return (
                           <div key={m} style={{ padding: '6px 4px' }}>
@@ -1071,6 +1111,29 @@ function DeletedCell({ ds, sign, canEdit, onRestore }: { ds: DeletedEntry[]; sig
     >
       <span style={{ font: `700 12px ${FONT}`, color: C.blueDark }}>{canEdit ? '↺' : ''}</span>
       <span style={{ textDecoration: 'line-through' }}>{fmt(amt)}</span>
+    </button>
+  );
+}
+
+/** A sorozat utolsó tétele utáni első üres hónap: egy kattintással 12 hónappal folytatja a tervet. */
+function ContinueBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="A sorozat folytatása 12 hónappal (ugyanazzal az összeggel és fizetési nappal)"
+      style={{
+        width: '100%',
+        height: 34,
+        borderRadius: 8,
+        border: `1px dashed ${C.blue}`,
+        background: '#F2F8FC',
+        color: C.blue,
+        font: `700 12px ${FONT}`,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      ↻ Folytatás
     </button>
   );
 }

@@ -120,8 +120,8 @@ export function deleteEntries(d: DataBundle, ids: string[]): EntryBatch {
 /** Sor-kulcs a kategória nézethez: sorozat, vagy (importált terveknél) kategória+név. */
 export const rowKey = (e: Entry) => e.series_id || `n:${e.leaf_id}|${e.name}`;
 
-/** Sorozat(ok) meghosszabbítása 3 hónappal az utolsó tételtől. */
-export function extendRows(d: DataBundle, ids: string[]): EntryBatch {
+/** Sorozat(ok) meghosszabbítása (alapból 3 hónappal) az utolsó tételtől. */
+export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch {
   const keys = new Set(d.entries.filter((e) => ids.includes(e.id)).map(rowKey));
   const add: Entry[] = [];
   for (const k of keys) {
@@ -130,8 +130,18 @@ export function extendRows(d: DataBundle, ids: string[]): EntryBatch {
     const last = es.reduce((a, e) => (e.date > a.date ? e : a), es[0]);
     const s = d.series.find((x) => x.id === last.series_id);
     const step = repStep(s?.rep);
-    for (let i = 1; i <= Math.ceil(3 / step); i++)
-      add.push({ ...last, id: uid('e'), date: shiftDate(last.date, i * step), done: 0, link_id: null, ext_ref: null, source: 'manual' });
+    for (let i = 1; i <= Math.ceil(months / step); i++)
+      add.push({
+        ...last,
+        id: uid('e'),
+        date: shiftDate(last.date, i * step),
+        done: 0,
+        link_id: null,
+        ext_ref: null,
+        source: 'manual',
+        // a számlából jött terv neve („Partner · Penge / 2026-000056”) ne öröklődjön a jövőbe
+        name: last.ext_ref?.startsWith('billingo:') ? 'Havi díj' : last.name,
+      });
   }
   return { upsert: add };
 }
