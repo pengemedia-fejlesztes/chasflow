@@ -9,6 +9,7 @@ import { api } from './api';
 import { useBack } from './back';
 import { DivergingBars } from './Bars';
 import { PartnerLink } from './PartnerCard';
+import { rowKey } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
 
@@ -170,11 +171,17 @@ function Box({ title, children, right }: { title: string; children: React.ReactN
   );
 }
 
-function ItemRow({ e, sec, future }: { e: Entry; sec: Section; future?: boolean }) {
-  const { data } = useStore();
+function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: boolean; onEdit?: () => void }) {
+  const { data, canEdit } = useStore();
   const late = future && !e.tentative && e.date < data.today;
+  const click = canEdit && onEdit;
   return (
-    <div style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
+    <div
+      onClick={click ? onEdit : undefined}
+      title={click ? 'Tétel szerkesztése' : undefined}
+      className={click ? 'hov-light' : undefined}
+      style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline', cursor: click ? 'pointer' : 'default' }}
+    >
       <span style={{ font: `500 12.5px ${FONT}`, color: late ? C.neg : C.muted, width: 84, flex: 'none', fontVariantNumeric: 'tabular-nums' }}>
         {dd(e.date)}
       </span>
@@ -189,6 +196,7 @@ function ItemRow({ e, sec, future }: { e: Entry; sec: Section; future?: boolean 
         {sec === 'in' ? '+' : '−'}
         {fmt(Math.abs(e.amount))}
       </b>
+      {click && <span style={{ font: `600 12px ${FONT}`, color: C.blueDark }}>Szerkesztés ›</span>}
     </div>
   );
 }
@@ -217,8 +225,35 @@ function Comps({ list }: { list: Component[] }) {
   );
 }
 
-export function PartnerDetail({ p, mobile, onBack, embedded }: { p: PartnerStat; mobile?: boolean; onBack: () => void; embedded?: boolean }) {
-  const { ix } = useStore();
+export function PartnerDetail({
+  p,
+  mobile,
+  onBack,
+  embedded,
+  onEditItem,
+}: {
+  p: PartnerStat;
+  mobile?: boolean;
+  onBack: () => void;
+  embedded?: boolean;
+  /** a várható tétel szerkesztése (partner adatlapon) */
+  onEditItem?: (leaf: string, key: string) => void;
+}) {
+  const { ix, data } = useStore();
+  // számlázási nevek: Billingo + bank, kiegészítve a NAV bejövő számlák cégnevével és adószámával
+  const names = useMemo(() => {
+    const ids = new Set(p.leaves.map((l) => l.id));
+    const ents = new Set(data.entries.filter((e) => ids.has(e.leaf_id)).map((e) => e.id));
+    const out: { name: string; source: string; n: number }[] = p.billingNames.map((b) => ({ ...b }));
+    for (const x of data.navInvoices || []) {
+      if (!((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id)))) continue;
+      const src = `NAV${x.partner_tax ? ' · ' + x.partner_tax : ''}`;
+      const ex = out.find((o) => normalizeText(o.name) === normalizeText(x.partner_name) && o.source.startsWith('NAV'));
+      if (ex) ex.n++;
+      else out.push({ name: x.partner_name, source: src, n: 1 });
+    }
+    return out.sort((a, b) => b.n - a.n);
+  }, [p, data.entries, data.navInvoices]);
   const [all, setAll] = useState(false);
   const years = Object.keys(p.byYear).sort().reverse();
   const secOf = (e: Entry) => ix.sectionOf(e.leaf_id);
@@ -256,8 +291,8 @@ export function PartnerDetail({ p, mobile, onBack, embedded }: { p: PartnerStat;
         <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 28}px/1.1 ${FONT_H}`, color: C.navy }}>{p.name}</h2>
       </div>
       <Box title="Számlázási nevek (cégadat)">
-        {p.billingNames.length ? (
-          p.billingNames.map((b) => (
+        {names.length ? (
+          names.map((b) => (
             <div key={b.source + b.name} style={{ display: 'flex', gap: 8, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
               <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>{b.name}</span>
               <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
@@ -266,7 +301,9 @@ export function PartnerDetail({ p, mobile, onBack, embedded }: { p: PartnerStat;
             </div>
           ))
         ) : (
-          <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Még nincs Billingo-számla vagy jóváhagyott banki tétel ezzel a partnerrel.</span>
+          <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+            Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.
+          </span>
         )}
       </Box>
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
@@ -301,7 +338,11 @@ export function PartnerDetail({ p, mobile, onBack, embedded }: { p: PartnerStat;
       />
       <Box title={`Várható tételek (${p.future.length})`}>
         {p.future.length ? (
-          p.future.slice(0, 24).map((e) => <ItemRow key={e.id} e={e} sec={secOf(e)} future />)
+          p.future
+            .slice(0, 24)
+            .map((e) => (
+              <ItemRow key={e.id} e={e} sec={secOf(e)} future onEdit={onEditItem ? () => onEditItem(e.leaf_id, e.series_id || rowKey(e)) : undefined} />
+            ))
         ) : (
           <span style={{ font: `500 12.5px ${FONT}`, color: (sIn?.last12 || 0) > 0 ? C.neg : C.muted }}>
             Nincs betervezett jövőbeli tétel{(sIn?.last12 || 0) > 0 ? ' – pedig az elmúlt 12 hónapban volt bevétel.' : '.'}

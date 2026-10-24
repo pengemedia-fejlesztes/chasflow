@@ -42,7 +42,6 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
   const [alias, setAlias] = useState('');
   const [tax, setTax] = useState(p.info?.tax_number || '');
   const [note, setNote] = useState(p.info?.note || '');
-  const [addSec, setAddSec] = useState<Section | null>(null);
   const dirty =
     name.trim() !== p.name ||
     kind !== (p.info?.kind || 'auto') ||
@@ -80,6 +79,15 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
     return out.sort((a, b) => a.localeCompare(b, 'hu'));
   }, [data.bankTx, data.partnerNames, data.billingo, data.navInvoices, ix.leaves, name, aliases]);
   const listId = 'aliases-' + p.key;
+  // adószám a NAV-számlákból (ha a partnertörzsben még nincs)
+  const navTax = useMemo(() => {
+    const ids = new Set(p.leaves.map((l) => l.id));
+    const ents = new Set(data.entries.filter((e) => ids.has(e.leaf_id)).map((e) => e.id));
+    const n = (data.navInvoices || []).find(
+      (x) => x.partner_tax && ((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id))),
+    );
+    return n?.partner_tax || null;
+  }, [p.leaves, data.entries, data.navInvoices]);
   const save = () =>
     run(async () => {
       const r = await api<{ key: string }>(`/api/partners/${encodeURIComponent(p.key)}`, {
@@ -88,10 +96,8 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
       });
       onSaved?.(r.key);
     }, 'Partner mentve');
-  const groupsOf = (sec: Section) => ix.groups.filter((g) => g.section === sec);
   const moveLeaf = (leafId: string, group_id: string) => run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id } }), 'Projekt módosítva');
-  const addRole = (group_id: string) => run(() => api('/api/leaves', { body: { group_id, label: p.name } }), 'Hozzáadva').then(() => setAddSec(null));
-  const sel = { ...inputStyle, height: 38, padding: '0 10px' };
+  const addRole = (group_id: string) => run(() => api('/api/leaves', { body: { group_id, label: p.name } }), 'Hozzáadva');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -200,6 +206,23 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
       <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 2fr', gap: 10 }}>
         <Field label="Adószám">
           <input value={tax} onChange={(e) => setTax(e.target.value)} disabled={!canEdit} placeholder="12345678-2-13" style={{ ...inputStyle, height: 40 }} />
+          {canEdit && navTax && navTax !== tax && (
+            <button
+              type="button"
+              onClick={() => setTax(navTax)}
+              style={{
+                alignSelf: 'flex-start',
+                border: 0,
+                background: 'transparent',
+                padding: '4px 0 0',
+                color: C.blueDark,
+                font: `600 12px ${FONT}`,
+                cursor: 'pointer',
+              }}
+            >
+              NAV-számla szerint: {navTax} – beírom
+            </button>
+          )}
         </Field>
         <Field label="Megjegyzés">
           <input
@@ -221,55 +244,113 @@ export function PartnerEditor({ p, onSaved, compact }: { p: PartnerStat; onSaved
         </div>
       )}
 
-      <Field label="Projektek – vevőként (bevétel) és szállítóként (kiadás)">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {p.leaves.map((l) => {
-            const sec = ix.sectionOf(l.id);
+      <Field label="Hova tartozik – mappák (bevétel = vevőként, kiadás = szállítóként)">
+        <FolderTree p={p} canEdit={canEdit} onMove={moveLeaf} onAdd={addRole} />
+      </Field>
+    </div>
+  );
+}
+
+/**
+ * Mappaszerkezet: Bevétel és Kiadás oszlop, alattuk a csoportok (mappák). Ahol a partner szerepel, az ki van jelölve.
+ * Másik mappára kattintva: áthelyezés oda (a meglévő szerepből), vagy hozzáadás (új szerep ugyanazzal a névvel).
+ */
+function FolderTree({
+  p,
+  canEdit,
+  onMove,
+  onAdd,
+}: {
+  p: PartnerStat;
+  canEdit: boolean;
+  onMove: (leafId: string, groupId: string) => void;
+  onAdd: (groupId: string) => void;
+}) {
+  const { ix } = useStore();
+  const [pick, setPick] = useState<string | null>(null);
+  const col = (sec: Section) => {
+    const mine = p.leaves.filter((l) => ix.sectionOf(l.id) === sec);
+    return (
+      <div
+        style={{
+          flex: '1 1 260px',
+          minWidth: 0,
+          border: `1px solid ${C.line2}`,
+          borderRadius: 12,
+          padding: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}
+      >
+        <b style={{ font: `700 13px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy, marginBottom: 4 }}>
+          {sec === 'in' ? '📂 Bevétel (vevőként)' : '📂 Kiadás (szállítóként)'}
+        </b>
+        {ix.groups
+          .filter((g) => g.section === sec)
+          .map((g) => {
+            const here = mine.filter((l) => l.group_id === g.id);
+            const on = here.length > 0;
             return (
-              <div key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ width: 150, font: `600 13px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy }}>
-                  {sec === 'in' ? 'Vevő · bevétel' : 'Szállító · kiadás'}
-                </span>
-                <select value={l.group_id} disabled={!canEdit} onChange={(e) => moveLeaf(l.id, e.target.value)} style={{ ...sel, flex: '1 1 220px' }}>
-                  {groupsOf(sec).map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {displayGroup(g.label)}
-                    </option>
-                  ))}
-                </select>
+              <div key={g.id}>
+                <button
+                  type="button"
+                  disabled={!canEdit || on}
+                  onClick={() => setPick(pick === g.id ? null : g.id)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    border: 0,
+                    borderRadius: 8,
+                    padding: '6px 8px',
+                    background: on ? C.bg3 : pick === g.id ? C.bg2 : 'transparent',
+                    font: `${on ? 700 : 500} 13px ${FONT}`,
+                    color: on ? C.navy : C.ink,
+                    cursor: canEdit && !on ? 'pointer' : 'default',
+                    display: 'flex',
+                    gap: 6,
+                  }}
+                >
+                  <span>{on ? '📁✓' : '📁'}</span>
+                  <span style={{ flex: 1 }}>{displayGroup(g.label)}</span>
+                </button>
+                {on && <div style={{ padding: '0 0 4px 34px', font: `500 12px ${FONT}`, color: C.muted }}>└ {here.map((l) => l.label).join(', ')}</div>}
+                {pick === g.id && !on && (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '4px 0 6px 30px' }}>
+                    {mine.map((l) => (
+                      <Pill
+                        key={l.id}
+                        small
+                        kind="primary"
+                        onClick={() => {
+                          setPick(null);
+                          onMove(l.id, g.id);
+                        }}
+                      >
+                        Áthelyezés ide ({displayGroup(ix.groupById[l.group_id]?.label || '')} helyett)
+                      </Pill>
+                    ))}
+                    <Pill
+                      small
+                      onClick={() => {
+                        setPick(null);
+                        onAdd(g.id);
+                      }}
+                    >
+                      + {mine.length ? 'Ide is' : sec === 'in' ? 'Vevőként ide' : 'Szállítóként ide'}
+                    </Pill>
+                  </div>
+                )}
               </div>
             );
           })}
-          {canEdit && !addSec && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <Pill small kind="light" onClick={() => setAddSec('in')}>
-                + Vevőként (bevételi projekt)
-              </Pill>
-              <Pill small kind="light" onClick={() => setAddSec('out')}>
-                + Szállítóként (kiadási projekt)
-              </Pill>
-            </div>
-          )}
-          {canEdit && addSec && (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ font: `600 13px ${FONT}`, color: C.navy }}>{addSec === 'in' ? 'Bevételi projekt:' : 'Kiadási projekt:'}</span>
-              <select defaultValue="" onChange={(e) => e.target.value && addRole(e.target.value)} style={{ ...sel, flex: '1 1 220px' }}>
-                <option value="">Válassz…</option>
-                {groupsOf(addSec)
-                  .filter((g) => !p.leaves.some((l) => l.group_id === g.id))
-                  .map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {displayGroup(g.label)}
-                    </option>
-                  ))}
-              </select>
-              <Pill small onClick={() => setAddSec(null)}>
-                Mégse
-              </Pill>
-            </div>
-          )}
-        </div>
-      </Field>
+      </div>
+    );
+  };
+  return (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      {col('in')}
+      {col('out')}
     </div>
   );
 }
@@ -435,7 +516,7 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
               <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} compact={mobile} onSaved={(k) => openPartner(k)} />
             </div>
             <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
-            <PartnerDetail p={p} mobile={mobile} embedded onBack={close} />
+            <PartnerDetail p={p} mobile={mobile} embedded onBack={close} onEditItem={(leaf, key) => setTask({ leaf, key })} />
           </>
         ) : (
           <span style={{ font: `500 13.5px ${FONT}`, color: C.muted }}>Ehhez a névhez nem tartozik partner.</span>
