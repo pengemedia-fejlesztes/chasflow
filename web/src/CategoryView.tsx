@@ -49,6 +49,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   for (const d of data.deleted || []) {
     if (!leafIds.has(d.leaf_id) || !visibleSet.has(ymOf(d.date))) continue;
     const k = rowKey(d);
+    // újraütemezett tétel régi változata: ha ugyanazzal a névvel él egy sor ennél a partnernél, a régi nem kell áthúzva
+    if (!rowsMap.has(k) && planEntries.some((e) => e.leaf_id === d.leaf_id && e.name === d.name)) continue;
     if (!delMap.has(k)) delMap.set(k, []);
     delMap.get(k)!.push(d);
     if (!rowsMap.has(k)) rowsMap.set(k, []);
@@ -171,6 +173,31 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
         !filters.search || (ix.leafById[l]?.label || '').toLowerCase().includes(filters.search.toLowerCase()) || rows.some(([, es]) => es[0]?.leaf_id === l),
     )
     .sort((a, b) => (ix.leafById[a]?.label || '').localeCompare(ix.leafById[b]?.label || '', 'hu'));
+
+  // javaslat: az elmúlt 3 hónap (a folyó hónappal) tényleges átlaga vs. a jövő havi terv – ha a költség tartósan több
+  // (bevételnél kevesebb), mint amennyit terveztünk, látszódjon, mennyi lenne a reális havi keret
+  const sugMonths = [2, 1, 0].map((i) => addMonths(ix.cur, -i));
+  const suggest = (() => {
+    const out: { leaf: string; avg: number; plan: number; suggested: number; diff: number }[] = [];
+    if (section !== 'out') return out;
+    for (const leaf of leafIds) {
+      const per = sugMonths.map((m) =>
+        groupEntries.filter((e) => e.kind === 'actual' && e.leaf_id === leaf && ymOf(e.date) === m).reduce((a, e) => a + e.amount * sign, 0),
+      );
+      const used = per.filter((v) => v !== 0);
+      if (!used.length) continue;
+      const avg = Math.round(used.reduce((a, v) => a + v, 0) / used.length);
+      const next = addMonths(ix.cur, 1);
+      const plan = planEntries.filter((e) => e.leaf_id === leaf && !e.tentative && ymOf(e.date) === next).reduce((a, e) => a + e.amount * sign, 0);
+      // csak rendszeres költség/bevétel: van jövő havi terv, vagy legalább 2 hónapban volt tény
+      if (!plan && used.length < 2) continue;
+      const suggested = Math.ceil(avg / 1000) * 1000;
+      const diff = suggested - plan;
+      const over = section === 'out' ? diff > Math.max(2000, plan * 0.05) : -diff > Math.max(2000, plan * 0.05);
+      if (over) out.push({ leaf, avg, plan, suggested, diff });
+    }
+    return out.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  })();
 
   const renderActualRow = (leaf: string, r: ActRow) => (
     <div
@@ -684,6 +711,83 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             <Legend bg={C.negBg} border={`1px solid ${C.neg}`} text={section === 'in' ? 'kevesebb / lejárt' : 'több / lejárt'} />
             <Legend bg="transparent" border={`1px dashed ${C.line2}`} text="üres — kattintás: tétel ide másolása" />
           </div>
+          {suggest.length > 0 && (
+            <div style={{ ...card, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8, border: `1px solid ${C.neg}` }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <b style={{ font: `700 15px ${FONT_H}`, color: C.neg }}>
+                  {section === 'out' ? 'Túllépés – javasolt havi keret' : 'Elmaradás – javasolt havi terv'}
+                </b>
+                <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+                  az elmúlt hónapok tényleges átlaga alapján ({monthLabel(sugMonths[0])}–{monthLabel(sugMonths[sugMonths.length - 1])}) a jövő havi tervhez
+                  képest · összesen {section === 'out' ? '+' : '−'}
+                  {fmt(suggest.reduce((a, x) => a + Math.abs(x.diff), 0))} Ft / hó
+                </span>
+              </div>
+              {suggest.map((x) => (
+                <div
+                  key={x.leaf}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    font: `500 13px ${FONT}`,
+                    borderTop: `1px solid ${C.line3}`,
+                    paddingTop: 8,
+                  }}
+                >
+                  <PartnerLink leaf={x.leaf} style={{ minWidth: 170, font: `700 13.5px ${FONT}`, color: C.navy }}>
+                    {ix.leafById[x.leaf]?.label}
+                  </PartnerLink>
+                  <span style={{ color: C.muted }}>
+                    tény átlag <b style={{ color: C.neg }}>{fmt(x.avg)}</b>/hó · jövő havi terv <b style={{ color: C.navy }}>{fmt(x.plan)}</b>
+                  </span>
+                  <span style={{ color: C.navy }}>
+                    javasolt: <b>{fmt(x.suggested)} Ft/hó</b> ({x.diff > 0 ? '+' : ''}
+                    {fmt(x.diff)})
+                  </span>
+                  {canEdit && (
+                    <button
+                      onClick={() =>
+                        x.diff > 0
+                          ? commit(
+                              genSeries({
+                                leaf: x.leaf,
+                                section,
+                                name: section === 'out' ? 'Várható többletköltség' : 'Várható többletbevétel',
+                                amount: x.diff,
+                                startYm: addMonths(ix.cur, 1),
+                                count: 12,
+                                rep: 'monthly',
+                                day: 10,
+                                payRule: ruleOf(ix, x.leaf),
+                              }),
+                              `${ix.leafById[x.leaf]?.label}: +${fmt(x.diff)} Ft/hó tervbe (12 hó) – a szerkesztőben módosíthatod`,
+                            )
+                          : openModal(x.leaf)
+                      }
+                      title={
+                        x.diff > 0
+                          ? 'A különbözet havi tételként a tervbe kerül 12 hónapra (a meglévő tételek maradnak) – utána szerkeszthető'
+                          : 'A partner tételei – itt csökkentheted a tervet'
+                      }
+                      style={{
+                        border: 0,
+                        borderRadius: 999,
+                        background: C.blue,
+                        color: '#fff',
+                        padding: '5px 12px',
+                        font: `600 12px ${FONT}`,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {x.diff > 0 ? `+${fmt(x.diff)} tervbe` : 'Terv csökkentése…'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ ...card, overflow: 'auto' }}>
             <div style={{ display: 'grid', gridTemplateColumns: gridCols, minWidth: minW, background: C.navy, color: '#fff', alignItems: 'center' }}>
               <div />

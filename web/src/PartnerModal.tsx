@@ -323,7 +323,16 @@ function ItemRow({
     // a később számlázott hónap nem jön létre újra (megmarad a saját, későbbi fizetésével)
     const keep = new Set(shifted.map((e) => e.period));
     b.upsert = (b.upsert || []).filter((e) => !keep.has(ymOf(e.date)));
-    b.delete = regular.map((e) => e.id);
+    // helyben módosítás: a meglévő sorozat és tételek azonosítója marad (nem kerül a kukába, nem látszik töröltként);
+    // csak a rövidítéskor fölöslegessé vált hónapok törlődnek
+    const sid = series?.id;
+    if (sid && o.rep !== 'once') {
+      b.series = (b.series || []).map((x) => ({ ...x, id: sid }));
+      b.upsert.forEach((e) => (e.series_id = sid));
+    }
+    const old = [...regular].sort((x, y) => x.date.localeCompare(y.date));
+    b.upsert.forEach((e, i) => old[i] && (e.id = old[i].id));
+    b.delete = old.slice(b.upsert.length).map((e) => e.id);
     return b;
   };
   const scheduleMsg = (r: Rep, d: string, m: number) =>
