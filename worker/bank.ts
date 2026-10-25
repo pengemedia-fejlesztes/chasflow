@@ -9,6 +9,7 @@ import { fillPartnerTax } from './partnertax';
 import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
 import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
+import { refreshVatPlans } from './vat';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
 const PREFERRED_BALANCE = ['CLAV', 'ITAV', 'CLBD', 'XPCD', 'ITBD', 'OPAV', 'PRCD'];
@@ -180,6 +181,12 @@ export async function syncAll(env: Env) {
     res.auto = await autoApprove(env, approve);
   } catch (e: any) {
     res.autoError = e.message;
+  }
+  try {
+    // ÁFA-terv a friss bevételekből (következő hónapban fizetendő, 27/127)
+    res.vat = await refreshVatPlans(env);
+  } catch (e: any) {
+    res.vatError = e.message;
   }
   try {
     // a friss számlákból újabb adószámok → a terv nélküli NAV-számlák újrapárosítása
