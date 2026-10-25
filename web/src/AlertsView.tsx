@@ -87,6 +87,9 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   const { data, ix, canEdit, run, commit } = st;
   const flags = useFlags();
   const [invoice, setInvoice] = useState<string | null>(null);
+  // „Nem kell terv” jelölt (kézzel kezelt) bejövő számlák – visszanézhetők, visszanyithatók
+  const [showIgnored, setShowIgnored] = useState(false);
+  const ignoredNav = (data.navInvoices || []).filter((n) => n.status === 'ignored' && (n.operation || 'CREATE') === 'CREATE');
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const from = flagsFrom(data.entries, data.today);
   const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
@@ -284,6 +287,48 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
           </section>
         );
       })}
+      {ignoredNav.length > 0 && (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button
+            onClick={() => setShowIgnored(!showIgnored)}
+            style={{ border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', font: `700 16px ${FONT_H}`, color: C.navy }}
+          >
+            {showIgnored ? '▾' : '▸'} „Nem kell terv” jelölt NAV-számlák <span style={{ color: C.muted }}>({ignoredNav.length})</span>
+          </button>
+          {showIgnored &&
+            ignoredNav.map((n) => (
+              <div key={n.id} style={{ ...card, padding: '10px 14px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ font: `600 13.5px ${FONT}`, color: C.ink }}>{n.partner_name}</span>
+                  <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+                    <a
+                      href="#"
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        setInvoice(n.invoice_number);
+                      }}
+                      style={{ color: C.blueDark, fontWeight: 700, textDecoration: 'underline' }}
+                    >
+                      {n.invoice_number} ↗
+                    </a>
+                    {` · kelt ${dot(n.issue_date || '')}`}
+                  </span>
+                </span>
+                <b style={{ font: `700 14px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums' }}>{fmt(n.gross)} Ft</b>
+                {canEdit && (
+                  <Pill
+                    small
+                    onClick={() =>
+                      run(() => api('/api/nav/resolve', { body: { id: n.id, action: 'reopen' } }), `${n.partner_name}: visszakerült a riasztások közé`)
+                    }
+                  >
+                    Visszanyitás
+                  </Pill>
+                )}
+              </div>
+            ))}
+        </section>
+      )}
     </div>
   );
 }
