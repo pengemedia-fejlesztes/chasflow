@@ -79,6 +79,32 @@ describe('statisztikák', () => {
     expect(a.buckets.find((b) => b.key === 'notdue')!.sum).toBe(300);
     expect(a.overdue).toBe(300);
   });
+  it('kintlévőségek kora: a Billingo szerint ki nem fizetett számla akkor is, ha a terve lezárult', () => {
+    const doc = (id: number, plan_id: string | null, payment_status: string, due_date: string) => ({
+      id,
+      number: `Penge / ${id}`,
+      partner: 'Balogh',
+      gross: 228600,
+      currency: 'HUF',
+      invoice_date: due_date,
+      due_date,
+      payment_status,
+      paid_date: null,
+      cancelled: 0,
+      plan_id,
+    });
+    const a = receivablesAging(
+      [E({ id: 'pDone', kind: 'plan', date: '2025-12-10', amount: 228600, done: 1 }), E({ id: 'pOpen', kind: 'plan', date: '2026-10-01', amount: 500 })],
+      (l) => (l === 'in' ? 'in' : 'out'),
+      '2026-10-25',
+      [doc(1, 'pDone', 'expired', '2025-12-10'), doc(2, 'pOpen', 'expired', '2026-10-01'), doc(3, null, 'paid', '2025-12-10')],
+    );
+    const old = a.buckets.find((b) => b.key === 'old')!;
+    expect(old.sum).toBe(228600);
+    expect(old.items[0].leaf_id).toBe('in');
+    // a nyitott terv nem duplázódik a számlával
+    expect(a.buckets.find((b) => b.key === 'd30')!.sum).toBe(500);
+  });
 });
 
 import { offerConversion, seasonality, targetTracking } from '../shared/insights';

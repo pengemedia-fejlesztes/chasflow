@@ -99,7 +99,10 @@ export function StatsHub({
   const trend = useMemo(() => revenueTrend(ix, 24), [ix]);
   const costs = useMemo(() => costStructure(ix), [ix]);
   const conc = useMemo(() => concentration(partners.map((p) => ({ key: p.key, name: p.name, v: p.sides.in?.last12 || 0 }))), [partners]);
-  const aging = useMemo(() => receivablesAging(data.entries, ix.sectionOf, data.today), [data.entries, ix, data.today]);
+  const aging = useMemo(
+    () => receivablesAging(data.entries, ix.sectionOf, data.today, data.billingo),
+    [data.entries, ix, data.today, data.billingo],
+  );
   const target = Number(data.settings.profit_target || 0);
   const tMonths = monthRange(addMonths(ix.cur, -12), ix.cur);
   const tt = useMemo(() => targetTracking(ix, target, tMonths), [ix, target, tMonths.join()]);
@@ -296,7 +299,7 @@ export function StatsHub({
                       }}
                     >
                       <PartnerLink leaf={e.leaf_id}>{e.name || ix.leafById[e.leaf_id]?.label}</PartnerLink>{' '}
-                      <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label}</span>
+                      <span style={{ color: C.muted }}>· {ix.leafById[e.leaf_id]?.label || e.note}</span>
                     </span>
                     <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(e.amount)}</b>
                   </div>

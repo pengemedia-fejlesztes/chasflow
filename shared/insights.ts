@@ -1,6 +1,6 @@
 // További statisztikák: likviditás (runway), bevétel-trend, költségszerkezet, ügyfélkoncentráció, kintlévőségek kora.
 import { addMonths, monthRange, sumMonths, type Index } from './model';
-import type { Entry, Section } from './types';
+import type { BillingoDoc, Entry, Section } from './types';
 
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 
@@ -83,8 +83,11 @@ export function concentration<T extends { name: string; v: number }>(shares: T[]
   return { list: list.map((x) => ({ ...x, share: x.v / total })), top1: top(1), top3: top(3), top5: top(5), hhi, count: list.length };
 }
 
-/** Kintlévőségek kora: lejárt, még nyitott bevételi tételek korosztályai (napok a határidő óta). */
-export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => Section, today: string) {
+/**
+ * Kintlévőségek kora: lejárt, még nyitott bevételi tételek korosztályai (napok a határidő óta).
+ * A Billingo szerint ki nem fizetett számla akkor is szerepel, ha a tervét egy (téves) banki párosítás lezárta.
+ */
+export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => Section, today: string, billingo: BillingoDoc[] = []) {
   const buckets = [
     { key: 'notdue', label: 'Még nem esedékes (30 napon belül)', min: -30, max: -1 },
     { key: 'd30', label: '1–30 napja lejárt', min: 1, max: 30 },
@@ -92,13 +95,39 @@ export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => 
     { key: 'd90', label: '61–90 napja lejárt', min: 61, max: 90 },
     { key: 'old', label: '90 napnál régebben lejárt', min: 91, max: Infinity },
   ].map((b) => ({ ...b, sum: 0, items: [] as (Entry & { days: number })[] }));
-  for (const e of entries) {
-    if (e.kind !== 'plan' || e.done || e.tentative || sectionOf(e.leaf_id) !== 'in' || !e.amount) continue;
+  const add = (e: Entry) => {
     const d = dayDiff(e.date, today);
     const b = buckets.find((x) => d >= x.min && d <= x.max) || (d === 0 ? buckets[0] : undefined);
-    if (!b) continue;
+    if (!b) return;
     b.sum += e.amount;
     b.items.push({ ...e, days: d });
+  };
+  const open = new Set<string>();
+  for (const e of entries) {
+    if (e.kind !== 'plan' || e.done || e.tentative || sectionOf(e.leaf_id) !== 'in' || !e.amount) continue;
+    open.add(e.id);
+    add(e);
+  }
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  for (const doc of billingo) {
+    if (doc.cancelled || doc.payment_status === 'paid' || doc.payment_status === 'cancelled' || !(doc.gross > 0)) continue;
+    if (doc.plan_id && open.has(doc.plan_id)) continue;
+    const plan = doc.plan_id ? byId.get(doc.plan_id) : undefined;
+    add({
+      id: 'bdoc' + doc.id,
+      kind: 'plan',
+      date: doc.due_date || doc.invoice_date || today,
+      leaf_id: plan?.leaf_id || '',
+      name: `${doc.number || 'Számla'} · Billingo szerint nincs fizetve`,
+      amount: doc.gross,
+      series_id: null,
+      done: 0,
+      tentative: 0,
+      source: 'billingo',
+      ext_ref: `billingo:${doc.id}`,
+      link_id: plan?.link_id ?? null,
+      note: doc.partner,
+    });
   }
   buckets.forEach((b) => b.items.sort((a, c) => c.days - a.days));
   const overdue = buckets.slice(1).reduce((s, b) => s + b.sum, 0);
