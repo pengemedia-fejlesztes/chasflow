@@ -13,6 +13,31 @@ import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle } from './
 const h = (min: number) => (min / 60).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
 const pct = (r: number) => (r * 100).toLocaleString('hu-HU', { maximumFractionDigits: 1 }) + '%';
 
+/** Munkaidő-munkafüzet (feltöltött fájl vagy a linkről letöltött tábla) beolvasása és mentése a munkatárshoz. */
+export async function importWorkbook(
+  emp: Employee,
+  buf: ArrayBuffer,
+  run: (fn: () => Promise<unknown>, msg?: string) => Promise<boolean>,
+  showToast: (t: { msg: string; error?: boolean }) => void,
+) {
+  try {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(buf, { type: 'array', raw: true, cellDates: false, cellFormula: false, cellStyles: false });
+    const sheets: Record<string, unknown[][]> = {};
+    for (const n of wb.SheetNames) if (/-Feladatok$/i.test(n)) sheets[n] = rowsOfSheet(XLSX, wb.Sheets[n]);
+    const rows = parseWorkSheets(sheets);
+    if (!rows.length) throw new Error('Nem találtam „ÉÉÉÉ.HH-Feladatok” lapot (Tag · Projekt · Idő oszlopokkal).');
+    const nMonths = new Set(rows.map((r) => r.ym)).size;
+    return await run(
+      () => api('/api/worktime/import', { body: { employee: emp.key, rows } }),
+      `${emp.name}: ${nMonths} hónap munkaideje betöltve (${h(rows.reduce((a, r) => a + r.minutes, 0))} óra)`,
+    );
+  } catch (e: any) {
+    showToast({ msg: e.message || 'Nem sikerült beolvasni a fájlt.', error: true });
+    return false;
+  }
+}
+
 export function BreakevenView() {
   const { ix, data, run, isAdmin, showToast } = useStore();
   const employees = data.employees || [];
@@ -40,23 +65,7 @@ export function BreakevenView() {
   const saveEmp = (e: { key?: string; name: string; cost_leaf_id: string | null }, msg: string) =>
     run(() => api('/api/employees', { method: 'PUT', body: e }), msg);
 
-  const upload = async (emp: Employee, file: File) => {
-    try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: true, cellDates: false, cellFormula: false, cellStyles: false });
-      const sheets: Record<string, unknown[][]> = {};
-      for (const n of wb.SheetNames) if (/-Feladatok$/i.test(n)) sheets[n] = rowsOfSheet(XLSX, wb.Sheets[n]);
-      const rows = parseWorkSheets(sheets);
-      if (!rows.length) throw new Error('Nem találtam „ÉÉÉÉ.HH-Feladatok” lapot (Tag · Projekt · Idő oszlopokkal).');
-      const nMonths = new Set(rows.map((r) => r.ym)).size;
-      await run(
-        () => api('/api/worktime/import', { body: { employee: emp.key, rows } }),
-        `${emp.name}: ${nMonths} hónap munkaideje betöltve (${h(rows.reduce((a, r) => a + r.minutes, 0))} óra)`,
-      );
-    } catch (e: any) {
-      showToast({ msg: e.message || 'Nem sikerült beolvasni a fájlt.', error: true });
-    }
-  };
+  const upload = async (emp: Employee, file: File) => importWorkbook(emp, await file.arrayBuffer(), run, showToast);
 
   const download = async () => {
     const XLSX = await import('xlsx');

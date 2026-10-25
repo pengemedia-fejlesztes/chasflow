@@ -2,6 +2,7 @@
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
+import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
 import { navEnabled } from './nav';
@@ -86,7 +87,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
        FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
     ),
     env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
-    env.DB.prepare('SELECT key, name, cost_leaf_id FROM employees ORDER BY name'),
+    env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name'),
     env.DB.prepare('SELECT employee, ym, project, tag, minutes FROM worktime ORDER BY ym'),
   ]);
   const st: Record<string, string> = {};
@@ -356,18 +357,44 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   // munkatárs: név + a költségét hordozó kiadási alkategória
   if (path === '/api/employees' && req.method === 'PUT') {
     requireRole(u, 'admin');
-    const b = await readJson<{ key?: string; name: string; cost_leaf_id?: string | null }>(req);
+    const b = await readJson<{ key?: string; name: string; cost_leaf_id?: string | null; sheet_url?: string | null }>(req);
     const name = String(b.name || '')
       .trim()
       .slice(0, 100);
     if (!name) throw new HttpError(400, 'Hiányzó név.');
     const key = String(b.key || partnerIdOf(name)).slice(0, 80);
+    // a link csak akkor változik, ha a kérés hozza (a régi hívások nem törlik)
+    const url = b.sheet_url === undefined ? undefined : String(b.sheet_url || '').trim();
+    if (url && !sheetIdOf(url)) throw new HttpError(400, 'Google-táblázat linket adj meg (https://docs.google.com/spreadsheets/d/…).');
     await env.DB.prepare(
-      'INSERT INTO employees (key, name, cost_leaf_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET name = excluded.name, cost_leaf_id = excluded.cost_leaf_id, updated_at = excluded.updated_at',
+      `INSERT INTO employees (key, name, cost_leaf_id, sheet_url, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
+         name = excluded.name, cost_leaf_id = excluded.cost_leaf_id, sheet_url = CASE WHEN ? THEN excluded.sheet_url ELSE employees.sheet_url END,
+         updated_at = excluded.updated_at`,
     )
-      .bind(key, name, b.cost_leaf_id || null, now())
+      .bind(key, name, b.cost_leaf_id || null, url || null, now(), url === undefined ? 0 : 1)
       .run();
     return json({ ok: true, key });
+  }
+  // az elszámoló Google-tábla letöltése a linkről (xlsx, base64) – a böngésző olvassa be, mint a feltöltött fájlt
+  if (path === '/api/worktime/fetch' && req.method === 'POST') {
+    requireRole(u, 'admin');
+    const b = await readJson<{ employee: string }>(req);
+    const row = await env.DB.prepare('SELECT name, sheet_url FROM employees WHERE key = ?')
+      .bind(String(b.employee || ''))
+      .first<{ name: string; sheet_url: string | null }>();
+    const id = sheetIdOf(row?.sheet_url);
+    if (!row || !id) throw new HttpError(400, 'Ehhez a partnerhez nincs megadva elszámoló tábla link.');
+    const res = await fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`, { redirect: 'follow' });
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || !type.includes('spreadsheetml'))
+      throw new HttpError(
+        400,
+        `${row.name}: nem érem el a táblát. A Google-táblázatban: Megosztás → Általános hozzáférés → „Bárki, akinek megvan a link” – Megtekintő.`,
+      );
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return json({ ok: true, xlsx: btoa(bin) });
   }
   // munkaidő import: a feltöltött hónapok sorai felülírják az adott munkatárs korábbi sorait azokra a hónapokra
   if (path === '/api/worktime/import' && req.method === 'POST') {

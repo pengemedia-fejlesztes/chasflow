@@ -88,3 +88,14 @@ describe('fedezeti pont', () => {
     expect(m.projects.find((p) => p.project === 'Mr. Big')).toMatchObject({ revenue: 500_000, minutes: 0 });
   });
 });
+
+import { sheetIdOf } from '../shared/worktime';
+describe('elszámoló tábla link', () => {
+  it('Google Sheet linkből azonosító, más linkre null', () => {
+    expect(sheetIdOf('https://docs.google.com/spreadsheets/d/12J6Lw_U11lWils7dHaZbFk0aGSRcDDKz6cyGLKCEuwk/edit#gid=0')).toBe(
+      '12J6Lw_U11lWils7dHaZbFk0aGSRcDDKz6cyGLKCEuwk',
+    );
+    expect(sheetIdOf('https://example.com/spreadsheets/d/12J6Lw_U11lWils7dHaZbFk0aGSRcDDKz6cyGLKCEuwk')).toBeNull();
+    expect(sheetIdOf('')).toBeNull();
+  });
+});

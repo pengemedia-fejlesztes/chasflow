@@ -14,6 +14,14 @@ export interface Employee {
   key: string;
   name: string;
   cost_leaf_id: string | null;
+  /** elszámoló Google Sheet link (nyilvános megtekintő link) */
+  sheet_url?: string | null;
+}
+
+/** Google Sheet link → táblázat-azonosító (null, ha nem Google Sheet link). */
+export function sheetIdOf(url: string | null | undefined): string | null {
+  const m = String(url || '').match(/^https:\/\/docs\.google\.com\/spreadsheets\/d\/([\w-]{20,})/);
+  return m ? m[1] : null;
 }
 
 export interface WorktimeRow extends WorkRow {

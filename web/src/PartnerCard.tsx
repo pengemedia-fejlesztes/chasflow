@@ -8,7 +8,9 @@ import { addMonths, fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
 import { payDate, payRuleLabel } from '../../shared/workdays';
+import { sheetIdOf } from '../../shared/worktime';
 import { api } from './api';
+import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
 import { PartnerModal } from './PartnerModal';
 import { PartnerDetail } from './PartnersView';
@@ -555,6 +557,7 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
         </label>
       )}
       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Következő esedékességek: {next.map((d) => d.replace(/-/g, '.') + '.').join(' · ')}</span>
+      {sec === 'out' && normalizeText(ix.groupById[L?.group_id || '']?.label || '').includes('alvallalkoz') && <SheetLink leafId={leafId} />}
       {canEdit && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `500 13px ${FONT}`, color: C.ink, cursor: 'pointer' }}>
@@ -564,6 +567,75 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
           <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>A változás azonnal mentődik.</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Alvállalkozó elszámoló táblája (kötelező): Google Sheet link + betöltés – ebből számol a program projektenként. */
+function SheetLink({ leafId }: { leafId: string }) {
+  const { ix, data, run, canEdit, isAdmin, showToast } = useStore();
+  const L = ix.leafById[leafId];
+  const emp = (data.employees || []).find((e) => e.cost_leaf_id === leafId);
+  const [url, setUrl] = useState(emp?.sheet_url || '');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setUrl(emp?.sheet_url || ''), [emp?.sheet_url]);
+  const key = emp?.key || partnerIdOf(L?.label || '');
+  const bad = !!url.trim() && !sheetIdOf(url.trim());
+  const save = () => {
+    const v = url.trim();
+    if (bad || v === (emp?.sheet_url || '')) return;
+    run(
+      () => api('/api/employees', { method: 'PUT', body: { key, name: emp?.name || L?.label, cost_leaf_id: leafId, sheet_url: v } }),
+      `${L?.label}: elszámoló tábla ${v ? 'mentve' : 'törölve'}`,
+    );
+  };
+  const load = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ xlsx: string }>('/api/worktime/fetch', { body: { employee: key } });
+      const bin = atob(r.xlsx);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      await importWorkbook({ key, name: emp?.name || L?.label || '', cost_leaf_id: leafId }, buf.buffer, run, showToast);
+    } catch (e: any) {
+      showToast({ msg: e.message || 'Nem sikerült betölteni a táblát.', error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const missing = !emp?.sheet_url;
+  return (
+    <div style={{ borderTop: `1px solid ${C.line3}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <b style={{ font: `700 13.5px ${FONT}`, color: missing ? C.neg : C.navy }}>
+        Elszámoló tábla (XLS / Google-táblázat) <span style={{ color: C.neg }}>*</span>
+        {missing && <span style={{ font: `600 12px ${FONT}`, color: C.neg }}> – kötelező, még nincs megadva</span>}
+      </b>
+      <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
+        Ebből számolja a program havonta, melyik projekten mennyi munka volt. A táblát „Bárki, akinek megvan a link” – Megtekintő megosztásra kell
+        állítani.
+      </span>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+          disabled={!canEdit || !isAdmin}
+          placeholder="https://docs.google.com/spreadsheets/d/…"
+          style={{ ...inputStyle, flex: '1 1 320px', height: 36, borderColor: bad || missing ? C.neg : undefined }}
+        />
+        {emp?.sheet_url && isAdmin && (
+          <Pill small onClick={load}>
+            {busy ? 'Betöltés…' : 'Betöltés most'}
+          </Pill>
+        )}
+        {emp?.sheet_url && (
+          <a href={emp.sheet_url} target="_blank" rel="noreferrer" style={{ font: `600 12.5px ${FONT}`, color: C.blueDark }}>
+            Megnyitás ↗
+          </a>
+        )}
+      </div>
+      {bad && <span style={{ font: `600 12px ${FONT}`, color: C.neg }}>Ez nem Google-táblázat link.</span>}
     </div>
   );
 }
