@@ -261,8 +261,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
  * Bevételi tölcsér: Projektek (biztos terv), Ajánlatok, a kettő együtt, és a projektek tervhez kötött ténye
  * (a terv hónapjában: amihez számlamozgás tartozik) – hogy a terv mennyire valósult meg.
  */
-function PipelineCard({ cols, goGroup }: { cols: Matrix['columns']; goGroup: (id: string) => void }) {
-  const { ix, data } = useStore();
+function PipelineCard({ cols, matrix, goGroup }: { cols: Matrix['columns']; matrix: Matrix; goGroup: (id: string) => void }) {
+  const { ix, data, filters } = useStore();
   const inGroups = ix.groups.filter((g) => g.section === 'in');
   const offerG = inGroups.filter((g) => /aj[áa]nlat/i.test(g.label));
   const projG = inGroups.filter((g) => /projekt/i.test(g.label));
@@ -278,28 +278,34 @@ function PipelineCard({ cols, goGroup }: { cols: Matrix['columns']; goGroup: (id
   // ajánlat = minden nyitott (nem biztos) bevételi terv + az Ajánlatok csoportban még ott álló tervek
   const offer = (c: Matrix['columns'][number]) => sum(offerAll.offer, c) + sum(offerGrp.plan, c);
   const past = (c: Matrix['columns'][number]) => c.months[0] <= ix.cur;
-  /** havi összes bevétel / kiadás (előjelesen): tény, a folyó és jövő hónapokban + a nyitott biztos terv */
-  const total = (c: Matrix['columns'][number], sec: 'in' | 'out') =>
-    c.months.reduce((a, ym) => {
-      let v = 0;
-      for (const [leaf, mm] of ix.actual) if (ix.sectionOf(leaf) === sec) v += mm.get(ym) || 0;
-      if (ym >= ix.cur) for (const [leaf, mm] of ix.openPlan) if (ix.sectionOf(leaf) === sec) v += mm.get(ym) || 0;
-      return a + v;
-    }, 0);
+  /**
+   * Profit = a főtábla havi cashflow-ja (a fenti szűrők szerint: tény/terv, bevétel/kiadás, becslés, ajánlatok).
+   * A folyó hónap itt egy oszlop: tény + terv, a már teljesült (tényhez kötött) terv nélkül.
+   */
+  const profit = (c: Matrix['columns'][number]) => {
+    const i = matrix.columns.findIndex((x) => x.key === c.key);
+    if (i < 0) return null;
+    let v = matrix.net[i];
+    const prev = matrix.columns[i - 1];
+    if (c.current && c.kind !== 'actual' && prev?.current && prev.kind === 'actual') {
+      v += matrix.net[i - 1];
+      for (const [leaf, mm] of ix.plan)
+        if (filters.section === 'all' || ix.sectionOf(leaf) === filters.section)
+          for (const ym of c.months) v -= (mm.get(ym) || 0) - (ix.openPlan.get(leaf)?.get(ym) || 0);
+    }
+    return v;
+  };
   const rows: [string, (c: Matrix['columns'][number]) => number | null, string, (() => void) | undefined][] = [
     ['Projektek – terv (biztos)', (c) => sum(proj.plan, c), C.navy, projG[0] ? () => goGroup(projG[0].id) : undefined],
     ['Ajánlatok (nem biztos)', offer, '#8A6D1C', offerG[0] ? () => goGroup(offerG[0].id) : undefined],
     ['Projektek + ajánlatok', (c) => sum(proj.plan, c) + offer(c), C.navy, undefined],
     ['Projektek – tény (tervhez kötött)', (c) => (past(c) || sum(proj.linked, c) ? sum(proj.linked, c) : null), C.blue, undefined],
     ['Teljesülés', (c) => (past(c) ? sum(proj.linked, c) - sum(proj.plan, c) : null), '', undefined],
-    ['Bevétel összesen (tény + nyitott terv)', (c) => total(c, 'in'), C.navy, undefined],
-    ['Kiadás összesen (tény + nyitott terv)', (c) => total(c, 'out'), C.neg, undefined],
-    ['Profit (bevétel − kiadás)', (c) => total(c, 'in') + total(c, 'out'), '', undefined],
-    ['Profit ajánlatokkal', (c) => total(c, 'in') + total(c, 'out') + (c.months[0] >= ix.cur ? offer(c) : 0), '', undefined],
+    ['Profit (bevétel − kiadás)', profit, '', undefined],
   ];
   const PROFIT_FROM = 5;
   const BOLD = new Set(['Projektek + ajánlatok', 'Profit (bevétel − kiadás)']);
-  const SIGNED = new Set(['Teljesülés', 'Profit (bevétel − kiadás)', 'Profit ajánlatokkal']);
+  const SIGNED = new Set(['Teljesülés', 'Profit (bevétel − kiadás)']);
   if (!cs.length) return null;
   return (
     <div style={{ ...card, padding: 0, overflow: 'auto' }}>
@@ -501,7 +507,7 @@ function Overview({
         <Kpi label="Bankszinkron" value={`${newTx} új tétel`} sub="Jóváhagyás →" onClick={goBank} />
       </div>
 
-      <PipelineCard cols={cols} goGroup={goGroup} />
+      <PipelineCard cols={cols} matrix={matrix} goGroup={goGroup} />
 
       <div style={{ ...card, padding: '18px 22px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 18 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
