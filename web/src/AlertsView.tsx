@@ -8,7 +8,7 @@ import { unplannedHint } from '../../shared/unplanned';
 import { LeafPicker } from './LeafPicker';
 import { genSeries } from './logic';
 import { targetTracking } from '../../shared/insights';
-import type { Entry } from '../../shared/types';
+import type { Entry, NavInvoice } from '../../shared/types';
 import { api } from './api';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
@@ -90,6 +90,11 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   // „Nem kell terv” jelölt (kézzel kezelt) bejövő számlák – visszanézhetők, visszanyithatók
   const [showIgnored, setShowIgnored] = useState(false);
   const ignoredNav = (data.navInvoices || []).filter((n) => n.status === 'ignored' && (n.operation || 'CREATE') === 'CREATE');
+  // kategóriába sorolt (tervbe vett) NAV-számlák – a legfrissebb elöl, módosíthatók
+  const [showPlanned, setShowPlanned] = useState(true);
+  const plannedNav = (data.navInvoices || [])
+    .filter((n) => (n.status === 'planned' || n.status === 'paid') && (n.operation || 'CREATE') === 'CREATE')
+    .sort((a, b) => (b.issue_date || '').localeCompare(a.issue_date || ''));
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const from = flagsFrom(data.entries, data.today);
   const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
@@ -287,6 +292,18 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
           </section>
         );
       })}
+      {plannedNav.length > 0 && (
+        <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button
+            onClick={() => setShowPlanned(!showPlanned)}
+            style={{ border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', font: `700 16px ${FONT_H}`, color: C.navy }}
+          >
+            {showPlanned ? '▾' : '▸'} Kategóriába sorolt NAV-számlák <span style={{ color: C.muted }}>({plannedNav.length})</span>
+          </button>
+          {showPlanned &&
+            plannedNav.map((n) => <PlannedNavRow key={n.id} n={n} plan={n.plan_id ? byId.get(n.plan_id) : undefined} onInvoice={setInvoice} />)}
+        </section>
+      )}
       {ignoredNav.length > 0 && (
         <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button
@@ -333,6 +350,71 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   );
 }
 
+/** Besorolt NAV-számla: hova került (kategória, hónap, egyszeri / havonta), kategória módosítása, visszanyitás. */
+function PlannedNavRow({ n, plan, onInvoice }: { n: NavInvoice; plan: Entry | undefined; onInvoice: (num: string) => void }) {
+  const { ix, canEdit, run } = useStore();
+  const [pick, setPick] = useState(false);
+  const leaf = plan?.leaf_id || n.leaf_id || '';
+  const date = plan?.date || n.payment_date || n.issue_date || '';
+  const where = `${ix.leafById[leaf]?.label || 'ismeretlen kategória'} · ${date ? monthLong(ymOf(date)) : ''}${plan?.series_id ? ' · havonta' : ''}`;
+  return (
+    <div style={{ ...card, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ font: `600 13.5px ${FONT}`, color: C.ink }}>{n.partner_name}</span>
+          <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+            <a
+              href="#"
+              onClick={(ev) => {
+                ev.preventDefault();
+                onInvoice(n.invoice_number);
+              }}
+              style={{ color: C.blueDark, fontWeight: 700, textDecoration: 'underline' }}
+            >
+              {n.invoice_number} ↗
+            </a>
+            {` · kelt ${dot(n.issue_date || '')}`}
+          </span>
+          <span style={{ font: `600 12.5px ${FONT}`, color: C.blueDark }}>→ {where}</span>
+        </span>
+        <b style={{ font: `700 14px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums' }}>{fmt(n.gross)} Ft</b>
+        {canEdit && (
+          <>
+            <Pill small onClick={() => setPick(!pick)}>
+              {pick ? 'Mégse' : 'Kategória módosítása'}
+            </Pill>
+            {n.status === 'planned' && (
+              <Pill
+                small
+                onClick={() =>
+                  run(() => api('/api/nav/resolve', { body: { id: n.id, action: 'reopen' } }), `${n.partner_name}: visszakerült a riasztások közé`)
+                }
+              >
+                Visszanyitás
+              </Pill>
+            )}
+          </>
+        )}
+      </div>
+      {pick && (
+        <LeafPicker
+          section={n.gross >= 0 ? 'in' : 'out'}
+          value={leaf || null}
+          onChange={(id) => {
+            setPick(false);
+            if (id && id !== leaf)
+              run(
+                () => api('/api/nav/resolve', { body: { id: n.id, action: 'move', leaf_id: id } }),
+                `${n.partner_name}: ${ix.leafById[id]?.label}`,
+                leaf ? () => api('/api/nav/resolve', { body: { id: n.id, action: 'move', leaf_id: leaf } }) : undefined,
+              );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /** Terv nélküli tétel: javaslat (rendszeres → havonta tervbe, vagy előre nem látható költség) és a két gomb. */
 function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string | null; ack: (ids: string[], msg: string) => Promise<unknown> }) {
   const { data, ix, commit, run } = useStore();
@@ -344,6 +426,8 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
   const section = f.amount >= 0 ? 'in' : 'out';
   const [leaf, setLeaf] = useState<string | null>(hint.leaf_id);
   const [pick, setPick] = useState(false);
+  // kézzel választott kategória → „Mentés” gomb (egyszeri, a számla hónapjára)
+  const [chosen, setChosen] = useState(false);
   const monthly = Math.abs(hint.kind === 'recurring' && !f.nav ? hint.avg : f.amount);
   const leafLabel = leaf ? ix.leafById[leaf]?.label : '';
   const nav = f.nav;
@@ -387,6 +471,21 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
     await ack([f.id], section === 'out' ? 'Előre nem látható költség – rendben' : 'Egyszeri bevétel – rendben');
   };
 
+  const assign = async () => {
+    if (!leaf) return setPick(true);
+    const label = `${f.name}: ${leafLabel} · ${monthLong(ymOf(f.date))} · ${fmt(Math.abs(f.amount))} Ft`;
+    if (nav) {
+      await run(
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'assign', leaf_id: leaf } }),
+        label,
+        () => api('/api/nav/resolve', { body: { id: nav.id, action: 'reopen' } }),
+      );
+      return;
+    }
+    if (e && e.leaf_id !== leaf) await commit({ upsert: [{ ...e, leaf_id: leaf }] }, label);
+    await ack([f.id], label);
+  };
+
   const rec = hint.kind === 'recurring';
   const text = rec
     ? `Az elmúlt 12 hónapból ${hint.months} hónapban volt ilyen (átlag ${fmt(Math.abs(hint.avg))} Ft/hó) → javaslat: vedd fel havonta a tervbe${leafLabel ? ` (${leafLabel})` : ''}.`
@@ -397,10 +496,15 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
     <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.ink, background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>💡 {text}</span>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <Pill small kind={rec ? 'primary' : 'light'} onClick={recurring}>
+        {chosen && leaf && (
+          <Pill small kind="primary" onClick={assign}>
+            ✓ Mentés: {leafLabel} · {monthLong(ymOf(f.date))}
+          </Pill>
+        )}
+        <Pill small kind={rec && !chosen ? 'primary' : 'light'} onClick={recurring}>
           Havonta tervbe{leafLabel ? `: ${leafLabel}` : '…'}
         </Pill>
-        <Pill small kind={rec ? 'light' : 'primary'} onClick={oneoff}>
+        <Pill small kind={rec || chosen ? 'light' : 'primary'} onClick={oneoff}>
           {section === 'out' ? 'Előre nem látható költség' : 'Egyszeri – rendben'}
         </Pill>
         <Pill small onClick={() => setPick(!pick)}>
@@ -427,6 +531,7 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
           value={leaf}
           onChange={(id) => {
             setLeaf(id);
+            setChosen(true);
             setPick(false);
           }}
         />

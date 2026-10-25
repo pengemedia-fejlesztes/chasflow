@@ -446,7 +446,7 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     // NAV-számla terv nélkül: havonta tervbe / előre nem látható költség / nem kell terv
     requireRole(u, 'admin', 'member');
     const b = await readJson<NavResolve>(req);
-    if (!['recurring', 'unforeseen', 'ignore', 'reopen'].includes(b.action)) throw new HttpError(400, 'Hibás művelet.');
+    if (!['recurring', 'unforeseen', 'assign', 'move', 'ignore', 'reopen'].includes(b.action)) throw new HttpError(400, 'Hibás művelet.');
     await resolveNav(env, u.id, b);
     return json({ ok: true });
   }

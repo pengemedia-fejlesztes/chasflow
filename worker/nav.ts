@@ -321,26 +321,79 @@ const addMonthsDate = (date: string, n: number) => {
 
 export interface NavResolve {
   id: string;
-  /** recurring = havonta tervbe; unforeseen = egyszeri, előre nem látható költség; ignore = nem kell terv */
-  action: 'recurring' | 'unforeseen' | 'ignore' | 'reopen';
+  /**
+   * recurring = havonta tervbe; unforeseen = egyszeri, előre nem látható költség; assign = egyszeri, a választott kategóriába
+   * (a számla hónapjára, partnerrel, összeggel); move = a már besorolt számla kategóriájának módosítása; ignore = nem kell terv
+   */
+  action: 'recurring' | 'unforeseen' | 'assign' | 'move' | 'ignore' | 'reopen';
   leaf_id?: string;
   months?: number;
   name?: string;
 }
 
+const learnPartner = (env: Env, partner: string | null, leaf: string, t: number) => {
+  const key = partnerKey(partner || '');
+  return key
+    ? env.DB.prepare(
+        'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, hits = partner_rules.hits + 1, updated_at = excluded.updated_at',
+      ).bind(key, leaf, t)
+    : null;
+};
+
 export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   const r = await env.DB.prepare('SELECT * FROM nav_invoices WHERE id = ?').bind(String(it.id)).first<NavRow & { plan_id: string | null }>();
   if (!r) throw new HttpError(404, 'Nincs ilyen számla.');
   const t = now();
+  const base = 'n' + r.id.replace(/[^\w]/g, '').slice(-40);
+  // a számlából létrehozott terv(ek): base_0, base_1, … (a sorozat tagjai)
+  const own = `substr(id, 1, ${base.length + 1}) = ?`;
   if (it.action === 'ignore' || it.action === 'reopen') {
-    await env.DB.prepare('UPDATE nav_invoices SET status = ?, updated_at = ? WHERE id = ?')
-      .bind(it.action === 'ignore' ? 'ignored' : 'new', t, r.id)
-      .run();
+    const stmts: D1PreparedStatement[] = [];
+    if (it.action === 'reopen' && r.status === 'planned') {
+      // a még nyitott, ebből a számlából készült tervek a kukába (visszaállíthatók); a már teljesült (bankkal párosított) marad
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO deleted_entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by, deleted_at, deleted_by)
+           SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by, ?, ?
+           FROM entries WHERE kind = 'plan' AND done = 0 AND ${own}`,
+        ).bind(t, userId, base + '_'),
+        env.DB.prepare(`DELETE FROM entries WHERE kind = 'plan' AND done = 0 AND ${own}`).bind(base + '_'),
+      );
+    }
+    stmts.push(
+      env.DB.prepare('UPDATE nav_invoices SET status = ?, plan_id = CASE WHEN ? THEN NULL ELSE plan_id END, updated_at = ? WHERE id = ?').bind(
+        it.action === 'ignore' ? 'ignored' : 'new',
+        it.action === 'reopen' && r.status === 'planned' ? 1 : 0,
+        t,
+        r.id,
+      ),
+    );
+    await env.DB.batch(stmts);
+    return;
+  }
+  if (it.action === 'move') {
+    if (r.status !== 'planned' && r.status !== 'paid') throw new HttpError(400, 'A számla még nincs besorolva.');
+    const leaf = String(it.leaf_id || '');
+    if (!leaf || !(await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leaf).first())) throw new HttpError(400, 'Válassz kategóriát.');
+    const stmts: D1PreparedStatement[] = [
+      // a számla tervei (a teljesült is), a hozzájuk párosított banki tény és a sorozat is az új kategóriába kerül
+      env.DB.prepare(
+        `UPDATE entries SET leaf_id = ?, updated_at = ?, updated_by = ?
+         WHERE ${own} OR id IN (SELECT link_id FROM entries WHERE kind = 'plan' AND link_id IS NOT NULL AND ${own})`,
+      ).bind(leaf, t, userId, base + '_', base + '_'),
+      env.DB.prepare('UPDATE series SET leaf_id = ? WHERE id = ?').bind(leaf, 's' + base),
+      env.DB.prepare('UPDATE nav_invoices SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(leaf, t, r.id),
+    ];
+    const rule = learnPartner(env, r.partner_name, leaf, t);
+    if (rule) stmts.push(rule);
+    await env.DB.batch(stmts);
+    await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action, leaf });
     return;
   }
   const date = r.payment_date || r.issue_date || todayHu();
   const name = (String(it.name || '').trim() || r.partner_name || r.invoice_number).slice(0, 200);
   let leaf = it.leaf_id || r.leaf_id;
+  if (it.action === 'assign' && !it.leaf_id) throw new HttpError(400, 'Válassz kategóriát.');
   if (it.action === 'unforeseen' || !leaf) {
     const u = await env.DB.prepare("SELECT l.id, l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = 'out' AND l.archived = 0").all<{
       id: string;
@@ -352,7 +405,6 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   if (!leaf) throw new HttpError(400, 'Válassz kategóriát.');
   const ok = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leaf).first();
   if (!ok) throw new HttpError(400, 'Ismeretlen kategória.');
-  const base = 'n' + r.id.replace(/[^\w]/g, '').slice(-40);
   const stmts: D1PreparedStatement[] = [];
   const planId = base + '_0';
   if (it.action === 'recurring') {
@@ -374,13 +426,8 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
            VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         ).bind(`${base}_${i}`, addMonthsDate(date, i), leaf, name, r.gross, sid, i ? 'manual' : 'nav', i ? null : r.id, t, userId),
       );
-    const key = partnerKey(r.partner_name || '');
-    if (key)
-      stmts.push(
-        env.DB.prepare(
-          'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, hits = partner_rules.hits + 1, updated_at = excluded.updated_at',
-        ).bind(key, leaf, t),
-      );
+    const rule = learnPartner(env, r.partner_name, leaf, t);
+    if (rule) stmts.push(rule);
   } else {
     stmts.push(
       env.DB.prepare(
@@ -388,6 +435,9 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
          VALUES (?, 'plan', ?, ?, ?, ?, 0, 0, 'nav', ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
       ).bind(planId, date, leaf, name, r.gross, r.id, `NAV számla: ${r.invoice_number}`, t, userId),
     );
+    // kézzel választott kategória: a partner következő számlája is ide kerüljön
+    const rule = it.action === 'assign' ? learnPartner(env, r.partner_name, leaf, t) : null;
+    if (rule) stmts.push(rule);
   }
   stmts.push(env.DB.prepare("UPDATE nav_invoices SET status = 'planned', plan_id = ?, leaf_id = ?, updated_at = ? WHERE id = ?").bind(planId, leaf, t, r.id));
   await env.DB.batch(stmts);
