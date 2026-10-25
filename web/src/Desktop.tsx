@@ -231,6 +231,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'overview' && (
           <Overview
             matrix={matrix}
+            netAll={sideMatrix.net}
             goBank={() => setView('bank')}
             goAlerts={() => setView('alerts')}
             goGroup={goGroup}
@@ -261,8 +262,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
  * Bevételi tölcsér: Projektek (biztos terv), Ajánlatok, a kettő együtt, és a projektek tervhez kötött ténye
  * (a terv hónapjában: amihez számlamozgás tartozik) – hogy a terv mennyire valósult meg.
  */
-function PipelineCard({ cols, matrix, goGroup }: { cols: Matrix['columns']; matrix: Matrix; goGroup: (id: string) => void }) {
-  const { ix, data, filters } = useStore();
+function PipelineCard({ cols, matrix, netAll, goGroup }: { cols: Matrix['columns']; matrix: Matrix; netAll: number[]; goGroup: (id: string) => void }) {
+  const { ix, data } = useStore();
   const inGroups = ix.groups.filter((g) => g.section === 'in');
   const offerG = inGroups.filter((g) => /aj[áa]nlat/i.test(g.label));
   const projG = inGroups.filter((g) => /projekt/i.test(g.label));
@@ -279,19 +280,17 @@ function PipelineCard({ cols, matrix, goGroup }: { cols: Matrix['columns']; matr
   const offer = (c: Matrix['columns'][number]) => sum(offerAll.offer, c) + sum(offerGrp.plan, c);
   const past = (c: Matrix['columns'][number]) => c.months[0] <= ix.cur;
   /**
-   * Profit = a főtábla havi cashflow-ja (a fenti szűrők szerint: tény/terv, bevétel/kiadás, becslés, ajánlatok).
+   * Profit = havi bevétel − kiadás (a fenti szűrők szerint: tény/terv, becslés, ajánlatok).
    * A folyó hónap itt egy oszlop: tény + terv, a már teljesült (tényhez kötött) terv nélkül.
    */
   const profit = (c: Matrix['columns'][number]) => {
     const i = matrix.columns.findIndex((x) => x.key === c.key);
     if (i < 0) return null;
-    let v = matrix.net[i];
+    let v = netAll[i];
     const prev = matrix.columns[i - 1];
     if (c.current && c.kind !== 'actual' && prev?.current && prev.kind === 'actual') {
-      v += matrix.net[i - 1];
-      for (const [leaf, mm] of ix.plan)
-        if (filters.section === 'all' || ix.sectionOf(leaf) === filters.section)
-          for (const ym of c.months) v -= (mm.get(ym) || 0) - (ix.openPlan.get(leaf)?.get(ym) || 0);
+      v += netAll[i - 1];
+      for (const [leaf, mm] of ix.plan) for (const ym of c.months) v -= (mm.get(ym) || 0) - (ix.openPlan.get(leaf)?.get(ym) || 0);
     }
     return v;
   };
@@ -392,12 +391,15 @@ function Kpi(p: { label: string; value: string; sub: string; dark?: boolean; col
 
 function Overview({
   matrix,
+  netAll,
   goBank,
   goAlerts,
   goGroup,
   openNew,
 }: {
   matrix: Matrix;
+  /** havi bevétel − kiadás (a kategória/keresés szűrő nélkül; tény/terv, becslés, ajánlat szerint) */
+  netAll: number[];
   goBank: () => void;
   goAlerts: () => void;
   goGroup: (id: string) => void;
@@ -507,7 +509,7 @@ function Overview({
         <Kpi label="Bankszinkron" value={`${newTx} új tétel`} sub="Jóváhagyás →" onClick={goBank} />
       </div>
 
-      <PipelineCard cols={cols} matrix={matrix} goGroup={goGroup} />
+      <PipelineCard cols={cols} matrix={matrix} netAll={netAll} goGroup={goGroup} />
 
       <div style={{ ...card, padding: '18px 22px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 18 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -653,12 +655,19 @@ function Overview({
           minW={minW}
           bg={C.bg2}
           border={C.line2}
-          label={matrix.filtered ? 'Havi cashflow (szűrt)' : 'Havi cashflow'}
+          label="Havi cashflow (bevétel − kiadás)"
           labelStyle={{ font: `600 13.5px ${FONT}`, color: C.navy }}
           h={rowH}
         >
-          {matrix.net.map((v, i) => (
-            <Cell key={i} h={rowH} bg={cols[i].kind === 'actual' ? '#E1ECF5' : 'transparent'} fg={v < 0 ? NEG : C.navy} fw={600}>
+          {netAll.map((v, i) => (
+            <Cell
+              key={i}
+              h={rowH}
+              bg={cols[i].kind === 'actual' ? '#E1ECF5' : 'transparent'}
+              fg={!Math.round(v) ? C.muted : v < 0 ? NEG : '#2E7D4F'}
+              fw={700}
+            >
+              {Math.round(v) > 0 ? '+' : ''}
               {fmt(v)}
             </Cell>
           ))}
