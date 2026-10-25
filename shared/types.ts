@@ -183,6 +183,9 @@ export interface DataBundle {
   lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number; offer_at?: number | null }[];
   /** partnertörzs */
   partners?: Partner[];
+  /** munkatársak és ledolgozott idejük (fedezeti pont) */
+  employees?: import('./worktime').Employee[];
+  worktime?: import('./worktime').WorktimeRow[];
 }
 
 export interface DeletedEntry extends Entry {

@@ -5,6 +5,7 @@ import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, type Matrix } f
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
 import { BankView } from './BankView';
+import { BreakevenView } from './BreakevenView';
 import { CategoryView } from './CategoryView';
 import type { EditTarget } from './EntryModal';
 import { PartnerModal } from './PartnerModal';
@@ -17,7 +18,7 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'settings';
+export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'breakeven' | 'settings';
 
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
@@ -56,6 +57,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     ['income', 'Tervezett bevétel', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['partners', 'Partnertörzs', 0],
+    ['breakeven', 'Fedezeti pont', 0],
     ['settings', 'Beállítások', 0],
   ];
 
@@ -246,6 +248,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             <PartnerRegistry />
           </div>
         )}
+        {view === 'breakeven' && <BreakevenView />}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>
       {modal && <PartnerModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}

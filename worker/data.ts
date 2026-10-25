@@ -1,6 +1,7 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
+import { partnerIdOf } from '../shared/partners';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
 import { navEnabled } from './nav';
@@ -25,51 +26,69 @@ async function hasPeriod(env: Env) {
 
 export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
   const P = (await hasPeriod(env)) ? 'period, ' : '';
-  const [groups, leaves, series, entries, accounts, bankTx, billingo, settings, deleted, monthStats, partnerNames, lostOffers, navInvoices, partners] =
-    await env.DB.batch([
-      env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
-      env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
-      env.DB.prepare('SELECT * FROM series'),
-      env.DB.prepare(
-        `SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
-      ),
-      env.DB.prepare(
-        'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
-      ),
-      env.DB.prepare(
-        "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
-      ),
-      env.DB.prepare(
-        "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
-      ),
-      env.DB.prepare('SELECT key, value FROM settings'),
-      env.DB.prepare(
-        `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
+  const [
+    groups,
+    leaves,
+    series,
+    entries,
+    accounts,
+    bankTx,
+    billingo,
+    settings,
+    deleted,
+    monthStats,
+    partnerNames,
+    lostOffers,
+    navInvoices,
+    partners,
+    employees,
+    worktime,
+  ] = await env.DB.batch([
+    env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
+    env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
+    env.DB.prepare('SELECT * FROM series'),
+    env.DB.prepare(
+      `SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
+    ),
+    env.DB.prepare(
+      'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
+    ),
+    env.DB.prepare(
+      "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
+    ),
+    env.DB.prepare(
+      "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
+    ),
+    env.DB.prepare('SELECT key, value FROM settings'),
+    env.DB.prepare(
+      `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
        FROM deleted_entries d
        WHERE d.kind = 'plan' AND d.date >= date('now', '-62 days') AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.date LIMIT 2000`,
-      ),
-      env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
-      // partnerek banki (számlázási) nevei kategóriánként
-      env.DB.prepare(
-        `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
+    ),
+    env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
+    // partnerek banki (számlázási) nevei kategóriánként
+    env.DB.prepare(
+      `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
        WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
-      ),
-      // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
-      env.DB.prepare(
-        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at, d.offer_at FROM deleted_entries d
+    ),
+    // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
+    env.DB.prepare(
+      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at, d.offer_at FROM deleted_entries d
        WHERE d.tentative = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
-      ),
-      // NAV bejövő számlák (terv nélküliek mind, a többi az elmúlt fél évből)
-      env.DB.prepare(
-        `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
+    ),
+    // NAV bejövő számlák (terv nélküliek mind, a többi az elmúlt fél évből)
+    env.DB.prepare(
+      `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
        FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
-      ),
-      env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
-    ]);
+    ),
+    env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
+    env.DB.prepare('SELECT key, name, cost_leaf_id FROM employees ORDER BY name'),
+    env.DB.prepare('SELECT employee, ym, project, tag, minutes FROM worktime ORDER BY ym'),
+  ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -89,6 +108,8 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     lostOffers: lostOffers.results as any,
     navInvoices: navInvoices.results as any,
     partners: (partners.results as any[]).map((p) => ({ ...p, aliases: JSON.parse(p.aliases || '[]') })),
+    employees: employees.results as any,
+    worktime: worktime.results as any,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }
@@ -332,6 +353,41 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     return json({ ok: true, id });
   }
 
+  // munkatárs: név + a költségét hordozó kiadási alkategória
+  if (path === '/api/employees' && req.method === 'PUT') {
+    requireRole(u, 'admin');
+    const b = await readJson<{ key?: string; name: string; cost_leaf_id?: string | null }>(req);
+    const name = String(b.name || '')
+      .trim()
+      .slice(0, 100);
+    if (!name) throw new HttpError(400, 'Hiányzó név.');
+    const key = String(b.key || partnerIdOf(name)).slice(0, 80);
+    await env.DB.prepare(
+      'INSERT INTO employees (key, name, cost_leaf_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET name = excluded.name, cost_leaf_id = excluded.cost_leaf_id, updated_at = excluded.updated_at',
+    )
+      .bind(key, name, b.cost_leaf_id || null, now())
+      .run();
+    return json({ ok: true, key });
+  }
+  // munkaidő import: a feltöltött hónapok sorai felülírják az adott munkatárs korábbi sorait azokra a hónapokra
+  if (path === '/api/worktime/import' && req.method === 'POST') {
+    requireRole(u, 'admin');
+    const b = await readJson<{ employee: string; rows: { ym: string; project: string; tag: string; minutes: number }[] }>(req);
+    const emp = String(b.employee || '').slice(0, 80);
+    if (!emp || !(await env.DB.prepare('SELECT 1 FROM employees WHERE key = ?').bind(emp).first())) throw new HttpError(400, 'Ismeretlen munkatárs.');
+    const rows = (b.rows || []).filter((r) => /^\d{4}-\d{2}$/.test(r.ym) && r.project && Number(r.minutes) > 0).slice(0, 5000);
+    const months = [...new Set(rows.map((r) => r.ym))];
+    const stmts = months.map((m) => env.DB.prepare('DELETE FROM worktime WHERE employee = ? AND ym = ?').bind(emp, m));
+    for (const r of rows)
+      stmts.push(
+        env.DB.prepare(
+          'INSERT INTO worktime (employee, ym, project, tag, minutes) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET minutes = worktime.minutes + excluded.minutes',
+        ).bind(emp, r.ym, String(r.project).slice(0, 120), String(r.tag || '').slice(0, 60), Math.round(Number(r.minutes))),
+      );
+    for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+    await audit(env, u.id, 'worktime_import', { employee: emp, months: months.length, rows: rows.length });
+    return json({ ok: true, months: months.length, rows: rows.length });
+  }
   if (path === '/api/settings' && req.method === 'PUT') {
     requireRole(u, 'admin');
     const b = await readJson<Record<string, unknown>>(req);
