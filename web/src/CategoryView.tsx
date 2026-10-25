@@ -6,7 +6,7 @@ import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
-import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, uid } from './logic';
+import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, signed, uid } from './logic';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
@@ -1152,6 +1152,15 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               {selIds.length} tétel · {fmt(selSum)} Ft
             </span>
             <span style={{ width: 1, height: 22, background: 'rgba(255,255,255,.15)' }} />
+            <SelAmount
+              key={selIds.join()}
+              onSave={(v) => {
+                const ups = data.entries.filter((e) => sel[e.id]).map((e) => ({ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }));
+                commit({ upsert: ups }, `${ups.length} tétel összege: ${fmt(v)} Ft`);
+                clear();
+              }}
+            />
+            <span style={{ width: 1, height: 22, background: 'rgba(255,255,255,.15)' }} />
             <span style={{ ...eyebrow, color: C.muted2, margin: '0 4px 0 6px' }}>Áthelyezés</span>
             {[-1, 1, 2, 3].map((n) => (
               <button
@@ -1186,6 +1195,39 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
         </div>
       )}
     </div>
+  );
+}
+
+/** Lebegő sáv: a kijelölt tétel(ek) új összege – beírás + Enter. */
+function SelAmount({ onSave }: { onSave: (v: number) => void }) {
+  const [v, setV] = useState('');
+  const n = parseInt(v.replace(/\D/g, '')) || 0;
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ ...eyebrow, color: C.muted2, margin: '0 0 0 6px' }}>Összeg</span>
+      <input
+        value={v}
+        inputMode="numeric"
+        placeholder="új összeg"
+        onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && n > 0 && onSave(n)}
+        style={{
+          width: 110,
+          height: 34,
+          borderRadius: 999,
+          border: 0,
+          padding: '0 12px',
+          textAlign: 'right',
+          font: `600 13px ${FONT}`,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      />
+      {n > 0 && (
+        <button onClick={() => onSave(n)} style={selBtn(C.blue)}>
+          Mentés
+        </button>
+      )}
+    </span>
   );
 }
 

@@ -1,7 +1,7 @@
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
@@ -832,7 +832,7 @@ function MonthStatus({ all, name }: { all: Entry[]; name: string }) {
 }
 
 function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onApply: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void }) {
-  const { data } = useStore();
+  const { data, ix } = useStore();
   const [moving, setMoving] = useState<string | null>(null);
   const docOf = (e: Entry) => data.billingo.find((d) => d.plan_id === e.id);
   const navOf = (e: Entry) => (data.navInvoices || []).find((d) => d.plan_id === e.id);
@@ -872,7 +872,11 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
               fizetés {dot(e.date)}
               {shifted ? ' · később számlázva' : ''}
             </span>
-            <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(e.amount))} Ft</span>
+            {canEdit && !doc ? (
+              <MonthAmount e={e} onSave={(v) => onApply({ upsert: [{ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }] }, `${it.name} – ${monthName(p)}: ${fmt(v)} Ft`)} />
+            ) : (
+              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(e.amount))} Ft</span>
+            )}
             <span style={{ flex: 1, minWidth: 140 }}>
               {doc ? (
                 <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, fontWeight: 700 }}>
@@ -921,6 +925,31 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
         );
       })}
     </div>
+  );
+}
+
+/** Egy hónap összege a listában: átírható, Enter / kikattintás = mentés. */
+function MonthAmount({ e, onSave }: { e: Entry; onSave: (v: number) => void }) {
+  const [v, setV] = useState(fmt(Math.abs(e.amount)));
+  useEffect(() => setV(fmt(Math.abs(e.amount))), [e.amount]);
+  const save = () => {
+    const n = num(v);
+    if (n > 0 && n !== Math.abs(e.amount)) onSave(n);
+    else setV(fmt(Math.abs(e.amount)));
+  };
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 90 }} title="Az adott hónap összege – írd át, Enter = mentés">
+      <input
+        value={v}
+        inputMode="numeric"
+        onChange={(ev) => setV(ev.target.value)}
+        onFocus={(ev) => ev.target.select()}
+        onBlur={save}
+        onKeyDown={(ev) => ev.key === 'Enter' && (ev.target as HTMLInputElement).blur()}
+        style={{ ...inputStyle, width: 110, height: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums', padding: '0 8px' }}
+      />
+      Ft
+    </label>
   );
 }
 
