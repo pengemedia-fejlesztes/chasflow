@@ -109,6 +109,7 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     }>()
   ).results;
   const out: unknown[] = [];
+  const balanceDone = new Set<string>();
   for (const a of accs) {
     // bank: 1) ismert számlaszám, 2) bankkód (MagNet 162, BiNX 304), 3) a maradék kézi számla, ha egyértelmű
     let m = manual.find((x) => x.iban && x.iban.replace(/\s|-/g, '').toUpperCase() === a.account.toUpperCase());
@@ -125,6 +126,7 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
       continue;
     }
     const balance = balances[a.account.toUpperCase()];
+    if (balance !== undefined) balanceDone.add(a.account.toUpperCase());
     const r = await importManualRows(env, userId, {
       bank_name: m.bank_name,
       label: m.label,
@@ -134,6 +136,18 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     });
     const last = a.rows.reduce((d, x) => (x.date > d ? x.date : d), '');
     out.push({ bank: r.bank, rows: r.rows, inbox: r.inbox, auto: r.auto, duplicates: r.duplicates, last_date: last });
+  }
+  // egyenleg azokra a számlákra is, amelyeken most nem volt új tétel
+  for (const [acc, amount] of Object.entries(balances)) {
+    if (balanceDone.has(acc)) continue;
+    const m =
+      manual.find((x) => x.iban && x.iban.replace(/\s|-/g, '').toUpperCase() === acc) ||
+      manual.find((x) => x.bank_name.toLowerCase() === (bankOfAccount(acc) || '').toLowerCase());
+    if (!m) continue;
+    await env.DB.prepare("UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE provider = 'manual' AND bank_name = ? AND label = ?")
+      .bind(amount, now(), m.bank_name, m.label)
+      .run();
+    out.push({ bank: m.bank_name, rows: 0, balance: amount });
   }
   await audit(env, userId, 'ingest_aggreg8', { source: isJson ? 'json' : 'xml', skipped, accounts: out });
   await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: true, accounts: out } satisfies IngestLast));

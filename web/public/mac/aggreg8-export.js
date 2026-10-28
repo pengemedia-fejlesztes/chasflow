@@ -67,7 +67,14 @@
     return null;
   };
   const keep = since && tx.some((t) => dayOf(t)) ? tx.filter((t) => !dayOf(t) || dayOf(t) >= since) : tx;
+  // számlaegyenlegek a bankkapcsolatokból (könyvelt, ha nincs: elérhető)
+  const balances = {};
+  cons.forEach((c) => (c && c.consentedAccounts || []).forEach((a) => {
+    const b = a && a.balances && (a.balances.bookedBalance || a.balances.availableBalance);
+    if (a && a.accountNumber && b && Number.isFinite(Number(b.amount))) balances[String(a.accountNumber).replace(/\s/g, '')] = Number(b.amount);
+  }));
   const out = {
+    balances,
     transactions: keep.map((t) => {
       if (!t || typeof t !== 'object' || t.account) return t;
       const a = findAcc(Object.fromEntries(Object.entries(t).filter(([k]) => k !== '_id' && k !== 'id')));
@@ -84,5 +91,5 @@
     setTimeout(() => URL.revokeObjectURL(u), 60000);
   }
   const dates = keep.map(dayOf).filter(Boolean).sort();
-  return 'OK ' + keep.length + ' tétel' + (since ? ', ' + since + ' óta' : ', teljes lista') + ' (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + (window.__cf_nofile ? '' : ', fájl: ' + name);
+  return 'OK ' + keep.length + ' tétel' + (since ? ', ' + since + ' óta' : ', teljes lista') + ' (' + (dates[0] || '?') + ' – ' + (dates[dates.length - 1] || '?') + '), ' + out.transactions.filter((t) => t && t.account).length + ' számlához rendelve, oldalak ' + pages.join(' ') + (tp ? '/' + tp : '') + ', egyenleg: ' + Object.keys(balances).length + ' számla' + (window.__cf_nofile ? '' : ', fájl: ' + name);
 })();

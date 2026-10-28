@@ -225,7 +225,7 @@ async function main() {
           const lbl = (b) => { for (let e = b; e && e !== document.body; e = e.parentElement) { const t = (e.innerText || '').toLowerCase(), x = /binx/.test(t), m = /magnet/.test(t); if (x !== m) return x ? 'BinX' : 'MagNet'; if (x && m) break; } return ''; };
           let b = null;
           for (let i = 0; i < 30 && !(b = q().find((x) => lbl(x) === '${bank}' && !x.disabled)); i++) await new Promise((r) => setTimeout(r, 1000));
-          if (!b) return 'nincs gomb';
+          if (!b) return 'a gomb most nem aktív (az aggreg8 magától szinkronizál)';
           const n = () => document.body.innerText.split('Sikeres szinkroniz').length;
           // az üzenetek száma a kattintás óta látott legkisebbhez képest nő (az előző bank üzenete közben eltűnhet)
           let base = n();
