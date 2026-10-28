@@ -10,6 +10,7 @@ import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
 import { LinkChain, diffColor, diffText, planLinks } from './LinkChain';
 import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
+import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
 
@@ -205,6 +206,9 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
               </div>
             </div>
             <ClosedItems leaf={L.id} focusKey={edit?.key && !items.some((it) => it.key === edit.key) ? edit.key : null} keyOf={keyOf} />
+            <div style={{ padding: '0 4px' }}>
+              <RejectedOffers leafIds={[L.id]} />
+            </div>
           </>
         )}
       </div>
@@ -326,7 +330,7 @@ function ItemRow({
   section: Section;
   expanded: boolean;
   onToggle: () => void;
-  onSave: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void;
+  onSave: (b: { upsert?: Entry[]; delete?: string[]; rejected?: boolean }, msg: string) => void;
   /** mentés a szerkesztő nyitva hagyásával */
   onApply: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void;
 }) {
@@ -607,11 +611,23 @@ function ItemRow({
                 {it.tentative ? '✓ Elfogadva' : '✓ Elfogadva → Projektekbe'}
               </Pill>
             )}
+            {(it.tentative || inOffers) && editable.length > 0 && (
+              <Pill
+                small
+                onClick={() =>
+                  confirm(
+                    `„${it.name}” ajánlat elutasítva?\n\n${editable.length} tétel kikerül a tervből, lezárt ajánlatként áthúzva látszik, és beszámít az elfogadási arányba.`,
+                  ) && onSave({ delete: editable.map((e) => e.id), rejected: true }, `Ajánlat elutasítva: ${it.name} – lezárva, kikerült a tervből`)
+                }
+              >
+                <span style={{ color: '#B3261E' }}>✕ Elutasítva</span>
+              </Pill>
+            )}
             <Pill
               kind="danger"
               small
               onClick={() =>
-                confirm(`Törlöd: ${it.name} – ${editable.length} nyitott tétel?`) && onSave({ delete: editable.map((e) => e.id) }, `${it.name}: törölve`)
+                confirm(`Törlöd: ${it.name} – ${editable.length} nyitott tétel?${it.tentative ? '\n\n(Sima törlés: nem számít elutasításnak. Ha az ügyfél nemet mondott, az „Elutasítva” gombot használd.)' : ''}`) && onSave({ delete: editable.map((e) => e.id) }, `${it.name}: törölve`)
               }
             >
               Törlés

@@ -124,6 +124,15 @@ describe('további statisztikák', () => {
     expect(s.expired.length).toBe(1);
     expect(s.wonSum).toBe(500);
   });
+  it('ajánlat-arány ajánlatonként (sorozat = 1 ajánlat), elutasításig eltelt idő', () => {
+    const won = [1, 2, 3, 4, 5, 6].map((i) => E({ id: 'w' + i, kind: 'plan', was_offer: 1, tentative: 0, series_id: 's1', amount: 100 }));
+    const lost = [1, 2].map((i) => ({ id: 'l' + i, name: 'Weboldal', leaf_id: 'in', series_id: 's2', amount: 50, date: '2026-05-01', offer_at: 0 + 1, deleted_at: 1 + 10 * 86400000 }));
+    const s = offerConversion(won, lost, '2026-10-09');
+    expect(s.wonN).toBe(1);
+    expect(s.lostN).toBe(1);
+    expect(s.rate).toBe(0.5);
+    expect(s.rejectDays).toBe(10);
+  });
   it('eredmény-cél és szezonalitás', () => {
     const ix2 = buildIndex({
       groups,

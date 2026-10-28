@@ -507,8 +507,8 @@ export function StatsHub({
             <Kpis
               items={[
                 ['Megvalósulási arány', offers.rate === null ? '–' : pct(offers.rate)],
-                ['Megnyert', `${offers.won.length} db · ${fmtM(offers.wonSum)}`],
-                ['Elveszett (törölt)', `${offers.lost.length} db · ${fmtM(offers.lostSum)}`],
+                ['Megnyert', `${offers.wonN} ajánlat · ${fmtM(offers.wonSum)}`],
+                ['Elutasított', `${offers.lostN} ajánlat · ${fmtM(offers.lostSum)}`],
                 ['Nyitott', `${offers.open.length + offers.expired.length} db · ${fmtM(offers.openSum)}`],
                 ['Elfogadásig átlag', offers.acceptDays === null ? '–' : `${offers.acceptDays} nap (${offers.acceptN} ajánlat)`],
                 ['Elutasításig átlag', offers.rejectDays === null ? '–' : `${offers.rejectDays} nap`],
@@ -546,8 +546,8 @@ export function StatsHub({
               </div>
             ))}
             <Note>
-              <b>Megnyert</b>: ajánlatból biztos terv lett (kivetted belőle az „ajánlat” jelölést) vagy késznek jelölted. <b>Elveszett</b>: a törölt ajánlat. A
-              követés mostantól pontos; a korábbi ajánlatoknál csak a még meglévők számítanak.
+              <b>Megnyert</b>: ajánlatból biztos terv lett (kivetted belőle az „ajánlat” jelölést) vagy késznek jelölted. <b>Elutasított</b>: amit az „Elutasítva” gombbal
+              lezártál (a sima törlés nem számít bele). Az arány ajánlatonként számol: egy több hónapos ajánlat egynek számít.
             </Note>
           </>
         )}

@@ -9,6 +9,7 @@ import { itemLabel } from './MonthList';
 import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, signed, uid } from './logic';
 import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
+import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
 
@@ -1227,6 +1228,11 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               ×
             </button>
           </div>
+        </div>
+      )}
+      {offerGroup && (
+        <div style={{ ...card, padding: 14 }}>
+          <RejectedOffers leafIds={[...leafIds]} showLeaf />
         </div>
       )}
     </div>

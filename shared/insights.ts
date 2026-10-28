@@ -150,8 +150,11 @@ export function targetTracking(ix: Index, target: number, months: string[]) {
 // ───────────── Ajánlatok megvalósulása ─────────────
 export interface OfferStats {
   won: Entry[];
-  lost: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at?: number; offer_at?: number | null }[];
+  lost: { id: string; name: string; leaf_id: string; amount: number; date: string; series_id?: string | null; deleted_at?: number; offer_at?: number | null }[];
   open: Entry[];
+  /** ajánlatok száma (egy sorozat / név = egy ajánlat, nem havi tételenként) */
+  wonN: number;
+  lostN: number;
   expired: Entry[];
   rate: number | null;
   wonSum: number;
@@ -169,7 +172,11 @@ export function offerConversion(entries: Entry[], lost: OfferStats['lost'], toda
   const expired = openAll.filter((e) => dayDiff(e.date, today) > 30);
   const open = openAll.filter((e) => dayDiff(e.date, today) <= 30);
   const sum = (xs: { amount: number }[]) => xs.reduce((s, e) => s + Math.abs(e.amount), 0);
-  const decided = won.length + lost.length;
+  // egy ajánlat = egy sorozat (vagy azonos nevű tételek egy partnernél) – a 6 havi ajánlat 1-nek számít, nem 6-nak
+  const offerKey = (e: { leaf_id: string; series_id?: string | null; name?: string | null }) => e.leaf_id + '|' + (e.series_id || e.name || '');
+  const wonN = new Set(won.map(offerKey)).size;
+  const lostN = new Set(lost.map(offerKey)).size;
+  const decided = wonN + lostN;
   const days = (xs: [number | null | undefined, number | null | undefined][]) => {
     const ds = xs.filter(([a, b]) => a && b && b >= a).map(([a, b]) => (b! - a!) / 86400000);
     return { avg: ds.length ? Math.round((ds.reduce((x, y) => x + y, 0) / ds.length) * 10) / 10 : null, n: ds.length };
@@ -181,7 +188,9 @@ export function offerConversion(entries: Entry[], lost: OfferStats['lost'], toda
     lost,
     open,
     expired,
-    rate: decided ? won.length / decided : null,
+    wonN,
+    lostN,
+    rate: decided ? wonN / decided : null,
     wonSum: sum(won),
     lostSum: sum(lost),
     openSum: sum(openAll),

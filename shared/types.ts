@@ -179,15 +179,26 @@ export interface DataBundle {
   monthStats?: import('./planactual').MonthStat[];
   /** banki (számlázási) partnernevek kategóriánként */
   partnerNames?: { leaf_id: string; partner: string; n: number; last: string }[];
-  /** törölt (elvesztett) ajánlatok */
   /** NAV Online Számla: bejövő (szállítói) számlák */
   navInvoices?: NavInvoice[];
-  lostOffers?: { id: string; name: string; leaf_id: string; amount: number; date: string; deleted_at: number; offer_at?: number | null }[];
+  /** elutasított (lezárt, nem elfogadott) ajánlatok */
+  lostOffers?: LostOffer[];
   /** partnertörzs */
   partners?: Partner[];
   /** munkatársak és ledolgozott idejük (fedezeti pont) */
   employees?: import('./worktime').Employee[];
   worktime?: import('./worktime').WorktimeRow[];
+}
+
+export interface LostOffer {
+  id: string;
+  name: string;
+  leaf_id: string;
+  amount: number;
+  date: string;
+  series_id?: string | null;
+  deleted_at: number;
+  offer_at?: number | null;
 }
 
 export interface DeletedEntry extends Entry {
@@ -202,4 +213,6 @@ export interface EntryBatch {
   deleteSeries?: string[];
   /** visszavonás: a saját, épp most létrehozott tételek kuka nélkül törlődnek */
   purge?: boolean;
+  /** a törölt tételek elutasított ajánlatok (beszámítanak az elfogadási arányba) */
+  rejected?: boolean;
 }

@@ -76,8 +76,8 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     ),
     // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
     env.DB.prepare(
-      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.deleted_at, d.offer_at FROM deleted_entries d
-       WHERE d.tentative = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
+      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.series_id, d.deleted_at, d.offer_at FROM deleted_entries d
+       WHERE d.rejected = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
     ),
@@ -207,9 +207,9 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     // törlés előtt a kukába (visszakereshető, visszaállítható)
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries
+        `INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by, rejected) SELECT ${ENTRY_COLS}, ?, ?, ? FROM entries
          WHERE id = ? AND NOT (? = 1 AND updated_by = ? AND updated_at > ?)`,
-      ).bind(t, userId, String(id), b.purge ? 1 : 0, userId, t - 15 * 60_000),
+      ).bind(t, userId, b.rejected ? 1 : 0, String(id), b.purge ? 1 : 0, userId, t - 15 * 60_000),
     );
     stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
   }

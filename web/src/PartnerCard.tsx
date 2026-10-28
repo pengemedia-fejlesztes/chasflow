@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
+import { RejectedOffers } from './RejectedOffers';
 import { addMonths, fmt } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
@@ -694,8 +695,8 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
     );
   };
   const reject = (r: (typeof rows)[number]) => {
-    if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel törlődik a tervből, az elutasítási arányba beszámít)`)) return;
-    commit({ delete: r.ids }, `Ajánlat elutasítva: ${r.name}`);
+    if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel kikerül a tervből, lezárt ajánlatként áthúzva látszik, az elfogadási arányba beszámít)`)) return;
+    commit({ delete: r.ids, rejected: true }, `Ajánlat elutasítva: ${r.name} – lezárva`);
   };
   const ago = (ms: number | null) => (ms ? Math.max(0, Math.round((Date.now() - ms) / 86400000)) : null);
   return (
@@ -755,14 +756,16 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
       ) : (
         <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Még nincs betervezett feladat ennél a partnernél.</span>
       )}
-      {(st.won.length > 0 || st.lost.length > 0 || st.open.length + st.expired.length > 0) && (
+      <RejectedOffers leafIds={p.leaves.map((l) => l.id)} showLeaf={p.leaves.length > 1} />
+      {(st.wonN > 0 || st.lostN > 0 || st.open.length + st.expired.length > 0) && (
         <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 8 }}>
           {[
             ['Ajánlat-elfogadás', st.rate === null ? '–' : `${Math.round(st.rate * 100)}%`],
-            ['Elfogadva', `${st.won.length} db · ${fmt(st.wonSum)}`],
-            ['Elutasítva', `${st.lost.length} db · ${fmt(st.lostSum)}`],
+            ['Elfogadva', `${st.wonN} db · ${fmt(st.wonSum)}`],
+            ['Elutasítva', `${st.lostN} db · ${fmt(st.lostSum)}`],
             ['Nyitott', `${st.open.length + st.expired.length} db`],
             ['Elfogadásig átlag', st.acceptDays === null ? '–' : `${st.acceptDays} nap`],
+            ['Elutasításig átlag', st.rejectDays === null ? '–' : `${st.rejectDays} nap`],
           ].map(([k, v]) => (
             <span key={k} style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{ font: `600 10.5px ${FONT}`, letterSpacing: '.08em', textTransform: 'uppercase', color: C.muted }}>{k}</span>
