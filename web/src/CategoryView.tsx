@@ -15,7 +15,7 @@ const GOOD = '#1A7340';
 const GOOD_BG = '#E8F5EE';
 
 export function CategoryView({ groupId, openModal }: { groupId: string; openModal: (leaf: string | null, edit?: EditTarget) => void }) {
-  const { ix, data, filters, setFilters, commit, canEdit, run, openPartner } = useStore();
+  const { ix, data, filters, setFilters, commit, canEdit, run, openPartner, showToast } = useStore();
   const [openP, setOpenP] = useState<Record<string, boolean>>({});
   const G = ix.groupById[groupId];
   const leafIds = useMemo(() => new Set(ix.leaves.filter((l) => l.group_id === groupId).map((l) => l.id)), [ix, groupId]);
@@ -23,7 +23,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const sign = section === 'in' ? 1 : -1;
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const firstLeaf = ix.leaves.find((l) => l.group_id === groupId && !l.archived)?.id || '';
-  const [qa, setQa] = useState({ name: '', amount: '', leaf: firstLeaf, m: ix.cur, rep: 'monthly' as Rep, count: 6 });
+  const [qa, setQa] = useState({ name: '', amount: '', leaf: firstLeaf, m: ix.cur, rep: 'monthly' as Rep, count: 6, newLeaf: '' });
   const [showAll, setShowAll] = useState(false);
   // „Tények a szűrt időszakban” lista: becsukható, az állapot megmarad
   const [factsOpen, setFactsOpenS] = useState(() => {
@@ -40,7 +40,11 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     } catch {}
   };
   if (!G) return null;
-  const qaLeaf = leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
+  const NEW = '__new';
+  const qaLeaf = qa.leaf === NEW || !firstLeaf ? NEW : leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
+  // az Ajánlatok mappában felvett tétel ajánlat (még nem biztos)
+  const offerGroup = /aj[áa]nlat/i.test(G.label);
+  const newWord = section === 'in' ? 'ügyfél' : 'partner';
 
   // a kategória utolsó tervezett hónapjáig látszik (pl. 2027. decemberig tervezett tétel), legfeljebb 24 hónap –
   // a múltbeli hónapok is látszanak (terv vs. tény), lapozni a fejléc nyilaival lehet
@@ -98,13 +102,30 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const selSum = data.entries.filter((e) => sel[e.id]).reduce((s, e) => s + e.amount * sign, 0);
   const clear = () => setSel({});
 
-  const qaSave = () => {
+  const qaSave = async () => {
     const amt = parseInt(String(qa.amount).replace(/\D/g, '')) || 0;
-    if (!amt || !qaLeaf) return;
-    const name = qa.name.trim() || ix.leafById[qaLeaf].label;
-    const b = genSeries({ leaf: qaLeaf, section, name, amount: amt, startYm: qa.m, count: qa.count, rep: qa.rep, day: 10, payRule: ruleOf(ix, qaLeaf) });
+    if (!amt) return showToast({ msg: 'Add meg az összeget.', error: true });
+    let leaf = qaLeaf;
+    let payRule: string | null = null;
+    if (leaf === NEW) {
+      // új ügyfél/partner ebben a mappában, majd rögtön a tétel hozzá
+      const label = qa.newLeaf.trim();
+      if (!label) return showToast({ msg: `Add meg az új ${newWord} nevét.`, error: true });
+      const same = ix.leaves.find((l) => l.group_id === groupId && !l.archived && l.label.toLowerCase() === label.toLowerCase());
+      if (same) leaf = same.id;
+      else
+        try {
+          leaf = (await api<{ id: string }>('/api/leaves', { body: { group_id: groupId, label } })).id;
+          payRule = G.pay_rule || null;
+          await run(async () => {});
+        } catch (e: any) {
+          return showToast({ msg: e.message, error: true });
+        }
+    } else payRule = ruleOf(ix, leaf);
+    const name = qa.name.trim() || ix.leafById[leaf]?.label || qa.newLeaf.trim();
+    const b = genSeries({ leaf, section, name, amount: amt, startYm: qa.m, count: qa.count, rep: qa.rep, day: 10, payRule, tentative: offerGroup });
     commit(b, `${b.upsert!.length} tétel felvéve: ${name}`);
-    setQa({ ...qa, name: '', amount: '' });
+    setQa({ ...qa, name: '', amount: '', leaf, newLeaf: '' });
   };
 
   // --- partnerenkénti összesítés ---
@@ -632,6 +653,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             style={{ ...inputStyle, width: 130, textAlign: 'right', fontWeight: 600 }}
           />
           <select value={qaLeaf} onChange={(e) => setQa({ ...qa, leaf: e.target.value })} style={inputStyle}>
+            <option value={NEW}>+ Új {newWord}…</option>
             {ix.leaves
               .filter((l) => l.group_id === groupId && !l.archived)
               .map((l) => (
@@ -640,6 +662,16 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                 </option>
               ))}
           </select>
+          {qaLeaf === NEW && (
+            <input
+              autoFocus
+              value={qa.newLeaf}
+              onChange={(e) => setQa({ ...qa, newLeaf: e.target.value })}
+              placeholder={`Új ${newWord} neve`}
+              autoCapitalize="sentences"
+              style={{ ...inputStyle, width: 190, borderColor: C.blue }}
+            />
+          )}
           <select value={qa.m} onChange={(e) => setQa({ ...qa, m: e.target.value })} style={inputStyle}>
             {monthRange(ix.cur, addMonths(ix.cur, 17)).map((m) => (
               <option key={m} value={m}>
