@@ -49,6 +49,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
   /** kategória váltáskor a másik kategóriához tartozó terv kikerül a kijelölésből */
   const pickLeaf = (id: string) => {
     setLeaf(id);
+    setOpenG(ix.leafById[id]?.group_id || null);
     const p = plan ? data.entries.find((e) => e.id === plan) : null;
     if (p && p.leaf_id !== id) setPlan(null);
   };
@@ -58,6 +59,8 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
   const [catQ, setCatQ] = useState('');
   const [planQ, setPlanQ] = useState('');
   const [newGroupFor, setNewGroupFor] = useState<string | null>(null);
+  // mappa-fa: a kiválasztott kategória mappája nyitva
+  const [openG, setOpenG] = useState<string | null>(() => (leaf ? ix.leafById[leaf]?.group_id || null : null));
   const acc = data.accounts.find((a) => a.id === t.account_id);
   const planE = plan ? byId.get(plan) : null;
   const diff = planE ? Math.abs(t.amount) - Math.abs(planE.amount) : 0;
@@ -200,6 +203,59 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
           )}
 
           <div style={row}>
+            <span style={label}>Mappa</span>
+            <div style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 12, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {ix.groups
+                .filter((g) => g.section === section)
+                .map((g) => {
+                  const members = sectionLeaves.filter((l) => l.group_id === g.id).sort((a, b) => a.label.localeCompare(b.label, 'hu'));
+                  const on = !!leaf && ix.leafById[leaf]?.group_id === g.id;
+                  const expanded = openG === g.id;
+                  return (
+                    <div key={g.id}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenG(expanded ? null : g.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          border: 0,
+                          borderRadius: 8,
+                          padding: '5px 8px',
+                          background: on ? C.bg3 : 'transparent',
+                          font: `${on ? 700 : 500} 13px ${FONT}`,
+                          color: on ? C.navy : C.ink,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          gap: 6,
+                        }}
+                      >
+                        <span style={{ width: 12, color: C.muted }}>{expanded ? '▾' : '▸'}</span>
+                        <span>{on ? '📂' : '📁'}</span>
+                        <span style={{ flex: 1 }}>
+                          {displayGroup(g.label)}
+                          {on && !expanded ? <span style={{ color: C.blueDark }}> › ✓ {ix.leafById[leaf!]?.label}</span> : ''}
+                        </span>
+                        <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{members.length}</span>
+                      </button>
+                      {expanded && (
+                        <div style={{ padding: '4px 0 8px 30px', display: 'flex', gap: 6, flexWrap: 'wrap', maxHeight: 220, overflowY: 'auto' }}>
+                          {members.map((l) => (
+                            <button key={l.id} type="button" onClick={() => pickLeaf(l.id)} style={chip(leaf === l.id)}>
+                              {leaf === l.id ? '✓ ' : ''}
+                              {l.label}
+                            </button>
+                          ))}
+                          {!members.length && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>üres mappa</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+
+          <div style={row}>
             <span style={label}>Terv</span>
             <div style={chips}>
               <button type="button" onClick={() => setPlan(null)} style={chip(!plan, C.navy)}>
@@ -212,6 +268,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                   onClick={() => {
                     setPlan(e.id);
                     setLeaf(e.leaf_id);
+                    setOpenG(ix.leafById[e.leaf_id]?.group_id || null);
                   }}
                   style={chip(plan === e.id)}
                   title={ix.leafById[e.leaf_id]?.label}
@@ -243,18 +300,27 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                   ['once', 'Egyszeri'],
                   ['monthly', 'Havonta'],
                   ['quarterly', 'Negyedévente'],
+                  ['yearly', 'Évente'],
                 ] as [Rep, string][]
               ).map(([v, l]) => (
-                <button key={v} type="button" onClick={() => setRep(v)} style={chip(rep === v, C.navy)}>
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => {
+                    setRep(v);
+                    if (v === 'yearly') setCount(36);
+                  }}
+                  style={chip(rep === v, C.navy)}
+                >
                   {l}
                 </button>
               ))}
               {rep !== 'once' && (
                 <>
                   <span style={{ width: 1, height: 22, background: C.line2, margin: '0 4px' }} />
-                  {[6, 12, 24].map((c) => (
+                  {(rep === 'yearly' ? [12, 24, 36] : [6, 12, 24]).map((c) => (
                     <button key={c} type="button" onClick={() => setCount(c)} style={chip(count === c, C.navy)}>
-                      {c} hó
+                      {rep === 'yearly' ? `${c / 12} év` : `${c} hó`}
                     </button>
                   ))}
                 </>
@@ -274,7 +340,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                 ''
               )}
               {planE ? ` · lezárja: ${planE.name || 'terv'}` : ''}
-              {n ? ` · + ${n} terv: ${nextDates.map((d) => `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`).join(', ')}${n > 3 ? ' …' : ''}` : ''}
+              {n ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}` : ''}
               {planE && diff !== 0 && (
                 <span style={{ display: 'block', color: '#8A6D1C' }}>
                   Eltérés a tervtől: {diff > 0 ? '+' : '−'}

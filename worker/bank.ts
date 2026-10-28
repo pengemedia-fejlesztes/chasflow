@@ -244,7 +244,7 @@ export interface ApproveItem {
   leaf_id?: string | null;
   plan_id?: string | null;
   name?: string;
-  rep?: 'once' | 'monthly' | 'quarterly';
+  rep?: 'once' | 'monthly' | 'quarterly' | 'yearly';
   count?: number;
   /** havonta + bankonként egy összevont tényben (pl. banki díjak) */
   merge?: boolean;
@@ -352,7 +352,7 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     }
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
-    const rep = it.rep === 'monthly' || it.rep === 'quarterly' ? it.rep : null;
+    const rep = it.rep === 'monthly' || it.rep === 'quarterly' || it.rep === 'yearly' ? it.rep : null;
     const sid = rep ? 's' + tx.id : null;
     // a tény mindig a banki könyvelés napjára kerül
     stmts.push(
@@ -365,7 +365,7 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').bind(actualId, t, userId, planId));
     if (rep && sid) {
       // ismétlődő: a következő hónaptól tervezett tételek ugyanazzal az összeggel és nappal
-      const step = rep === 'quarterly' ? 3 : 1;
+      const step = rep === 'yearly' ? 12 : rep === 'quarterly' ? 3 : 1;
       const pr = await env.DB.prepare('SELECT l.pay_rule AS lp, g.pay_rule AS gp FROM leaves l JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
         .bind(leafId)
         .first<{ lp: string | null; gp: string | null }>();
