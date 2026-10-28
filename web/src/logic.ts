@@ -79,7 +79,8 @@ export function markDone(d: DataBundle, ids: string[], val: boolean): EntryBatch
         date,
         leaf_id: e.leaf_id,
         name: e.name,
-        amount: e.amount,
+        // számlához kötött tervnél a tény a számla összege (a terv összege marad)
+        amount: e.bill_amount ?? e.amount,
         series_id: null,
         done: 0,
         tentative: 0,

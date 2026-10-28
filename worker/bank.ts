@@ -1,5 +1,6 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import { normalizeText, parseAmount, parseDate } from '../shared/categories';
+import { namesMatch } from '../shared/billingopay';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
@@ -236,7 +237,52 @@ export async function payBillingoFromBank(env: Env) {
     await syncBillingo(env).catch((e) => console.error('billingo sync after autopay', e));
     await autoApprove(env, approve).catch(() => 0);
   }
-  return r;
+  const approved = await approveBillingoPaid(env).catch((e) => (console.error('billingo paid approve', e), 0));
+  return { ...r, approved };
+}
+
+/**
+ * A Billingo-számla kifizetését jelentő banki jóváírás magától jóváhagyva: a tény a számla tervéhez kötődik
+ * (a terv összege nem változik). Két eset: 1) a program párosította a számlával (paid_by_tx); 2) a számla a Billingóban
+ * már fizetett, és a jóváírás forintra egyezik vele, a számla sorszáma a közleményben van, vagy a partner (név / alternatív név) egyezik.
+ */
+export async function approveBillingoPaid(env: Env): Promise<number> {
+  const [paidR, txR, partnersR] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT d.id, d.number, d.partner, d.gross, d.paid_by_tx, d.paid_date, COALESCE(p.leaf_id, a.leaf_id) AS leaf_id, a.id AS actual_id, a.source AS actual_source
+       FROM billingo_docs d
+       LEFT JOIN entries p ON p.id = d.plan_id
+       LEFT JOIN entries a ON a.ext_ref = 'bpaid:' || d.id OR a.id = p.link_id
+       WHERE d.cancelled = 0 AND d.payment_status = 'paid' AND d.paid_date >= date('now', '-120 days')`,
+    ),
+    env.DB.prepare("SELECT id, date, amount, partner, memo FROM bank_tx WHERE status = 'new' AND amount > 0"),
+    env.DB.prepare('SELECT name, aliases FROM partners'),
+  ]);
+  const docs = paidR.results as any[];
+  const txs = txR.results as { id: string; date: string; amount: number; partner: string; memo: string }[];
+  if (!docs.length || !txs.length) return 0;
+  const groups = (partnersR.results as any[]).map((p) => [p.name, ...JSON.parse(p.aliases || '[]')] as string[]);
+  const aliasesOf = (name: string) => groups.find((g) => g.some((n) => namesMatch(n, name))) || [name];
+  const items: ApproveItem[] = [];
+  const usedDoc = new Set<number>();
+  for (const tx of txs) {
+    const text = normalizeText(`${tx.partner} ${tx.memo}`).replace(/[^a-z0-9]/g, '');
+    const doc =
+      docs.find((d) => !usedDoc.has(d.id) && d.paid_by_tx === tx.id) ||
+      docs.find((d) => {
+        if (usedDoc.has(d.id) || d.paid_by_tx || !d.leaf_id || Math.round(d.gross) !== Math.round(tx.amount)) return false;
+        if (d.paid_date && Math.abs(Date.parse(d.paid_date) - Date.parse(tx.date)) > 20 * 86400_000) return false;
+        const num = normalizeText(String(d.number || '')).replace(/[^a-z0-9]/g, '');
+        if (num.length >= 5 && text.includes(num)) return true;
+        return !!tx.partner && aliasesOf(String(d.partner || '')).some((n) => namesMatch(n, tx.partner));
+      });
+    // csak ha a fizetett számlából már tény lett (azt kapja meg a banki tétel); kézi tényhez nem kötünk automatikusan
+    if (!doc?.leaf_id || doc.actual_source !== 'billingo') continue;
+    usedDoc.add(doc.id);
+    items.push({ id: tx.id, leaf_id: doc.leaf_id });
+  }
+  if (items.length) await approve(env, null, items);
+  return items.length;
 }
 
 export interface ApproveItem {

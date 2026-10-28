@@ -8,6 +8,7 @@ import type { Entry, Rep, Section } from '../../shared/types';
 import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
+import { LinkChain, diffColor, diffText, planLinks } from './LinkChain';
 import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
@@ -203,6 +204,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                 )}
               </div>
             </div>
+            <ClosedItems leaf={L.id} focusKey={edit?.key && !items.some((it) => it.key === edit.key) ? edit.key : null} keyOf={keyOf} />
           </>
         )}
       </div>
@@ -210,6 +212,61 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         <Pill onClick={onClose}>Bezárás</Pill>
       </div>
     </Modal>
+  );
+}
+
+/** A tétel terveinek útja (terv → számla → bank → tény, különbség): a számlázott / lezárt hónapok, a legutóbbiak elöl. */
+function ItemChains({ it }: { it: Item }) {
+  const { data } = useStore();
+  const linked = it.all
+    .filter((e) => e.done || data.billingo.some((d) => d.plan_id === e.id) || (data.navInvoices || []).some((n) => n.plan_id === e.id))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 4);
+  if (!linked.length) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={eyebrow}>Terv → számla → bank → tény</span>
+      {linked.map((e) => (
+        <LinkChain key={e.id} plan={e} />
+      ))}
+    </div>
+  );
+}
+
+/** A partner lezárt tételei (az elmúlt 12 hónap): terv, számla, banki tétel, tény és a különbség. */
+function ClosedItems({ leaf, focusKey, keyOf }: { leaf: string; focusKey: string | null; keyOf: (e: Entry) => string }) {
+  const { data, ix } = useStore();
+  const [show, setShow] = useState(!!focusKey);
+  const from = addMonths(ix.cur, -12) + '-01';
+  const links = planLinks(data.entries, (e) => e.leaf_id === leaf && e.date >= from).sort(
+    (a, b) => Number(focusKey !== null && keyOf(b.plan) === focusKey) - Number(focusKey !== null && keyOf(a.plan) === focusKey) || b.plan.date.localeCompare(a.plan.date),
+  );
+  if (!links.length) return null;
+  const sum = links.reduce((a, l) => a + (l.diff || 0), 0);
+  const sec = ix.sectionOf(leaf);
+  return (
+    <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
+      <button
+        onClick={() => setShow(!show)}
+        style={{ width: '100%', border: 0, background: '#fff', padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', textAlign: 'left' }}
+      >
+        <span style={{ color: C.muted }}>{show ? '▾' : '▸'}</span>
+        <b style={{ flex: 1, font: `700 14px ${FONT}`, color: C.navy }}>Lezárt tételek – terv és tény ({links.length})</b>
+        <span style={{ font: `600 12.5px ${FONT}`, color: diffColor(sec, sum) }}>össz. eltérés {diffText(sum)} Ft</span>
+      </button>
+      {show && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 16px 14px' }}>
+          {links.map((l) => (
+            <div key={l.plan.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ font: `600 13px ${FONT}`, color: C.navy }}>
+                {l.plan.name || ix.leafById[leaf]?.label} <span style={{ color: C.muted, fontWeight: 500 }}>· {monthName(periodOf(l.plan))}</span>
+              </span>
+              <LinkChain plan={l.plan} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -512,6 +569,7 @@ function ItemRow({
             </div>
           )}
           {it.rep !== 'once' && <MonthList it={it} editable={editable} onApply={onApply} />}
+          <ItemChains it={it} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={eyebrow}>Projekt / partner</span>
             <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>

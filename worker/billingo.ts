@@ -195,8 +195,19 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       stmts.push(
         // a számlából létrejött terv neve a számla; a tervhez kötött számla a terv saját nevét (pl. „Havi díj”) tartja meg
         env.DB.prepare(
-          'UPDATE entries SET amount = ?, name = CASE WHEN ? THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
-        ).bind(gross, ex.id === 'b' + d.id ? 1 : 0, `${partner} · ${d.invoice_number || ''}`.trim(), dueChanged ? 1 : 0, due, t, ex.id),
+          // a terv összege csak a számlából létrejött tervnél követi a számlát; előzetes tervnél a terv marad (a számla a bill_amount)
+          'UPDATE entries SET bill_amount = ?, amount = CASE WHEN ? THEN ? ELSE amount END, name = CASE WHEN ? THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
+        ).bind(
+          gross,
+          ex.id === 'b' + d.id ? 1 : 0,
+          gross,
+          ex.id === 'b' + d.id ? 1 : 0,
+          `${partner} · ${d.invoice_number || ''}`.trim(),
+          dueChanged ? 1 : 0,
+          due,
+          t,
+          ex.id,
+        ),
       );
       plans++;
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
@@ -212,8 +223,9 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         for (const c of matched.covered) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ? AND done = 0').bind(c));
         stmts.push(
           env.DB.prepare(
-            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = ?, date = ?, accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0, updated_at = ? WHERE id = ?",
-          ).bind(ext, coveredSum, gross, due, t, t, matched.id),
+            // a terv összege megmarad (a lefedett tervek összegével együtt); a számla összege a bill_amount
+            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = amount + ?, bill_amount = ?, date = ?, accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0, updated_at = ? WHERE id = ?",
+          ).bind(ext, coveredSum, coveredSum, gross, due, t, t, matched.id),
         );
         if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
         plans++;
@@ -221,9 +233,9 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         planId = 'b' + d.id;
         stmts.push(
           env.DB.prepare(
-            `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, updated_at)
-           VALUES (?, 'plan', ?, ?, ?, ?, 0, 0, 'billingo', ?, ?) ON CONFLICT DO NOTHING`,
-          ).bind(planId, due, lid, `${partner} · ${d.invoice_number || ''}`.trim(), gross, ext, t),
+            `INSERT INTO entries (id, kind, date, leaf_id, name, amount, bill_amount, done, tentative, source, ext_ref, updated_at)
+           VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'billingo', ?, ?) ON CONFLICT DO NOTHING`,
+          ).bind(planId, due, lid, `${partner} · ${d.invoice_number || ''}`.trim(), gross, gross, ext, t),
         );
         plans++;
       }

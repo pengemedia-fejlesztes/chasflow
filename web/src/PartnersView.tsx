@@ -2,12 +2,13 @@
 // (cég)nevek, a múltbeli tények, a várható tételek, az összetevők, a Billingo számlák és a fizetési fegyelem látszik.
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
-import { fmt, fmtM } from '../../shared/model';
+import { addMonths, fmt, fmtM } from '../../shared/model';
 import { partnerStats, type Component, type PartnerStat } from '../../shared/partners';
 import type { Entry, Section } from '../../shared/types';
 import { api } from './api';
 import { useBack } from './back';
 import { DivergingBars } from './Bars';
+import { diffColor, diffText } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { rowKey } from './logic';
 import { useStore } from './store';
@@ -159,6 +160,133 @@ function Tile({ label, value, sub, red }: { label: string; value: string; sub?: 
   );
 }
 
+/**
+ * Számlázási nevek (cégadat): a partnerhez tartozó összes név egy helyen – Billingo (kimenő számla), NAV (bejövő számla,
+ * adószámmal), bank (utaló / kedvezményezett), alternatív név. Bármelyik név hozzárendelhető: alternatív névként kerül
+ * a partnerhez, így a program a banki, NAV- és Billingo-tételeket ezen a néven is ehhez a partnerhez párosítja.
+ */
+function NamesBox({ p }: { p: PartnerStat }) {
+  const { data, run, canEdit } = useStore();
+  const [q, setQ] = useState('');
+  const aliases = p.info?.aliases || [];
+  const own = useMemo(() => new Set([p.name, ...aliases].map(normalizeText)), [p.name, aliases]);
+  type Row = { name: string; src: Record<string, number>; tax?: string };
+  const rows = useMemo(() => {
+    const ids = new Set(p.leaves.map((l) => l.id));
+    const ents = new Set(data.entries.filter((e) => ids.has(e.leaf_id)).map((e) => e.id));
+    const m = new Map<string, Row>();
+    const add = (name: string | null | undefined, src: string, n = 1, tax?: string | null) => {
+      const t = String(name || '').replace(/\s+/g, ' ').trim();
+      if (t.length < 2) return;
+      const k = normalizeText(t);
+      const r = m.get(k) || { name: t, src: {} };
+      r.src[src] = (r.src[src] || 0) + n;
+      if (tax) r.tax = tax;
+      m.set(k, r);
+    };
+    for (const b of p.billingNames) add(b.name, b.source === 'Billingo' ? 'Billingo' : 'Bank', b.n);
+    for (const x of data.navInvoices || [])
+      if ((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id))) add(x.partner_name, 'NAV', 1, x.partner_tax);
+    for (const a of aliases) add(a, 'alias', 0);
+    return [...m.values()].sort((a, b) => sumOf(b) - sumOf(a));
+  }, [p, data.entries, data.navInvoices, aliases]);
+  // hozzárendelhető nevek: a Billingo-, NAV- és banki nevek közül, amik még egyik partnerhez sincsenek rendelve ennél a partnernél
+  const known = useMemo(() => {
+    const seen = new Set(rows.map((r) => normalizeText(r.name)));
+    const out: { name: string; src: string }[] = [];
+    const add = (s: string | null | undefined, src: string) => {
+      const t = String(s || '').replace(/\s+/g, ' ').trim();
+      const k = normalizeText(t);
+      if (k.length < 2 || seen.has(k)) return;
+      seen.add(k);
+      out.push({ name: t, src });
+    };
+    data.billingo.forEach((d) => add(d.partner, 'Billingo'));
+    (data.navInvoices || []).forEach((n) => add(n.partner_name, 'NAV'));
+    data.bankTx.forEach((t) => add(t.partner, 'Bank'));
+    return out;
+  }, [rows, data.billingo, data.navInvoices, data.bankTx]);
+  const words = (s: string) => normalizeText(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !/^(kft|zrt|bt|nyrt|korlatolt|felelossegu|tarsasag|szolgaltato|es)$/.test(w));
+  const mine = new Set([p.name, ...aliases].flatMap(words));
+  const nq = normalizeText(q);
+  const list = nq
+    ? known.filter((k) => normalizeText(k.name).includes(nq)).slice(0, 12)
+    : known.filter((k) => words(k.name).some((w) => mine.has(w))).slice(0, 8);
+  const assign = (name: string) =>
+    run(
+      () =>
+        api(`/api/partners/${encodeURIComponent(p.key)}`, {
+          method: 'PUT',
+          body: { name: p.name, kind: p.info?.kind ?? null, aliases: [...aliases, name], tax_number: p.info?.tax_number || '', note: p.info?.note || '' },
+        }),
+      `„${name}” hozzárendelve: ${p.name}`,
+    ).then(() => setQ(''));
+  const badge = (label: string, bg: string, fg: string) => (
+    <span key={label} style={{ font: `600 11px ${FONT}`, padding: '2px 8px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap' }}>
+      {label}
+    </span>
+  );
+  return (
+    <Box title="Számlázási nevek (cégadat)">
+      {rows.length ? (
+        rows.map((r) => (
+          <div key={r.name} style={{ display: 'flex', gap: 8, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: '1 1 200px', font: `600 13.5px ${FONT}`, color: C.ink }}>
+              {r.name}
+              {r.tax ? <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}> · {r.tax}</span> : null}
+            </span>
+            <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {r.src.Billingo ? badge(`Billingo · kimenő számla ${r.src.Billingo}×`, '#E6F0FA', C.blueDark) : null}
+              {r.src.NAV ? badge(`NAV · bejövő számla ${r.src.NAV}×`, '#F3EDFB', '#5B3E8C') : null}
+              {r.src.Bank ? badge(`Bank ${r.src.Bank}×`, '#E8F5EE', '#23714A') : null}
+              {own.has(normalizeText(r.name)) ? badge('✓ párosít', C.bg2, C.navy) : null}
+            </span>
+            {canEdit && !own.has(normalizeText(r.name)) && (
+              <button
+                type="button"
+                onClick={() => assign(r.name)}
+                title="Alternatív névként rögzíti – a jövőbeli tételek is ehhez a partnerhez kerülnek"
+                style={{ border: `1px solid ${C.line2}`, background: '#fff', borderRadius: 999, padding: '3px 10px', font: `600 12px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}
+              >
+                ＋ rögzít
+              </button>
+            )}
+          </div>
+        ))
+      ) : (
+        <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.</span>
+      )}
+      {canEdit && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 8, borderTop: `1px solid ${C.line3}`, marginTop: 4 }}>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="＋ Név hozzárendelése – keresés a Billingo-, NAV- és banki nevek között…"
+            style={{ ...inputStyle, height: 34, fontSize: 13 }}
+          />
+          {list.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {!nq && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Lehet, hogy ez is ő:</span>}
+              {list.map((k) => (
+                <button
+                  key={k.name}
+                  type="button"
+                  onClick={() => assign(k.name)}
+                  style={{ border: `1px dashed ${C.blue}`, background: '#fff', borderRadius: 999, padding: '4px 10px', font: `600 12px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}
+                >
+                  ＋ {k.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {k.src}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {nq && !list.length && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Nincs ilyen név a számlák és a bank között.</span>}
+        </div>
+      )}
+    </Box>
+  );
+}
+const sumOf = (r: { src: Record<string, number> }) => Object.values(r.src).reduce((a, b) => a + b, 0);
+
 function Box({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <div style={{ ...card, padding: '10px 14px' }}>
@@ -171,7 +299,8 @@ function Box({ title, children, right }: { title: string; children: React.ReactN
   );
 }
 
-function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: boolean; onEdit?: () => void }) {
+function ItemRow({ e, sec, future, onEdit, plan }: { e: Entry; sec: Section; future?: boolean; onEdit?: () => void; plan?: Entry }) {
+  const diff = plan ? Math.abs(e.amount) - Math.abs(plan.amount) : 0;
   const { data, canEdit } = useStore();
   const late = future && !e.tentative && e.date < data.today;
   const click = canEdit && onEdit;
@@ -190,6 +319,13 @@ function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: 
         <span style={{ font: `500 11px ${FONT}`, color: late ? C.neg : C.muted }}>
           {sec === 'in' ? 'bevétel' : 'kiadás'}
           {future ? (e.tentative ? ' · ajánlat' : late ? ' · lejárt terv' : ' · terv') : ''}
+          {plan && (
+            <>
+              {' · terv '}
+              {fmt(Math.abs(plan.amount))}
+              {diff ? <b style={{ color: diffColor(sec, diff) }}> · eltérés {diffText(diff)}</b> : ' · pontosan a terv'}
+            </>
+          )}
         </span>
       </span>
       {/* előjel a pénzmozgás iránya szerint: a jóváíró (mínuszos) számla a bevételi oldalon is mínusz */}
@@ -203,7 +339,7 @@ function ItemRow({ e, sec, future, onEdit }: { e: Entry; sec: Section; future?: 
         {e.amount < 0 ? '−' : '+'}
         {fmt(Math.abs(e.amount))}
       </b>
-      {click && <span style={{ font: `600 12px ${FONT}`, color: C.blueDark }}>Szerkesztés ›</span>}
+      {click && <span style={{ font: `600 12px ${FONT}`, color: C.blueDark }}>{future ? 'Szerkesztés ›' : 'Részletek ›'}</span>}
     </div>
   );
 }
@@ -253,21 +389,27 @@ export function PartnerDetail({
   onEditItem?: (leaf: string, key: string) => void;
 }) {
   const { ix, data } = useStore();
-  // számlázási nevek: Billingo + bank, kiegészítve a NAV bejövő számlák cégnevével és adószámával
-  const names = useMemo(() => {
-    const ids = new Set(p.leaves.map((l) => l.id));
-    const ents = new Set(data.entries.filter((e) => ids.has(e.leaf_id)).map((e) => e.id));
-    const out: { name: string; source: string; n: number }[] = p.billingNames.map((b) => ({ ...b }));
-    for (const x of data.navInvoices || []) {
-      if (!((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id)))) continue;
-      const src = `NAV${x.partner_tax ? ' · ' + x.partner_tax : ''}`;
-      const ex = out.find((o) => normalizeText(o.name) === normalizeText(x.partner_name) && o.source.startsWith('NAV'));
-      if (ex) ex.n++;
-      else out.push({ name: x.partner_name, source: src, n: 1 });
-    }
-    return out.sort((a, b) => b.n - a.n);
-  }, [p, data.entries, data.navInvoices]);
   const [all, setAll] = useState(false);
+  // tény → a hozzá kötött terv (a terv összege nem változik, így az eltérés látszik)
+  const planOfActual = useMemo(() => {
+    const ids = new Set(p.leaves.map((l) => l.id));
+    const m = new Map<string, Entry>();
+    for (const e of data.entries) if (e.kind === 'plan' && e.done && e.link_id && ids.has(e.leaf_id)) m.set(e.link_id, e);
+    return m;
+  }, [p.leaves, data.entries]);
+  const diff12 = useMemo(() => {
+    const from = addMonths(ix.cur, -12) + '-01';
+    let sum = 0,
+      n = 0;
+    for (const e of p.past) {
+      const pl = planOfActual.get(e.id);
+      if (!pl || e.date < from) continue;
+      // bevételnél + = több jött; kiadásnál + = többet fizettünk
+      sum += Math.abs(e.amount) - Math.abs(pl.amount);
+      n++;
+    }
+    return { sum, n };
+  }, [p.past, planOfActual, ix.cur]);
   const years = Object.keys(p.byYear).sort().reverse();
   const secOf = (e: Entry) => ix.sectionOf(e.leaf_id);
   const openDoc = async (id: number) => {
@@ -304,22 +446,7 @@ export function PartnerDetail({
         <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 28}px/1.1 ${FONT_H}`, color: C.navy }}>{p.name}</h2>
       </div>
       {part !== 'stats' && (
-        <Box title="Számlázási nevek (cégadat)">
-          {names.length ? (
-            names.map((b) => (
-              <div key={b.source + b.name} style={{ display: 'flex', gap: 8, padding: '6px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
-                <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>{b.name}</span>
-                <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
-                  {b.source} · {b.n}×
-                </span>
-              </div>
-            ))
-          ) : (
-            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
-              Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.
-            </span>
-          )}
-        </Box>
+        <NamesBox p={p} />
       )}
       {part !== 'names' && (
         <>
@@ -429,7 +556,7 @@ export function PartnerDetail({
             </Box>
           )}
           <Box
-            title={`Múltbeli tételek (${p.past.length})`}
+            title={`Múltbeli tételek (${p.past.length})${diff12.n ? ` · terv vs. tény (12 hó): ${diffText(diff12.sum)} Ft` : ''}`}
             right={
               p.past.length > 12 ? (
                 <button
@@ -441,9 +568,18 @@ export function PartnerDetail({
               ) : null
             }
           >
-            {past.map((e) => (
-              <ItemRow key={e.id} e={e} sec={secOf(e)} />
-            ))}
+            {past.map((e) => {
+              const pl = planOfActual.get(e.id);
+              return (
+                <ItemRow
+                  key={e.id}
+                  e={e}
+                  sec={secOf(e)}
+                  plan={pl}
+                  onEdit={pl && onEditItem ? () => onEditItem(pl.leaf_id, pl.series_id || rowKey(pl)) : undefined}
+                />
+              );
+            })}
           </Box>
         </>
       )}

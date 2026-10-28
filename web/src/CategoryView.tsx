@@ -7,6 +7,7 @@ import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
 import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, signed, uid } from './logic';
+import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
@@ -25,6 +26,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const firstLeaf = ix.leaves.find((l) => l.group_id === groupId && !l.archived)?.id || '';
   const [qa, setQa] = useState({ name: '', amount: '', leaf: firstLeaf, m: ix.cur, rep: 'monthly' as Rep, count: 6, newLeaf: '' });
   const [showAll, setShowAll] = useState(false);
+  const planOfActual = usePlanOfActual();
   // „Tények a szűrt időszakban” lista: becsukható, az állapot megmarad
   const [factsOpen, setFactsOpenS] = useState(() => {
     try {
@@ -1113,6 +1115,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               </span>
               <span style={{ font: `400 11.5px ${FONT}`, color: C.muted }}>
                 {{ import: 'xls import', bank: 'bankból', manual: 'kézi', billingo: 'Billingo' }[e.source] || e.source}
+                <PlanDiff actual={e} plan={planOfActual.get(e.id)} sec={section} />
               </span>
             </span>
             {canEdit ? (

@@ -5,6 +5,7 @@ import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { CalendarSheet } from './DatePicker';
 import { itemLabel } from './MonthList';
+import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { markDone } from './logic';
 import { useStore } from './store';
@@ -21,6 +22,7 @@ const BSTATUS: Record<string, [string, string]> = {
 export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
   const { ix, data, filters, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
+  const planOfActual = usePlanOfActual();
   // a dátumra kattintva: a várható beérkezés módosítása
   const [pickFor, setPickFor] = useState<Entry | null>(null);
   // a fejléc dobozaira koppintva csak a hozzájuk tartozó tételek látszanak
@@ -278,7 +280,8 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
               <span style={{ font: `600 13.5px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
               <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
                 <PartnerLink leaf={e.leaf_id}>{ix.leafById[e.leaf_id]?.label}</PartnerLink> ·{' '}
-                {e.source === 'bank' ? 'bankból' : e.source === 'import' ? 'xls' : 'kézi'}
+                {e.source === 'bank' ? 'bankból' : e.source === 'import' ? 'xls' : e.source === 'billingo' ? 'Billingo' : 'kézi'}
+                <PlanDiff actual={e} plan={planOfActual.get(e.id)} sec="in" />
               </span>
             </span>
             <span style={{ font: `700 14px ${FONT}`, color: C.blueDark, fontVariantNumeric: 'tabular-nums' }}>+{fmt(e.amount)}</span>

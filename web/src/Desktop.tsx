@@ -1,13 +1,14 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevétel / Bank / Beállítások.
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, type Matrix } from '../../shared/model';
+import { addMonths, buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
 import { BankView } from './BankView';
 import { BreakevenView } from './BreakevenView';
 import { CategoryView } from './CategoryView';
 import type { EditTarget } from './EntryModal';
+import { diffColor, diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { FilterBar, periodLabel } from './Filters';
@@ -262,6 +263,74 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
  * Bevételi tölcsér: Projektek (biztos terv), Ajánlatok, a kettő együtt, és a projektek tervhez kötött ténye
  * (a terv hónapjában: amihez számlamozgás tartozik) – hogy a terv mennyire valósult meg.
  */
+/**
+ * Terv vs. tény eltérés: az előző és az aktuális hónap lezárt tervei (a tény hónapja szerint), partnerenként.
+ * A terv összege nem változik a számla / tény miatt, így ez a valódi eltérés. Bevételnél + = több jött, kiadásnál + = többet fizettünk.
+ */
+function DeviationCard() {
+  const { data, ix, openPartner } = useStore();
+  const months = [addMonths(ix.cur, -1), ix.cur];
+  const [ym, setYm] = useState(ix.cur);
+  const rows = useMemo(() => {
+    const links = planLinks(data.entries, () => true).filter((l) => l.actual && ymOf(l.actual.date) === ym && l.diff);
+    const by = new Map<string, { leaf: string; diff: number; plan: number; act: number; n: number }>();
+    for (const l of links) {
+      const r = by.get(l.plan.leaf_id) || { leaf: l.plan.leaf_id, diff: 0, plan: 0, act: 0, n: 0 };
+      r.diff += l.diff!;
+      r.plan += Math.abs(l.plan.amount);
+      r.act += Math.abs(l.actual!.amount);
+      r.n++;
+      by.set(l.plan.leaf_id, r);
+    }
+    return [...by.values()].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  }, [data.entries, ym]);
+  const tot = (sec: 'in' | 'out') => rows.filter((r) => ix.sectionOf(r.leaf) === sec).reduce((a, r) => a + r.diff, 0);
+  return (
+    <div style={{ ...card, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <b style={{ flex: 1, font: `700 16px ${FONT_H}`, color: C.navy }}>Terv vs. tény eltérés</b>
+        {months.map((m) => (
+          <Pill key={m} small kind={m === ym ? 'dark' : undefined} onClick={() => setYm(m)}>
+            {monthLong(m)}
+          </Pill>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', font: `500 13px ${FONT}`, color: C.muted }}>
+        <span>
+          Bevétel: <b style={{ color: diffColor('in', tot('in')) }}>{diffText(tot('in'))} Ft</b>
+        </span>
+        <span>
+          Kiadás: <b style={{ color: diffColor('out', tot('out')) }}>{diffText(tot('out'))} Ft</b>
+        </span>
+        <span>Lezárt, eltérő tételek: {rows.reduce((a, r) => a + r.n, 0)}</span>
+      </div>
+      {rows.length === 0 ? (
+        <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>Ebben a hónapban minden lezárt tétel pontosan a terv szerint teljesült (vagy még nincs lezárt tétel).</span>
+      ) : (
+        rows.slice(0, 10).map((r) => {
+          const sec = ix.sectionOf(r.leaf);
+          return (
+            <button
+              key={r.leaf}
+              onClick={() => openPartner(r.leaf)}
+              className="hov-light"
+              style={{ display: 'flex', gap: 10, alignItems: 'baseline', border: 0, borderTop: `1px solid ${C.line3}`, background: 'transparent', padding: '7px 0', cursor: 'pointer', textAlign: 'left' }}
+            >
+              <span style={{ flex: 1, minWidth: 0, font: `600 13.5px ${FONT}`, color: C.navy }}>
+                {ix.leafById[r.leaf]?.label}{' '}
+                <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
+                  · {sec === 'in' ? 'bevétel' : 'kiadás'} · terv {fmt(r.plan)} → tény {fmt(r.act)}
+                </span>
+              </span>
+              <b style={{ font: `700 13.5px ${FONT}`, color: diffColor(sec, r.diff), fontVariantNumeric: 'tabular-nums' }}>{diffText(r.diff)} Ft</b>
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 function PipelineCard({ cols, matrix, netAll, goGroup }: { cols: Matrix['columns']; matrix: Matrix; netAll: number[]; goGroup: (id: string) => void }) {
   const { ix, data } = useStore();
   const inGroups = ix.groups.filter((g) => g.section === 'in');
@@ -510,6 +579,8 @@ function Overview({
       </div>
 
       <PipelineCard cols={cols} matrix={matrix} netAll={netAll} goGroup={goGroup} />
+
+      <DeviationCard />
 
       <div style={{ ...card, padding: '18px 22px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 18 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

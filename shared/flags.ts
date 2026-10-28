@@ -145,18 +145,20 @@ export function billingFlags(
   for (const e of entries) {
     if (e.kind !== 'plan' || e.amount <= 0 || sectionOf(e.leaf_id) !== 'in') continue;
     if (e.source === 'billingo') {
-      const pa = e.plan_amount;
-      if (pa != null && e.amount < pa && pa - e.amount >= Math.max(DEV_MIN_FT, pa * DEV_MIN_REL) && e.date >= from)
+      // a terv összege (amount) nem változik; a számla összege a bill_amount (régi adatnál a terv eredetije a plan_amount)
+      const bill = e.bill_amount ?? e.amount;
+      const pa = e.bill_amount != null ? e.amount : e.plan_amount;
+      if (pa != null && bill < pa && pa - bill >= Math.max(DEV_MIN_FT, pa * DEV_MIN_REL) && e.date >= from)
         out.push({
-          id: `ub:${e.id}:${e.amount}`,
+          id: `ub:${e.id}:${bill}`,
           kind: 'underbilled',
           section: 'in',
           date: e.date,
           name: e.name,
           leaf_id: e.leaf_id,
-          amount: e.amount,
+          amount: bill,
           plan: pa,
-          diff: e.amount - pa,
+          diff: bill - pa,
           entry_id: e.id,
         });
       continue;

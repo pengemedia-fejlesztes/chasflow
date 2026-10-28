@@ -49,7 +49,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
     env.DB.prepare('SELECT * FROM series'),
     env.DB.prepare(
-      `SELECT id, kind, date, leaf_id, name, amount, plan_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
+      `SELECT id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
     ),
     env.DB.prepare(
       'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',

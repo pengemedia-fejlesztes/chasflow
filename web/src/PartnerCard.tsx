@@ -55,6 +55,9 @@ export function PartnerEditor({
   const [kind, setKind] = useState<Kind>(p.info?.kind || kindOf(p, ix.sectionOf));
   const [aliases, setAliases] = useState<string[]>(p.info?.aliases || []);
   const [alias, setAlias] = useState('');
+  // máshol (pl. a Számlázási nevek dobozban) hozzárendelt név is látszódjon itt, és a következő mentés ne vesse el
+  const aliasesKey = JSON.stringify(p.info?.aliases || []);
+  useEffect(() => setAliases(p.info?.aliases || []), [aliasesKey]);
   const [tax, setTax] = useState(p.info?.tax_number || '');
   const [note, setNote] = useState(p.info?.note || '');
   const addAlias = (a: string) => {

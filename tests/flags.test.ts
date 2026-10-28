@@ -92,6 +92,15 @@ describe('számlázás ellenőrzése', () => {
     expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['underbilled:lo']);
     expect(f[0].diff).toBe(-10000);
   });
+  it('a terv összege marad, a számla a bill_amount: kevesebb számla riaszt, több nem', () => {
+    const es = [
+      p('lo', '2026-10-09', 100000, { source: 'billingo', plan_amount: 100000, bill_amount: 90000 }),
+      p('hi', '2026-10-09', 100000, { source: 'billingo', plan_amount: 100000, bill_amount: 120000 }),
+    ];
+    const f = billingFlags(es, sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['underbilled:lo']);
+    expect(f[0]).toMatchObject({ amount: 90000, plan: 100000, diff: -10000 });
+  });
   it('rendszeres tétel: a hónap első munkanapja + határidő', () => {
     expect(invoiceDue('2026-11', 8)).toBe('2026-11-10'); // nov. 2. hétfő + 8
     expect(payDate('2026-11', 'inv:8', 1)).toBe('2026-11-10');
