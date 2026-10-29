@@ -1,7 +1,7 @@
 // Partner adatlap: bárhonnan a partner nevére kattintva nyílik. Felül a partnertörzs adatai (név, típus, alternatív nevek,
 // adószám, megjegyzés, projektek), alatta a tervezett feladatok (mit számlázunk neki / mit fizetünk neki), majd a statisztika.
 // A PartnerEditor a partnertörzs oldalon is ugyanez.
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
 import { RejectedOffers } from './RejectedOffers';
@@ -304,6 +304,106 @@ export function PartnerEditor({
 }
 
 /**
+ * Egy partner-sor (projekt) kezelése a mappafában: átnevezés, összevonás a partner másik sorával (minden tétel, banki tétel,
+ * szabály átkerül, semmi nem vész el), áthelyezés másik mappába, tételek szerkesztése, megszüntetés (archiválás).
+ */
+function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: { id: string; label: string; group_id: string }[]; onDone: () => void }) {
+  const { ix, data, run } = useStore();
+  const L = ix.leafById[leafId];
+  const [name, setName] = useState(L?.label || '');
+  const [items, setItems] = useState(false);
+  const [mergeQ, setMergeQ] = useState('');
+  if (!L) return null;
+  const sec = ix.sectionOf(leafId);
+  const es = data.entries.filter((e) => e.leaf_id === leafId);
+  const openN = es.filter((e) => e.kind === 'plan' && !e.done).length;
+  const actN = es.filter((e) => e.kind === 'actual').length;
+  const others = ix.leaves.filter((l) => l.id !== leafId && !l.archived && ix.sectionOf(l.id) === sec);
+  const sib = new Set(siblings.map((x) => x.id));
+  const cands = mergeQ.trim()
+    ? others.filter((l) => normalizeText(l.label).includes(normalizeText(mergeQ))).slice(0, 8)
+    : others.filter((l) => sib.has(l.id));
+  const gl = (id: string) => displayGroup(ix.groupById[ix.leafById[id]?.group_id]?.label || '');
+  const rename = () => {
+    const v = name.trim();
+    if (!v || v === L.label) return;
+    run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { label: v } }), `Átnevezve: ${L.label} → ${v}`);
+  };
+  const merge = (into: { id: string; label: string }) => {
+    if (!confirm(`„${L.label}” (${gl(leafId)}) összevonása ide: „${into.label}” (${gl(into.id)})?\n\nMinden tétele (${es.length}: ${openN} nyitott terv, ${actN} tény), banki tétele és párosítási szabálya átkerül, a régi név a jövőben is ide párosul. A „${L.label}” sor megszűnik.`)) return;
+    run(() => api(`/api/leaves/${leafId}/merge`, { body: { into: into.id } }), `${L.label} → ${into.label} összevonva`).then(onDone);
+  };
+  const archive = () => {
+    if (openN) {
+      alert(`„${L.label}” sorban még ${openN} nyitott terv van. Előbb vond össze egy másik sorral, vagy töröld / helyezd át a tételeit („Tételek szerkesztése”).`);
+      return;
+    }
+    if (!confirm(`„${L.label}” megszüntetése? A múltbeli tételei megmaradnak (a statisztikában látszanak), csak a választólistákban nem jelenik meg többé. Visszaállítani a Beállítások → Kategóriák alatt lehet.`)) return;
+    run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { archived: 1 } }), `${L.label} megszüntetve (archiválva)`).then(onDone);
+  };
+  const row: CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
+  const lab: CSSProperties = { font: `600 10.5px ${FONT}`, letterSpacing: '.08em', textTransform: 'uppercase', color: C.muted, minWidth: 92 };
+  return (
+    <div style={{ margin: '2px 0 8px 8px', padding: 10, borderRadius: 10, background: C.bg, display: 'flex', flexDirection: 'column', gap: 8, font: `500 12.5px ${FONT}` }}>
+      <span style={{ color: C.muted }}>
+        {es.length} tétel · {openN} nyitott terv · {actN} tény
+      </span>
+      <div style={row}>
+        <span style={lab}>Átnevezés</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={rename}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+          style={{ ...inputStyle, height: 34, flex: '1 1 180px' }}
+        />
+      </div>
+      <div style={row}>
+        <span style={lab}>Összevonás</span>
+        {cands.map((l) => (
+          <Pill key={l.id} small kind="primary" onClick={() => merge(l)}>
+            → {l.label} ({gl(l.id)})
+          </Pill>
+        ))}
+        <input
+          value={mergeQ}
+          onChange={(e) => setMergeQ(e.target.value)}
+          placeholder="másik partner keresése…"
+          style={{ ...inputStyle, height: 32, flex: '1 1 160px' }}
+        />
+      </div>
+      <div style={row}>
+        <span style={lab}>Mappa</span>
+        {ix.groups
+          .filter((g) => g.section === sec)
+          .map((g) => (
+            <Pill
+              key={g.id}
+              small
+              kind={g.id === L.group_id ? 'dark' : undefined}
+              onClick={() => g.id !== L.group_id && run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id: g.id } }), `${L.label} → ${displayGroup(g.label)}`)}
+            >
+              {displayGroup(g.label)}
+            </Pill>
+          ))}
+      </div>
+      <div style={row}>
+        <Pill small onClick={() => setItems(true)}>
+          Tételek szerkesztése / áthelyezése…
+        </Pill>
+        <Pill small kind="danger" onClick={archive}>
+          Megszüntetés
+        </Pill>
+        <Pill small onClick={onDone}>
+          Bezár
+        </Pill>
+      </div>
+      {items && <PartnerModal leaf={leafId} onClose={() => setItems(false)} />}
+    </div>
+  );
+}
+
+/**
  * Mappaszerkezet: Bevétel és Kiadás oszlop, alattuk a csoportok (mappák). Ahol a partner szerepel, az ki van jelölve.
  * Másik mappára kattintva: áthelyezés oda (a meglévő szerepből), vagy hozzáadás (új szerep ugyanazzal a névvel).
  */
@@ -322,6 +422,7 @@ function FolderTree({
 }) {
   const { ix, openPartner } = useStore();
   const [pick, setPick] = useState<string | null>(null);
+  const [act, setAct] = useState<string | null>(null);
   const [openG, setOpenG] = useState<Set<string>>(() => new Set(p.leaves.map((l) => l.group_id)));
   const toggle = (id: string) =>
     setOpenG((s) => {
@@ -383,11 +484,11 @@ function FolderTree({
                     {members.map((l) => {
                       const self = here.some((h) => h.id === l.id);
                       return (
+                        <Fragment key={l.id}>
                         <button
-                          key={l.id}
                           type="button"
-                          onClick={() => !self && openPartner(l.id)}
-                          title={self ? 'Ez a partner' : 'Partner adatlapja'}
+                          onClick={() => (self ? canEdit && setAct(act === l.id ? null : l.id) : openPartner(l.id))}
+                          title={self ? (canEdit ? 'Átnevezés, összevonás, áthelyezés, megszüntetés' : 'Ez a partner') : 'Partner adatlapja'}
                           style={{
                             border: 0,
                             background: self ? C.bg3 : 'transparent',
@@ -396,12 +497,15 @@ function FolderTree({
                             borderRadius: 6,
                             font: `${self ? 700 : 500} 12.5px ${FONT}`,
                             color: self ? C.navy : C.blueDark,
-                            cursor: self ? 'default' : 'pointer',
+                            cursor: self && !canEdit ? 'default' : 'pointer',
                           }}
                         >
                           {self ? '● ' : '└ '}
                           {l.label}
+                          {self && canEdit && <span style={{ font: `600 11px ${FONT}`, color: C.blueDark }}> {act === l.id ? '▾' : '· szerkesztés ›'}</span>}
                         </button>
+                        {self && act === l.id && <LeafActions leafId={l.id} siblings={mine.filter((x) => x.id !== l.id)} onDone={() => setAct(null)} />}
+                        </Fragment>
                       );
                     })}
                     {!members.length && <span style={{ font: `500 12px ${FONT}`, color: C.muted, padding: '2px 8px' }}>üres mappa</span>}
