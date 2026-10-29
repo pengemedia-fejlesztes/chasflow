@@ -756,7 +756,7 @@ function Overview({
           const chev = collapsed[r.id] ? '▸' : '▾';
           return (
             <div
-              key={r.type + r.id}
+              key={r.type + r.id + (r.offerOnly ? ':o' : '')}
               style={{
                 display: 'grid',
                 gridTemplateColumns: grid,
@@ -839,7 +839,7 @@ function Overview({
               </div>
               {r.cells.map((c, i) => {
                 const col = cols[i];
-                const editable = canEdit && r.type === 'leaf' && col.kind === 'plan' && col.months.length === 1 && col.last >= ix.cur;
+                const editable = canEdit && r.type === 'leaf' && !r.offerOnly && col.kind === 'plan' && col.months.length === 1 && col.last >= ix.cur;
                 const isEd = editable && editing?.leaf === r.id && editing.col === i;
                 const fg = c.v < 0 ? NEG : c.est ? C.muted : Math.round(c.v) === 0 ? C.faint : isSec || isGroup ? C.navy : C.ink;
                 return (

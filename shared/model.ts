@@ -243,6 +243,8 @@ export interface MatrixRow {
   label: string;
   section: Section;
   groupId?: string;
+  /** más mappában lévő partner ajánlata, az Ajánlatok alatt mutatva (csak megjelenítés, nem szerkeszthető) */
+  offerOnly?: boolean;
   cells: Cell[];
   total: number;
 }
@@ -257,7 +259,21 @@ export interface Matrix {
 }
 
 /** Egy kategória egy oszlopának előjeles értéke. */
-function leafValue(ix: Index, leaf: string, col: Column, f: Filters, est: LeafMonth): { v: number; est: number; offer: number } {
+function leafValue(
+  ix: Index,
+  leaf: string,
+  col: Column,
+  f: Filters,
+  est: LeafMonth,
+  offers: 'with' | 'without' | 'only' = 'with',
+): { v: number; est: number; offer: number } {
+  if (offers === 'only') {
+    // csak az ajánlat (az Ajánlatok mappában mutatott, máshol lévő partner ajánlata)
+    if (col.kind === 'actual' || !f.includeOffers) return { v: 0, est: 0, offer: 0 };
+    let o = 0;
+    for (const ym of col.months) if (!(monthDiff(ym, ix.cur) < 0 && f.granularity === 'year')) o += ix.offer.get(leaf)?.get(ym) || 0;
+    return { v: o, est: 0, offer: o };
+  }
   if (col.kind === 'actual') return { v: sumMonths(ix.actual.get(leaf), col.months), est: 0, offer: 0 };
   // terv oszlop: múltbeli hónapra (éves nézet) a tényt, jövőre a tervet + becslést
   let v = 0,
@@ -272,7 +288,7 @@ function leafValue(ix: Index, leaf: string, col: Column, f: Filters, est: LeafMo
       // aktuális hónap éves nézetben: tény + nyitott terv
       v += (ix.actual.get(leaf)?.get(ym) || 0) + (ix.openPlan.get(leaf)?.get(ym) || 0);
     } else v += ix.plan.get(leaf)?.get(ym) || 0;
-    if (f.includeOffers) {
+    if (f.includeOffers && offers === 'with') {
       const ov = ix.offer.get(leaf)?.get(ym) || 0;
       v += ov;
       o += ov;
@@ -333,6 +349,8 @@ function matchesSearch(ix: Index, leaf: Leaf, q: string): boolean {
   return ix.entries.some((e) => e.leaf_id === leaf.id && e.name.toLowerCase().includes(n));
 }
 
+const OFFER_RX = /aj[áa]nlat/i;
+
 export function buildMatrix(ix: Index, f: Filters): Matrix {
   const columns = buildColumns(f, ix.cur);
   const horizon = columns.length ? columns[columns.length - 1].last : ix.cur;
@@ -352,19 +370,28 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
       total: 0,
     };
     const secChildren: MatrixRow[] = [];
+    // minden ajánlat az „Ajánlatok” mappában látszik (mint az Ajánlatok oldalon), a más mappában lévő partneré is
+    const offerGroup = ix.groups.find((g) => g.section === section && OFFER_RX.test(g.label));
     for (const g of ix.groups.filter((g) => g.section === section)) {
       if (f.groupId && f.groupId !== g.id) continue;
       const gRow: MatrixRow = { type: 'group', id: g.id, label: g.label, section, cells: columns.map(() => ({ v: 0, est: 0, offer: 0 })), total: 0 };
       const leafRows: MatrixRow[] = [];
-      for (const l of ix.leaves.filter((l) => l.group_id === g.id)) {
+      const own = ix.leaves.filter((l) => l.group_id === g.id).map((l) => [l, 'with'] as const);
+      const foreign =
+        offerGroup && g.id === offerGroup.id
+          ? ix.leaves.filter((l) => l.group_id !== g.id && ix.groupById[l.group_id]?.section === section && ix.offer.has(l.id)).map((l) => [l, 'only'] as const)
+          : [];
+      const list = [...own, ...foreign].map(([l, mode]) => [l, offerGroup && g.id !== offerGroup.id ? 'without' : mode] as const);
+      list.sort((a, b) => a[0].sort - b[0].sort || a[0].label.localeCompare(b[0].label, 'hu'));
+      for (const [l, mode] of list) {
         if (!matchesSearch(ix, l, f.search)) continue;
         const cells = columns.map((c) => {
-          const r = leafValue(ix, l.id, c, f, est);
+          const r = leafValue(ix, l.id, c, f, est, mode);
           return { v: r.v * sign, est: r.est * sign, offer: r.offer * sign };
         });
         // csak az aktív szűrőkhöz tartozó (nem üres) sorok
         if (!cells.some((c) => Math.round(c.v) !== 0)) continue;
-        const lr: MatrixRow = { type: 'leaf', id: l.id, label: l.label, section, groupId: g.id, cells, total: 0 };
+        const lr: MatrixRow = { type: 'leaf', id: l.id, label: l.label, section, groupId: g.id, cells, total: 0, ...(mode === 'only' ? { offerOnly: true } : {}) };
         lr.total = cells.reduce((s, c) => s + c.v, 0);
         cells.forEach((c, i) => {
           gRow.cells[i].v += c.v;
