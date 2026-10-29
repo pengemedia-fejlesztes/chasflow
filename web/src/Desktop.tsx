@@ -331,6 +331,80 @@ function DeviationCard() {
   );
 }
 
+/**
+ * Egy oszlop profitja (bevétel − kiadás). A folyó hónap terv-oszlopa a tény-oszloppal együtt egy hónap:
+ * tény + terv, a már teljesült (tényhez kötött) terv nélkül.
+ */
+function colProfit(ix: ReturnType<typeof useStore>['ix'], matrix: Matrix, netAll: number[], i: number): number {
+  const c = matrix.columns[i];
+  let v = netAll[i];
+  const prev = matrix.columns[i - 1];
+  if (c.current && c.kind !== 'actual' && prev?.current && prev.kind === 'actual') {
+    v += netAll[i - 1];
+    for (const [leaf, mm] of ix.plan) for (const ym of c.months) v -= (mm.get(ym) || 0) - (ix.openPlan.get(leaf)?.get(ym) || 0);
+  }
+  return v;
+}
+
+type ChartBar = { label: string; v: number; kind: 'actual' | 'proj'; cur: boolean };
+
+/** Havi oszlopdiagram nulla-vonallal (a negatív érték lefelé, pirosan). */
+function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: string; bars: ChartBar[]; signed?: boolean; markMin?: boolean }) {
+  const H = 150;
+  const maxPos = Math.max(0, ...bars.map((b) => b.v));
+  const maxNeg = Math.max(0, ...bars.map((b) => -b.v));
+  const span = maxPos + maxNeg || 1;
+  const posH = Math.round((H * maxPos) / span);
+  const negH = H - posH;
+  const minIdx = bars.reduce((mi, b, i) => (b.v < bars[mi].v ? i : mi), 0);
+  const val = (b: ChartBar) => (signed && b.v > 0 ? '+' : '') + fmtM(b.v);
+  const colorOf = (b: ChartBar, i: number) => (b.v < 0 ? C.neg : markMin && i === minIdx ? C.navy : b.kind === 'actual' ? C.blue : '#BFD8E8');
+  return (
+    <div style={{ ...card, padding: '18px 20px 14px', minWidth: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>{title}</span>
+        <span style={{ display: 'flex', gap: 12, font: `400 12px ${FONT}`, color: C.muted, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <i style={{ width: 10, height: 10, borderRadius: 3, background: C.blue }} />
+            tény
+          </span>
+          <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <i style={{ width: 10, height: 10, borderRadius: 3, background: '#BFD8E8' }} />
+            előrejelzés
+          </span>
+          {sub}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${bars.length},minmax(0,1fr))`, gap: 6 }}>
+        {bars.map((b, i) => (
+          <div key={i} title={`${b.label}: ${(signed && b.v > 0 ? '+' : '') + fmt(b.v)} Ft`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+            <div style={{ height: posH + 16, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}>
+              {b.v >= 0 && (
+                <>
+                  <span style={{ font: `600 10.5px ${FONT}`, color: markMin && i === minIdx ? C.navy : C.muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{val(b)}</span>
+                  <div style={{ width: '100%', maxWidth: 48, height: Math.max(2, Math.round((b.v / span) * H)), background: colorOf(b, i), borderRadius: '6px 6px 2px 2px', transition: 'height .4s' }} />
+                </>
+              )}
+            </div>
+            <div style={{ width: '100%', height: 1, background: maxNeg ? C.line2 : 'transparent' }} />
+            {maxNeg > 0 && (
+              <div style={{ height: negH + 16, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                {b.v < 0 && (
+                  <>
+                    <div style={{ width: '100%', maxWidth: 48, height: Math.max(2, Math.round((-b.v / span) * H)), background: colorOf(b, i), opacity: 0.85, borderRadius: '2px 2px 6px 6px', transition: 'height .4s' }} />
+                    <span style={{ font: `600 10.5px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{val(b)}</span>
+                  </>
+                )}
+              </div>
+            )}
+            <span style={{ marginTop: 6, font: `600 11.5px ${FONT}`, color: b.cur ? C.navy : C.muted, whiteSpace: 'nowrap' }}>{b.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PipelineCard({ cols, matrix, netAll, goGroup }: { cols: Matrix['columns']; matrix: Matrix; netAll: number[]; goGroup: (id: string) => void }) {
   const { ix, data } = useStore();
   const inGroups = ix.groups.filter((g) => g.section === 'in');
@@ -354,14 +428,7 @@ function PipelineCard({ cols, matrix, netAll, goGroup }: { cols: Matrix['columns
    */
   const profit = (c: Matrix['columns'][number]) => {
     const i = matrix.columns.findIndex((x) => x.key === c.key);
-    if (i < 0) return null;
-    let v = netAll[i];
-    const prev = matrix.columns[i - 1];
-    if (c.current && c.kind !== 'actual' && prev?.current && prev.kind === 'actual') {
-      v += netAll[i - 1];
-      for (const [leaf, mm] of ix.plan) for (const ym of c.months) v -= (mm.get(ym) || 0) - (ix.openPlan.get(leaf)?.get(ym) || 0);
-    }
-    return v;
+    return i < 0 ? null : colProfit(ix, matrix, netAll, i);
   };
   const rows: [string, (c: Matrix['columns'][number]) => number | null, string, (() => void) | undefined][] = [
     ['Projektek – terv (biztos)', (c) => sum(proj.plan, c), C.navy, projG[0] ? () => goGroup(projG[0].id) : undefined],
@@ -491,17 +558,17 @@ function Overview({
   const minW = 260 + cols.length * 108;
 
   // grafikon: egy oszlop / hónap (az aktuális hónapból a terv-oszlop egyenlege)
-  const bars = useMemo(() => {
-    const out: { label: string; v: number; kind: 'actual' | 'proj'; cur: boolean }[] = [];
+  const { bars, profitBars } = useMemo(() => {
+    const bal: ChartBar[] = [];
+    const pr: ChartBar[] = [];
     cols.forEach((c, i) => {
       if (c.current && c.kind === 'actual' && cols[i + 1]?.current) return;
-      out.push({ label: filters.granularity === 'year' ? c.label : monthLabel(c.last), v: matrix.balance[i], kind: matrix.balanceKind[i], cur: c.current });
+      const label = filters.granularity === 'year' ? c.label : monthLabel(c.last);
+      bal.push({ label, v: matrix.balance[i], kind: matrix.balanceKind[i], cur: c.current });
+      pr.push({ label, v: colProfit(ix, matrix, netAll, i), kind: c.kind === 'actual' || (!c.current && c.last < ix.cur) ? 'actual' : 'proj', cur: c.current });
     });
-    return out.slice(-24);
-  }, [cols, matrix, filters.granularity]);
-  const maxV = Math.max(...bars.map((b) => Math.abs(b.v)), 1);
-  const minIdx = bars.reduce((mi, b, i) => (b.v < bars[mi].v ? i : mi), 0);
-  const hasNeg = bars.some((b) => b.v < 0);
+    return { bars: bal.slice(-24), profitBars: pr.slice(-24) };
+  }, [cols, matrix, netAll, ix, filters.granularity]);
 
   const commitCell = (leaf: string, colIdx: number, raw: string) => {
     setEditing(null);
@@ -547,6 +614,23 @@ function Overview({
       {flags.length > 0 && <FlagBanner n={flags.length} kinds={flags.map((f) => f.kind)} onClick={goAlerts} />}
 
       <FilterBar />
+
+      {bars.length > 1 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,460px),1fr))', gap: 14 }}>
+          <BarChart
+            title={`Havi profit${filters.includeOffers ? ' – ajánlatokkal' : ''}`}
+            sub="bevétel − kiadás"
+            bars={profitBars}
+            signed
+          />
+          <BarChart
+            title={`Céges számlák egyenlege${bars.some((b) => b.kind === 'proj') ? ' – tény és előrejelzés' : ''}`}
+            sub="hónap végi záró"
+            bars={bars}
+            markMin
+          />
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 14 }}>
         <Kpi
@@ -611,59 +695,6 @@ function Overview({
           <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{monthLong(ol.months[ol.months.length - 1].ym)} végén</span>
         </div>
       </div>
-
-      {bars.length > 1 && (
-        <div style={{ ...card, padding: '20px 22px 16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
-            <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>
-              Egyenleg {bars.some((b) => b.kind === 'proj') ? '– tény és előrejelzés' : '– tény'}
-            </span>
-            <span style={{ display: 'flex', gap: 14, font: `400 12.5px ${FONT}`, color: C.muted }}>
-              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <i style={{ width: 10, height: 10, borderRadius: 3, background: C.blue }} />
-                tény
-              </span>
-              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <i style={{ width: 10, height: 10, borderRadius: 3, background: '#BFD8E8' }} />
-                előrejelzés
-              </span>
-              hónap végi záró egyenleg
-            </span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${bars.length},minmax(0,1fr))`, gap: 8, alignItems: 'end', height: 160 }}>
-            {bars.map((b, i) => (
-              <div
-                key={i}
-                title={`${b.label}: ${fmt(b.v)} Ft`}
-                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 6, height: '100%', minWidth: 0 }}
-              >
-                <span
-                  style={{
-                    font: `600 11px ${FONT}`,
-                    color: b.v < 0 ? NEG : i === minIdx ? C.navy : C.muted,
-                    fontVariantNumeric: 'tabular-nums',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {fmtM(b.v)}
-                </span>
-                <div
-                  style={{
-                    width: '100%',
-                    maxWidth: 64,
-                    height: `${Math.max(3, Math.round((Math.abs(b.v) / maxV) * (hasNeg ? 70 : 78)))}%`,
-                    background: b.v < 0 ? C.neg : i === minIdx ? C.navy : b.kind === 'actual' ? C.blue : '#BFD8E8',
-                    borderRadius: '8px 8px 3px 3px',
-                    transition: 'height .4s',
-                    opacity: b.v < 0 ? 0.85 : 1,
-                  }}
-                />
-                <span style={{ font: `600 12px ${FONT}`, color: b.cur ? C.navy : C.muted, whiteSpace: 'nowrap' }}>{b.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
         <div

@@ -389,8 +389,10 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
           const r = leafValue(ix, l.id, c, f, est, mode);
           return { v: r.v * sign, est: r.est * sign, offer: r.offer * sign };
         });
-        // csak az aktív szűrőkhöz tartozó (nem üres) sorok
-        if (!cells.some((c) => Math.round(c.v) !== 0)) continue;
+        // csak az aktív szűrőkhöz tartozó (nem üres) sorok – az Ajánlatok mappa sorai kikapcsolt ajánlat-szűrőnél is maradnak (üres számokkal)
+        const keepOffer =
+          !f.includeOffers && offerGroup?.id === g.id && columns.some((c) => Math.round(leafValue(ix, l.id, c, { ...f, includeOffers: true }, est, mode).v) !== 0);
+        if (!keepOffer && !cells.some((c) => Math.round(c.v) !== 0)) continue;
         const lr: MatrixRow = { type: 'leaf', id: l.id, label: l.label, section, groupId: g.id, cells, total: 0, ...(mode === 'only' ? { offerOnly: true } : {}) };
         lr.total = cells.reduce((s, c) => s + c.v, 0);
         cells.forEach((c, i) => {
