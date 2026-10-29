@@ -27,6 +27,11 @@ const REP_OPTS: [Mode, string][] = [
 const monthName = (ym: string) => monthLong(ym);
 /** a tétel hónapja: amelyikhez tartozik (period), különben a fizetés hónapja */
 const periodOf = (e: Entry) => e.period || ymOf(e.date);
+const monthRangeOf = (a: string, b: string) => {
+  const out: string[] = [];
+  for (let m = a; m <= b && out.length < 60; m = addMonths(m, 1)) out.push(m);
+  return out;
+};
 const dot = (d: string) => d.replace(/-/g, '. ') + '.';
 const num = (s: string) => parseInt(String(s).replace(/\D/g, '')) || 0;
 
@@ -872,13 +877,27 @@ function MonthStatus({ all, name }: { all: Entry[]; name: string }) {
   );
   const rows = [...plans, ...acts].sort((a, b) => periodOf(a).localeCompare(periodOf(b)));
   if (!rows.length) return null;
+  // kimaradt hónap (se terv, se befizetés) az első felvett hónaptól a mai hónapig
+  const got = new Set(rows.map(periodOf));
+  const gaps = periodOf(rows[0]) < cur ? monthRangeOf(periodOf(rows[0]), cur).filter((m) => !got.has(m)) : [];
+  const list: { ym: string; e?: Entry }[] = [...rows.map((e) => ({ ym: periodOf(e), e })), ...gaps.map((ym) => ({ ym }))].sort((a, b) => a.ym.localeCompare(b.ym));
   // a terv nélküli tényhez tartozó Billingo-számla: azonos összeg, a fizetés ±10 napon belül
   const docOfActual = (e: Entry) =>
     data.billingo.find((d) => !d.plan_id && d.gross === e.amount && d.paid_date && Math.abs(Date.parse(d.paid_date) - Date.parse(e.date)) <= 10 * 86400_000);
   const short = (n?: string | null) => (n ? n.replace(/^.*\/\s*/, '') : '');
   return (
     <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 3 }}>
-      {rows.map((e) => {
+      {list.map(({ ym, e }) => {
+        if (!e)
+          return (
+            <span
+              key={'gap' + ym}
+              title={`${monthName(ym)}: nincs felvéve se terv, se befizetés – a tétel kinyitásával felveheted`}
+              style={{ borderRadius: 999, padding: '2px 8px', background: C.negBg, color: C.neg, font: `600 11px ${FONT}`, whiteSpace: 'nowrap' }}
+            >
+              {monthLabel(ym)} · nincs felvéve
+            </span>
+          );
         const isAct = e.kind === 'actual';
         const doc = isAct ? docOfActual(e) : data.billingo.find((d) => d.plan_id === e.id);
         const nav = isAct ? undefined : (data.navInvoices || []).find((d) => d.plan_id === e.id);
@@ -915,10 +934,31 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
   // a lezárt (kifizetett) hónapok is látszanak az elmúlt 12 hónapból – így látszik, melyik hónap van már rendezve
   const from = addMonths(ix.cur, -12);
   const closed = it.all.filter((e) => e.done && periodOf(e) >= from);
-  const rows = [...it.open, ...closed].sort((a, b) => periodOf(a).localeCompare(periodOf(b)) || a.date.localeCompare(b.date));
+  // terv nélküli, de ugyanilyen nevű tények (pl. régi, importált „Havi díj” befizetések) a hónapjukhoz
+  const leaf = it.all[0]?.leaf_id;
+  const linked = new Set(data.entries.filter((e) => e.kind === 'plan' && e.link_id).map((e) => e.link_id));
+  const planMonths = new Set(it.all.map(periodOf));
+  const nn = normalizeText(planNameOf(it.name));
+  const acts = data.entries.filter(
+    (e) =>
+      e.kind === 'actual' &&
+      e.leaf_id === leaf &&
+      !linked.has(e.id) &&
+      normalizeText(planNameOf(e.name)) === nn &&
+      ymOf(e.date) >= from &&
+      !planMonths.has(ymOf(e.date)),
+  );
+  const recs = [...it.open, ...closed, ...acts].sort((a, b) => periodOf(a).localeCompare(periodOf(b)) || a.date.localeCompare(b.date));
+  // minden hónap látszik az első felvett hónaptól a mai hónapig: ahol nincs semmi, ott „nincs felvéve” sor
+  const recMonths = new Set(recs.map(periodOf));
+  const firstYm = recs.length ? periodOf(recs[0]) : ix.cur;
+  const gaps = firstYm < ix.cur ? monthRangeOf(firstYm, ix.cur).filter((m) => !recMonths.has(m)) : [];
+  const rows: (Entry | { gap: string })[] = [...recs, ...gaps.map((gap) => ({ gap }))].sort((a, b) =>
+    ('gap' in a ? a.gap : periodOf(a)).localeCompare('gap' in b ? b.gap : periodOf(b)),
+  );
   const byId = new Map(data.entries.map((e) => [e.id, e]));
   // elmaradt hónap: az elmúlt 12 hónapból (és a következő 3-ból) azok, amelyekhez még nincs terv ennél a tételnél
-  const have = new Set(it.all.map(periodOf));
+  const have = new Set([...it.all.map(periodOf), ...acts.map(periodOf)]);
   const missing = Array.from({ length: 16 }, (_, i) => addMonths(from, i)).filter((m) => !have.has(m));
   const tpl = it.next || it.open[it.open.length - 1] || it.all[it.all.length - 1];
   const addMonth = (ym: string) => {
@@ -957,12 +997,28 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
   return (
     <div style={{ display: 'flex', flexDirection: 'column', borderRadius: 12, border: `1px solid ${C.line3}`, overflow: 'hidden' }}>
       <div style={{ padding: '8px 12px', background: C.bg, ...eyebrow }}>
-        Hónapok ({it.open.length} nyitott{closed.length ? ` · ${closed.length} rendezve` : ''})
+        Hónapok ({it.open.length} nyitott{closed.length + acts.length ? ` · ${closed.length + acts.length} rendezve` : ''}
+        {gaps.length ? ` · ${gaps.length} nincs felvéve` : ''})
       </div>
       {rows.map((e) => {
-        if (e.done) {
-          const act = e.link_id ? byId.get(e.link_id) : undefined;
-          const doc = docOf(e);
+        if ('gap' in e)
+          return (
+            <div
+              key={'gap' + e.gap}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, background: '#FFF7F6' }}
+            >
+              <b style={{ minWidth: 130, color: C.navy }}>{monthName(e.gap)}</b>
+              <span style={{ flex: 1, minWidth: 150, color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
+              {tpl && editable.length + closed.length > 0 && (
+                <Pill small onClick={() => addMonth(e.gap)}>
+                  + Felvétel ({fmt(Math.abs(tpl.amount))} Ft)
+                </Pill>
+              )}
+            </div>
+          );
+        if (e.done || e.kind === 'actual') {
+          const act = e.kind === 'actual' ? e : e.link_id ? byId.get(e.link_id) : undefined;
+          const doc = e.kind === 'actual' ? undefined : docOf(e);
           return (
             <div
               key={e.id}
@@ -972,7 +1028,7 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
               <span style={{ color: C.muted, minWidth: 150 }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
               <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</span>
               <span style={{ flex: 1, minWidth: 140, color: '#2E7D4F', fontWeight: 700 }}>
-                ✓ {act ? 'fizetve' : 'kész'}
+                ✓ {e.kind === 'actual' ? 'befizetve (terv nélkül)' : act ? 'fizetve' : 'kész'}
                 {doc && (
                   <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, marginLeft: 8 }}>
                     számla {doc.number || ''} ↗
