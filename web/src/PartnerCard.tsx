@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
 import { RejectedOffers } from './RejectedOffers';
-import { addMonths, fmt } from '../../shared/model';
+import { addMonths, fmt, monthLabel } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
 import { payDate, payRuleLabel } from '../../shared/workdays';
@@ -649,7 +649,7 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
   const { ix, data, canEdit, run, commit } = useStore();
   const byName = new Map<
     string,
-    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null; leaf: string; key: string }
+    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null; leaf: string; key: string; ms: string[] }
   >();
   for (const e of p.future) {
     const sec = ix.sectionOf(e.leaf_id);
@@ -666,8 +666,10 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
       offer_at: null,
       leaf: e.leaf_id,
       key: e.series_id || rowKey(e),
+      ms: [],
     };
     x.n++;
+    x.ms.push((e.period || e.date).slice(0, 7));
     x.sum += Math.abs(e.amount);
     x.ids.push(e.id);
     if (e.offer_at && (!x.offer_at || e.offer_at < x.offer_at)) x.offer_at = e.offer_at;
@@ -728,6 +730,7 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
               </b>
               <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
                 {r.sec === 'in' ? 'számlázunk' : 'fizetünk'} · következő {dd(r.next)} · {r.n} alkalom
+                {r.n > 1 ? ` (${[...new Set(r.ms)].sort().map((m) => monthLabel(m) + (m.slice(0, 4) !== ix.cur.slice(0, 4) ? ' ' + m.slice(0, 4) : '')).join(', ')})` : ''}
                 {r.offer && ago(r.offer_at) !== null ? ` · ${ago(r.offer_at)} napja nyitott ajánlat` : ''}
               </span>
             </span>

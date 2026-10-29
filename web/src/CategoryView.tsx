@@ -51,11 +51,14 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
 
   // a kategória utolsó tervezett hónapjáig látszik (pl. 2027. decemberig tervezett tétel), legfeljebb 24 hónap –
   // a múltbeli hónapok is látszanak (terv vs. tény), lapozni a fejléc nyilaival lehet
-  const lastPlanYm = data.entries.reduce((a, e) => (e.kind === 'plan' && !e.done && leafIds.has(e.leaf_id) && ymOf(e.date) > a ? ymOf(e.date) : a), filters.to);
+  // az Ajánlatok oldalon minden nyitott ajánlat látszik, akkor is, ha egy másik mappában (pl. Projektek) lévő partner tétele
+  const inView = (e: Entry) =>
+    leafIds.has(e.leaf_id) || (offerGroup && e.kind === 'plan' && !!e.tentative && !e.done && ix.sectionOf(e.leaf_id) === section);
+  const lastPlanYm = data.entries.reduce((a, e) => (e.kind === 'plan' && !e.done && inView(e) && ymOf(e.date) > a ? ymOf(e.date) : a), filters.to);
   const allMonths = monthRange(filters.from, lastPlanYm);
   const months = allMonths.slice(0, 24);
   const visibleSet = new Set(months);
-  const groupEntries = data.entries.filter((e) => leafIds.has(e.leaf_id));
+  const groupEntries = data.entries.filter(inView);
   const planEntries = groupEntries.filter((e) => e.kind === 'plan');
   // a sorozaton kívüli (pl. importált, számlához kötött) terv az azonos nevű sorozat sorába kerül (pl. „Havi díj”)
   const seriesKey = new Map<string, string>();

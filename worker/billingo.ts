@@ -196,12 +196,14 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         // a számlából létrejött terv neve a számla; a tervhez kötött számla a terv saját nevét (pl. „Havi díj”) tartja meg
         env.DB.prepare(
           // a terv összege csak a számlából létrejött tervnél követi a számlát; előzetes tervnél a terv marad (a számla a bill_amount)
-          'UPDATE entries SET bill_amount = ?, amount = CASE WHEN ? THEN ? ELSE amount END, name = CASE WHEN ? THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
+          'UPDATE entries SET bill_amount = ?, amount = CASE WHEN ? THEN ? ELSE amount END, name = CASE WHEN ? AND (COALESCE(name, \'\') = \'\' OR instr(name, ?) > 0) THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
         ).bind(
           gross,
           ex.id === 'b' + d.id ? 1 : 0,
           gross,
           ex.id === 'b' + d.id ? 1 : 0,
+          // a kézzel átnevezett tervet (a nevében már nincs benne a számla sorszáma) nem írjuk vissza
+          d.invoice_number || '\u0000',
           `${partner} · ${d.invoice_number || ''}`.trim(),
           dueChanged ? 1 : 0,
           due,

@@ -83,7 +83,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         return {
           key,
           name: es[0].name || L?.label || '',
-          rep: (s?.rep || (es.length > 1 ? 'monthly' : 'once')) as Rep,
+          rep: (s?.rep || (new Set(all.map(periodOf)).size > 1 ? 'monthly' : 'once')) as Rep,
           open: es,
           all,
           next: es.find((e) => e.date >= data.today) || es[0],
@@ -408,7 +408,8 @@ function ItemRow({
   const saveName = () => {
     const n = name.trim();
     if (!n || n === it.name) return;
-    onApply({ upsert: it.open.map((e) => ({ ...e, name: n })) }, `${it.name} → ${n}: átnevezve`);
+    // a lezárt (kifizetett) hónapok is átneveződnek, így a tétel egyben marad; a szerkesztő nyitva marad az új néven
+    onSave({ upsert: it.all.map((e) => ({ ...e, name: n })) }, `${it.name} → ${n}: átnevezve (${it.all.length} hónap)`);
   };
   const saveAmount = () => {
     const a = num(amount);
@@ -908,9 +909,45 @@ function MonthStatus({ all, name }: { all: Entry[]; name: string }) {
 function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onApply: (b: { upsert?: Entry[]; delete?: string[] }, msg: string) => void }) {
   const { data, ix } = useStore();
   const [moving, setMoving] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const docOf = (e: Entry) => data.billingo.find((d) => d.plan_id === e.id);
   const navOf = (e: Entry) => (data.navInvoices || []).find((d) => d.plan_id === e.id);
-  const rows = [...it.open].sort((a, b) => periodOf(a).localeCompare(periodOf(b)) || a.date.localeCompare(b.date));
+  // a lezárt (kifizetett) hónapok is látszanak az elmúlt 12 hónapból – így látszik, melyik hónap van már rendezve
+  const from = addMonths(ix.cur, -12);
+  const closed = it.all.filter((e) => e.done && periodOf(e) >= from);
+  const rows = [...it.open, ...closed].sort((a, b) => periodOf(a).localeCompare(periodOf(b)) || a.date.localeCompare(b.date));
+  const byId = new Map(data.entries.map((e) => [e.id, e]));
+  // elmaradt hónap: az elmúlt 12 hónapból (és a következő 3-ból) azok, amelyekhez még nincs terv ennél a tételnél
+  const have = new Set(it.all.map(periodOf));
+  const missing = Array.from({ length: 16 }, (_, i) => addMonths(from, i)).filter((m) => !have.has(m));
+  const tpl = it.next || it.open[it.open.length - 1] || it.all[it.all.length - 1];
+  const addMonth = (ym: string) => {
+    if (!tpl) return;
+    const day = Math.min(28, Number(tpl.date.slice(8)) || 10);
+    const date = `${ym}-${String(day).padStart(2, '0')}`;
+    setAdding(false);
+    onApply(
+      {
+        upsert: [
+          {
+            ...tpl,
+            id: uid('e'),
+            date,
+            period: null,
+            done: 0,
+            link_id: null,
+            source: 'manual',
+            ext_ref: null,
+            plan_amount: null,
+            bill_amount: null,
+            note: null,
+            amount: signed(ix.sectionOf(tpl.leaf_id), Math.abs(tpl.amount)),
+          } as Entry,
+        ],
+      },
+      `${it.name} – ${monthName(ym)}: elmaradt hónap felvéve (${fmt(Math.abs(tpl.amount))} Ft, fizetés ${dot(date)})`,
+    );
+  };
   const later = (e: Entry, ym: string) => {
     const day = Math.min(28, Number(e.date.slice(8)) || 1);
     const nd = `${ym}-${String(day).padStart(2, '0')}`;
@@ -919,8 +956,32 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', borderRadius: 12, border: `1px solid ${C.line3}`, overflow: 'hidden' }}>
-      <div style={{ padding: '8px 12px', background: C.bg, ...eyebrow }}>Hónapok ({rows.length} nyitott)</div>
+      <div style={{ padding: '8px 12px', background: C.bg, ...eyebrow }}>
+        Hónapok ({it.open.length} nyitott{closed.length ? ` · ${closed.length} rendezve` : ''})
+      </div>
       {rows.map((e) => {
+        if (e.done) {
+          const act = e.link_id ? byId.get(e.link_id) : undefined;
+          const doc = docOf(e);
+          return (
+            <div
+              key={e.id}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, background: '#F6FBF8' }}
+            >
+              <b style={{ minWidth: 130, color: C.navy }}>{monthName(periodOf(e))}</b>
+              <span style={{ color: C.muted, minWidth: 150 }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</span>
+              <span style={{ flex: 1, minWidth: 140, color: '#2E7D4F', fontWeight: 700 }}>
+                ✓ {act ? 'fizetve' : 'kész'}
+                {doc && (
+                  <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, marginLeft: 8 }}>
+                    számla {doc.number || ''} ↗
+                  </a>
+                )}
+              </span>
+            </div>
+          );
+        }
         const doc = docOf(e);
         const nav = navOf(e);
         const p = periodOf(e);
@@ -998,6 +1059,28 @@ function MonthList({ it, editable, onApply }: { it: Item; editable: Entry[]; onA
           </div>
         );
       })}
+      {editable.length + closed.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', padding: '8px 12px', borderTop: `1px solid ${C.line3}` }}>
+          {adding ? (
+            <>
+              <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Melyik hónap maradt ki?</span>
+              {missing.map((ym) => (
+                <Pill key={ym} small onClick={() => addMonth(ym)}>
+                  {monthLabel(ym)} {ym.slice(0, 4)}
+                </Pill>
+              ))}
+              {!missing.length && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Nincs kimaradt hónap az elmúlt egy évben.</span>}
+              <Pill small onClick={() => setAdding(false)}>
+                Mégse
+              </Pill>
+            </>
+          ) : (
+            <Pill small onClick={() => setAdding(true)}>
+              + Elmaradt hónap felvétele
+            </Pill>
+          )}
+        </div>
+      )}
     </div>
   );
 }
