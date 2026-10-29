@@ -6,7 +6,7 @@ import { REP, repStep, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } 
 import { payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
+import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, eyebrow, inputStyle } from './ui';
 
 export interface EditTarget {
   key: string; // rowKey
@@ -141,6 +141,9 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                 }}
               />
               <span style={{ font: `600 14px ${FONT}`, color: C.blueDark, marginLeft: 8 }}>Ft</span>
+              <span style={{ marginLeft: 10 }} onClick={(e) => e.stopPropagation()}>
+                <NetBox value={f.amount} onChange={(g) => set({ amount: g })} small />
+              </span>
             </div>
             <input
               value={f.name}

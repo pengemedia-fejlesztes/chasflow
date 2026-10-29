@@ -11,7 +11,7 @@ import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, FONT, FONT_H, LeafSelect, Seg, card, eyebrow, inputStyle } from './ui';
+import { C, FONT, FONT_H, LeafSelect, NetBox, Seg, card, eyebrow, inputStyle } from './ui';
 
 const GOOD = '#1A7340';
 const GOOD_BG = '#E8F5EE';
@@ -658,6 +658,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             placeholder="Összeg (Ft)"
             style={{ ...inputStyle, width: 130, textAlign: 'right', fontWeight: 600 }}
           />
+          <NetBox value={qa.amount} onChange={(g) => setQa({ ...qa, amount: g })} small />
           <select value={qaLeaf} onChange={(e) => setQa({ ...qa, leaf: e.target.value })} style={inputStyle}>
             <option value={NEW}>+ Új {newWord}…</option>
             {ix.leaves

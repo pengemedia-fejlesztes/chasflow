@@ -1,7 +1,8 @@
 // Design tokenek (a 360 Marketing Cashflow designból) és apró közös komponensek.
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup } from '../../shared/categories';
-import type { Index } from '../../shared/model';
+import { fmt, type Index } from '../../shared/model';
+import { VAT_RATE } from '../../shared/vat';
 
 export const C = {
   navy: '#002040',
@@ -320,5 +321,36 @@ export function SyncPill({
         {busy ? 'Szinkronizálás…' : label}
       </span>
     </Pill>
+  );
+}
+
+/**
+ * „nettó” jelölő egy összegmező mellé: bejelölve a beírt számot ÁFÁ-val felszorozza (bruttó lesz belőle), kivéve visszaállítja.
+ * A program mindenhol bruttóval számol – a mező értéke mindig a bruttó. Ha bejelölés után átírod az összeget, a jelölő kikapcsol.
+ */
+export function NetBox({ value, onChange, small }: { value: string | number; onChange: (gross: string) => void; small?: boolean }) {
+  const cur = Number(String(value).replace(/\D/g, '')) || 0;
+  const [st, setSt] = useState<{ net: number; gross: number } | null>(null);
+  const on = !!st && st.gross === cur;
+  const toggle = () => {
+    if (on) {
+      onChange(String(st!.net));
+      setSt(null);
+    } else if (cur) {
+      const gross = Math.round(cur * (1 + VAT_RATE));
+      setSt({ net: cur, gross });
+      onChange(String(gross));
+    }
+  };
+  return (
+    <label
+      // a fókusz az összegmezőben marad (a kattintás nem ment előre a nettó összeggel)
+      onMouseDown={(e) => e.preventDefault()}
+      title="A beírt összeg nettó: a program hozzáadja a 27% ÁFÁ-t (mindenhol bruttóval számol)"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: cur ? 'pointer' : 'default', font: `600 ${small ? 11.5 : 12.5}px ${FONT}`, color: on ? C.blueDark : C.muted, whiteSpace: 'nowrap' }}
+    >
+      <input type="checkbox" checked={on} onChange={toggle} disabled={!cur && !on} style={{ width: small ? 14 : 16, height: small ? 14 : 16, cursor: 'inherit' }} />
+      {on ? `nettó ${fmt(st!.net)} + ÁFA` : 'nettó'}
+    </label>
   );
 }

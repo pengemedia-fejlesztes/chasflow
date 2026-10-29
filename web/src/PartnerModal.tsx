@@ -12,7 +12,7 @@ import { LinkChain, diffColor, diffText, planLinks } from './LinkChain';
 import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc, payDefaults, repStep, rowKey, signed, uid } from './logic';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, eyebrow, inputStyle } from './ui';
+import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, eyebrow, inputStyle } from './ui';
 
 /** Ütemezés: a „két részletben” egyszeri tétel két külön fizetéssel (saját összeg és dátum), sorozat nélkül */
 type Mode = Rep | 'twice';
@@ -416,8 +416,8 @@ function ItemRow({
     // a lezárt (kifizetett) hónapok is átneveződnek, így a tétel egyben marad; a szerkesztő nyitva marad az új néven
     onSave({ upsert: it.all.map((e) => ({ ...e, name: n })) }, `${it.name} → ${n}: átnevezve (${it.all.length} hónap)`);
   };
-  const saveAmount = () => {
-    const a = num(amount);
+  const saveAmount = (v?: string) => {
+    const a = num(v ?? amount);
     if (!a || a === Math.abs(next?.amount || 0)) return;
     // a már kiszámlázott (Billingo) tétel összege a számláé
     onApply({ upsert: editable.map((e) => ({ ...e, amount: signed(section, a) })) }, `${it.name}: ${fmt(a)} Ft (${editable.length} nyitott tétel)`);
@@ -545,8 +545,8 @@ function ItemRow({
               placeholder="Tétel neve"
               style={{ ...inputStyle, flex: '1 1 220px' }}
             />
-            <span onBlur={saveAmount} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} style={{ display: 'flex' }}>
-              <AmountInput value={amount} onChange={setAmount} />
+            <span onBlur={() => saveAmount()} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} style={{ display: 'flex' }}>
+              <AmountInput value={amount} onChange={setAmount} onNet={(g) => saveAmount(g)} />
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1162,16 +1162,19 @@ function MonthAmount({ e, onSave }: { e: Entry; onSave: (v: number) => void }) {
         style={{ ...inputStyle, width: 110, height: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums', padding: '0 8px' }}
       />
       Ft
+      <NetBox value={v} onChange={(g) => (setV(fmt(Number(g))), onSave(Number(g)))} small />
     </label>
   );
 }
 
-function AmountInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function AmountInput({ value, onChange, onNet }: { value: string; onChange: (v: string) => void; onNet?: (gross: string) => void }) {
   const n = num(value);
   return (
     <span
       style={{
         flex: '0 0 190px',
+        position: 'relative',
+        marginBottom: 18,
         display: 'flex',
         alignItems: 'center',
         border: `1.5px solid ${C.blue}`,
@@ -1198,6 +1201,9 @@ function AmountInput({ value, onChange }: { value: string; onChange: (v: string)
         }}
       />
       <span style={{ font: `600 13px ${FONT}`, color: C.blueDark, marginLeft: 6 }}>Ft</span>
+      <span style={{ position: 'absolute', right: 4, bottom: -20 }}>
+        <NetBox value={value} onChange={(g) => (onChange(g), onNet?.(g))} small />
+      </span>
     </span>
   );
 }

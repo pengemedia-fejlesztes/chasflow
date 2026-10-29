@@ -18,7 +18,7 @@ import { LeafPicker } from './LeafPicker';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, ToastView, relTime } from './ui';
+import { C, DateField, FONT, FONT_H, NetBox, ToastView, relTime } from './ui';
 
 type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more';
 type Sheet =
@@ -819,6 +819,9 @@ function SheetView({
           style={{ flex: 1, minWidth: 0, border: 0, outline: 0, font: `700 17px ${FONT_H}`, color: C.navy, background: 'transparent' }}
         />
         <span style={{ font: `600 13px ${FONT}`, color: C.muted }}>Ft</span>
+        <span style={{ marginLeft: 8 }}>
+          <NetBox value={v || ''} onChange={on} small />
+        </span>
       </div>
     );
     const count =
@@ -1149,6 +1152,9 @@ function SheetView({
               style={{ flex: 1, minWidth: 0, height: 58, border: 0, outline: 0, background: 'transparent', font: `800 26px ${FONT_H}`, color: C.navy }}
             />
             <span style={{ font: `700 18px ${FONT_H}`, color: C.blueDark }}>Ft</span>
+            <span style={{ marginLeft: 10 }}>
+              <NetBox value={sheet.amount || ''} onChange={(g) => set({ amount: g })} />
+            </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={lbl}>Dátum</span>
