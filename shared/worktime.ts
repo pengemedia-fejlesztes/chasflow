@@ -84,12 +84,18 @@ export const isInternalProject = (p: string) => /^(360\b|without project|egyéb|
 /** Projekt → bevételi partner (alkategória): név vagy alternatív név szerint; belső / ismeretlen → null. */
 export function projectLeaf(project: string, incomeLeaves: Leaf[], aliases: Map<string, string[]>): string | null {
   if (isInternalProject(project)) return null;
-  const hit = incomeLeaves.find((l) => namesMatch(project, l.label) || (aliases.get(l.id) || []).some((a) => namesMatch(project, a)));
+  // „MrBIG” = „Mr. Big”: írásjel, szóköz, ékezet és kis/nagybetű nélkül is egyezik
+  const compact = (x: string) => x.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+  const pc = compact(project);
+  const same = (a: string) => namesMatch(project, a) || (pc.length >= 3 && compact(a) === pc);
+  const hit = incomeLeaves.find((l) => same(l.label) || (aliases.get(l.id) || []).some(same));
   return hit?.id ?? null;
 }
 
 export interface ProjectMonth {
   project: string;
+  /** a munkaidő-táblák projektnevei, amelyek ehhez a partnerhez tartoznak (pl. „Kalmia” → Pharmazone) */
+  names: string[];
   leaf: string | null;
   minutes: number;
   laborCost: number;
@@ -155,10 +161,20 @@ export function breakeven(o: {
       let bill = 0;
       for (const w of rows) {
         const leaf = leafOf(w.project);
-        const p = projects.get(w.project) || { project: w.project, leaf, minutes: 0, laborCost: 0, revenue: 0 };
+        // egy partner = egy sor: a partnerhez (név vagy alternatív név szerint) tartozó projektek összevonva
+        const pk = leaf ? 'leaf:' + leaf : w.project;
+        const p = projects.get(pk) || {
+          project: leaf ? o.leaves.find((l) => l.id === leaf)?.label || w.project : w.project,
+          names: [],
+          leaf,
+          minutes: 0,
+          laborCost: 0,
+          revenue: 0,
+        };
+        if (!p.names.includes(w.project)) p.names.push(w.project);
         p.minutes += w.minutes;
         p.laborCost += w.minutes * perMin;
-        projects.set(w.project, p);
+        projects.set(pk, p);
         if (leaf) {
           bill += w.minutes;
           directLabor += w.minutes * perMin;
@@ -182,7 +198,7 @@ export function breakeven(o: {
     for (const [leaf, rev] of leafRevenue)
       if (!seenLeaf.has(leaf)) {
         const label = o.leaves.find((l) => l.id === leaf)?.label || leaf;
-        projects.set('leaf:' + leaf, { project: label, leaf, minutes: 0, laborCost: 0, revenue: rev });
+        projects.set('leaf:' + leaf, { project: label, names: [], leaf, minutes: 0, laborCost: 0, revenue: rev });
       }
     const contribution = revenue - directLabor;
     const ratio = revenue > 0 ? contribution / revenue : 0;

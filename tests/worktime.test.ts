@@ -61,6 +61,8 @@ describe('fedezeti pont', () => {
     expect(projectLeaf('Kalmia', leaves.slice(0, 2), al)).toBe('kal');
     expect(projectLeaf('MrBig', leaves.slice(0, 2), al)).toBe('mb');
     expect(projectLeaf('360 Marketing', leaves.slice(0, 2), al)).toBeNull();
+    // írásjel / kis-nagybetű nélkül is egyezik: „MrBIG” = „Mr. Big”
+    expect(projectLeaf('MrBIG', leaves.slice(0, 2), new Map())).toBe('mb');
   });
 
   it('munkaköltség az idő arányában; fedezet, fix költség, fedezeti pont', () => {

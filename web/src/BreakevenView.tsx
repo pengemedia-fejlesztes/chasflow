@@ -4,7 +4,9 @@ import { useMemo, useState } from 'react';
 import { addMonths, fmt, monthLabel, monthLong, monthRange } from '../../shared/model';
 import { namesMatch } from '../../shared/billingopay';
 import { partnerIdOf } from '../../shared/partners';
-import { breakeven, parseWorkSheets, type BreakevenMonth, type Employee } from '../../shared/worktime';
+import { breakeven, parseWorkSheets, sheetIdOf, type BreakevenMonth, type Employee, type ProjectMonth } from '../../shared/worktime';
+
+const MONTH_HU = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
 import { api } from './api';
 import { rowsOfSheet } from './sheetCore';
 import { useStore } from './store';
@@ -12,6 +14,24 @@ import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle } from './
 
 const h = (min: number) => (min / 60).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
 const pct = (r: number) => (r * 100).toLocaleString('hu-HU', { maximumFractionDigits: 1 }) + '%';
+
+/** A munkatárs Drive-on (Google-táblázat) lévő munkaidő-táblájának letöltése és beolvasása. */
+export async function refreshFromDrive(
+  emp: Employee,
+  run: (fn: () => Promise<unknown>, msg?: string) => Promise<boolean>,
+  showToast: (t: { msg: string; error?: boolean }) => void,
+) {
+  try {
+    const r = await api<{ xlsx: string }>('/api/worktime/fetch', { body: { employee: emp.key } });
+    const bin = atob(r.xlsx);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return await importWorkbook(emp, buf.buffer, run, showToast);
+  } catch (e: any) {
+    showToast({ msg: e.message || `${emp.name}: nem sikerült betölteni a táblát.`, error: true });
+    return false;
+  }
+}
 
 /** Munkaidő-munkafüzet (feltöltött fájl vagy a linkről letöltött tábla) beolvasása és mentése a munkatárshoz. */
 export async function importWorkbook(
@@ -39,10 +59,12 @@ export async function importWorkbook(
 }
 
 export function BreakevenView() {
-  const { ix, data, run, isAdmin, showToast } = useStore();
+  const { ix, data, run, isAdmin, showToast, openPartner } = useStore();
   const employees = data.employees || [];
   const worktime = data.worktime || [];
-  const months = useMemo(() => monthRange(addMonths(ix.cur, -11), ix.cur), [ix.cur]);
+  // 12 hónapos ablak, évenként lapozható vissza
+  const [endYm, setEndYm] = useState(ix.cur);
+  const months = useMemo(() => monthRange(addMonths(endYm, -11), endYm), [endYm]);
   const aliases = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const l of ix.leaves) {
@@ -55,9 +77,48 @@ export function BreakevenView() {
     () => breakeven({ months, entries: data.entries, leaves: ix.leaves, groups: ix.groups, employees, worktime, aliases }),
     [months, data.entries, ix.leaves, ix.groups, employees, worktime, aliases],
   );
-  const [sel, setSel] = useState(() => [...months].reverse().find((m) => worktime.some((w) => w.ym === m)) || ix.cur);
+  const [selS, setSel] = useState(() => [...months].reverse().find((m) => worktime.some((w) => w.ym === m)) || ix.cur);
+  const sel = months.includes(selS) ? selS : months[months.length - 1];
   const cur = report.find((r) => r.ym === sel);
   const [newName, setNewName] = useState('');
+  const [showNoInv, setShowNoInv] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const refresh = async (list: Employee[]) => {
+    for (const emp of list) {
+      setBusy(emp.key);
+      await refreshFromDrive(emp, run, showToast);
+    }
+    setBusy(null);
+  };
+  const withSheet = employees.filter((e) => e.sheet_url);
+  // a hónapban számlázott / fizető ügyfelek: bevételi tény, vagy a hónapban kiállított Billingo-számla
+  const leafAliases = (leaf: string) => [ix.leafById[leaf]?.label || '', ...(aliases.get(leaf) || [])].filter(Boolean);
+  const invoicedLeaves = useMemo(() => {
+    const out = new Set<string>();
+    if (!cur) return out;
+    for (const p of cur.projects) {
+      if (!p.leaf) continue;
+      if (p.revenue) {
+        out.add(p.leaf);
+        continue;
+      }
+      const names = leafAliases(p.leaf);
+      const hit = data.billingo.some(
+        (d) =>
+          !d.cancelled &&
+          (d.invoice_date || '').startsWith(cur.ym) &&
+          ((d.plan_id && data.entries.find((e) => e.id === d.plan_id)?.leaf_id === p.leaf) || (!!d.partner && names.some((n) => namesMatch(n, d.partner!)))),
+      );
+      if (hit) out.add(p.leaf);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, data.billingo, data.entries, aliases]);
+  const invoiced = cur ? cur.projects.filter((p) => p.leaf && invoicedLeaves.has(p.leaf)) : [];
+  const noInv = cur ? cur.projects.filter((p) => !(p.leaf && invoicedLeaves.has(p.leaf))) : [];
+  const years = [...new Set(months.map((m) => m.slice(0, 4)))];
+  const yearBg = (ym: string) => (years.indexOf(ym.slice(0, 4)) % 2 ? '#F4F1FA' : '#EEF5FB');
 
   const outLeaves = ix.leaves.filter((l) => !l.archived && ix.sectionOf(l.id) === 'out');
   const guessLeaf = (name: string) =>
@@ -149,6 +210,33 @@ export function BreakevenView() {
     ['Bevétel / ügyfélóra', (r) => (r.revenuePerBillableHour ? fmt(r.revenuePerBillableHour) : '–')],
   ];
 
+  const projRow = (p: ProjectMonth, muted?: boolean) => (
+    <div key={(p.leaf || '') + p.project} style={{ display: 'contents' }}>
+      <div style={{ ...td, textAlign: 'left', whiteSpace: 'normal', background: muted ? '#FAFBFC' : undefined }}>
+        {p.leaf ? (
+          <button
+            onClick={() => openPartner(p.leaf!)}
+            title="Ügyfél adatlapja"
+            style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', font: `700 13px ${FONT}`, color: C.blueDark, textAlign: 'left' }}
+          >
+            {p.project} ›
+          </button>
+        ) : (
+          <b style={{ color: C.navy }}>{p.project}</b>
+        )}
+        <span style={{ color: C.muted, fontSize: 11.5 }}>
+          {p.leaf ? (p.names.filter((n) => n !== p.project).length ? ` · munkaidőben: ${p.names.filter((n) => n !== p.project).join(', ')}` : '') : ' · belső / nincs párosítva'}
+        </span>
+      </div>
+      <div style={td}>{p.minutes ? h(p.minutes) : '–'}</div>
+      <div style={td}>{p.laborCost ? fmt(p.laborCost) : '–'}</div>
+      <div style={td}>{p.revenue ? fmt(p.revenue) : '–'}</div>
+      <div style={{ ...td, fontWeight: 700, color: p.leaf ? (p.revenue - p.laborCost < 0 ? C.neg : '#2E7D4F') : C.muted }}>
+        {p.leaf ? fmt(p.revenue - p.laborCost) : '–'}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ padding: '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
@@ -167,7 +255,17 @@ export function BreakevenView() {
       </span>
 
       <div style={{ ...card, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <b style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Munkatársak</b>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ font: `700 15px ${FONT_H}`, color: C.navy, flex: 1 }}>Munkatársak</b>
+          {isAdmin && withSheet.length > 0 && (
+            <Pill kind="dark" onClick={() => !busy && refresh(withSheet)}>
+              {busy ? `Frissítés: ${employees.find((e) => e.key === busy)?.name}…` : `↻ Drive XLS frissítése – mind (${withSheet.length})`}
+            </Pill>
+          )}
+        </div>
+        <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+          A Google-táblázatot „Bárki, akinek megvan a link – Megtekintő” megosztásra kell állítani, különben a program nem tudja letölteni.
+        </span>
         {employees.length === 0 && (
           <span style={{ color: C.muted, font: `500 13px ${FONT}` }}>Még nincs munkatárs – add hozzá lent, majd töltsd fel a munkaidő XLS-t.</span>
         )}
@@ -193,18 +291,38 @@ export function BreakevenView() {
                 {ms.size ? `${ms.size} hónap munkaideje · utolsó: ${monthLabel(last!)} ${last!.slice(0, 4)}` : 'még nincs munkaidő'}
               </span>
               {isAdmin && (
-                <label style={{ marginLeft: 'auto', cursor: 'pointer' }}>
+                <input
+                  value={urls[emp.key] ?? emp.sheet_url ?? ''}
+                  onChange={(e) => setUrls((u) => ({ ...u, [emp.key]: e.target.value }))}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === (emp.sheet_url || '')) return;
+                    if (v && !sheetIdOf(v)) return showToast({ msg: 'Ez nem Google-táblázat (Drive XLS) link.', error: true });
+                    saveEmp({ key: emp.key, name: emp.name, cost_leaf_id: emp.cost_leaf_id, sheet_url: v } as any, `${emp.name}: Drive-tábla ${v ? 'mentve' : 'törölve'}`);
+                  }}
+                  placeholder="Drive XLS (Google-táblázat) link"
+                  style={{ ...inputStyle, height: 34, flex: '1 1 220px', borderColor: emp.sheet_url ? undefined : C.neg }}
+                />
+              )}
+              {emp.sheet_url && (
+                <a href={emp.sheet_url} target="_blank" rel="noreferrer" style={{ font: `600 12.5px ${FONT}`, color: C.blueDark }}>
+                  Megnyitás ↗
+                </a>
+              )}
+              {isAdmin && emp.sheet_url && (
+                <Pill small kind="primary" onClick={() => !busy && refresh([emp])}>
+                  {busy === emp.key ? 'Frissítés…' : '↻ Drive XLS frissítése'}
+                </Pill>
+              )}
+              {isAdmin && (
+                <label style={{ cursor: 'pointer' }} title="Ha nincs Drive-link: a letöltött XLS fájl feltöltése">
                   <input
                     type="file"
                     accept=".xlsx,.xls"
                     style={{ display: 'none' }}
                     onChange={(ev) => ev.target.files?.[0] && upload(emp, ev.target.files[0]).finally(() => (ev.target.value = ''))}
                   />
-                  <span
-                    style={{ display: 'inline-block', borderRadius: 999, background: C.blue, color: '#fff', padding: '7px 14px', font: `600 12.5px ${FONT}` }}
-                  >
-                    Munkaidő XLS feltöltése
-                  </span>
+                  <span style={{ font: `600 12px ${FONT}`, color: C.muted, textDecoration: 'underline' }}>fájl feltöltése</span>
                 </label>
               )}
             </div>
@@ -235,12 +353,34 @@ export function BreakevenView() {
         )}
       </div>
 
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Pill small onClick={() => setEndYm(addMonths(endYm, -12))}>
+          ‹ Előző 12 hónap
+        </Pill>
+        <Pill small onClick={() => setEndYm(addMonths(endYm, -1))}>
+          ‹ 1 hónap
+        </Pill>
+        <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>
+          {monthLong(months[0])} – {monthLong(endYm)}
+        </b>
+        {endYm < ix.cur && (
+          <>
+            <Pill small onClick={() => setEndYm(addMonths(endYm, 1))}>
+              1 hónap ›
+            </Pill>
+            <Pill small onClick={() => setEndYm(ix.cur)}>
+              Mai hónapig ›
+            </Pill>
+          </>
+        )}
+        <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>A hónapra kattintva lent a projektjei és munkatársai látszanak.</span>
+      </div>
       <div style={{ ...card, overflow: 'auto' }}>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: `minmax(220px,1.4fr) repeat(${report.length}, minmax(100px,1fr))`,
-            minWidth: 240 + report.length * 104,
+            gridTemplateColumns: `minmax(220px,1.4fr) repeat(${report.length}, minmax(112px,1fr))`,
+            minWidth: 240 + report.length * 116,
           }}
         >
           <div style={{ ...th, textAlign: 'left' }}>Havi összesítő</div>
@@ -248,10 +388,22 @@ export function BreakevenView() {
             <button
               key={r.ym}
               onClick={() => setSel(r.ym)}
-              style={{ ...th, border: 0, cursor: 'pointer', color: r.ym === sel ? C.blue : C.navy, textDecoration: r.ym === sel ? 'underline' : 'none' }}
+              style={{
+                ...th,
+                border: 0,
+                cursor: 'pointer',
+                background: r.ym === sel ? '#DCEBF7' : yearBg(r.ym),
+                color: r.ym === sel ? C.blue : C.navy,
+                textDecoration: r.ym === sel ? 'underline' : 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                lineHeight: 1.2,
+              }}
               title="Részletek: projektek és munkatársak"
             >
-              {monthLabel(r.ym)} {r.ym.slice(2, 4)}
+              <span style={{ font: `600 10.5px ${FONT}`, color: C.muted }}>{r.ym.slice(0, 4)}.</span>
+              {MONTH_HU[Number(r.ym.slice(5, 7)) - 1]}
             </button>
           ))}
           {lines.map(([label, f, hint]) => (
@@ -269,7 +421,7 @@ export function BreakevenView() {
                       ...td,
                       fontWeight: label === 'Fedezeti pont' ? 800 : 500,
                       color: neg ? C.neg : label === 'Biztonsági sáv' && (r.margin ?? 0) > 0 ? '#2E7D4F' : C.ink,
-                      background: r.ym === sel ? '#F2F8FC' : undefined,
+                      background: r.ym === sel ? '#F2F8FC' : years.indexOf(r.ym.slice(0, 4)) % 2 ? '#FBFAFD' : undefined,
                     }}
                   >
                     {v}
@@ -284,29 +436,34 @@ export function BreakevenView() {
       {cur && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(420px,1fr))', gap: 18 }}>
           <div style={{ ...card, overflow: 'auto' }}>
-            <div style={{ padding: '12px 14px', font: `700 15px ${FONT_H}`, color: C.navy }}>Projektek · {monthLong(cur.ym)}</div>
+            <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <b style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Ügyfelek · {monthLong(cur.ym)}</b>
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
+                Akinek ebben a hónapban számlája vagy befizetése volt. A partner alternatív nevei (pl. Kalmia → Pharmazone) egy sorba kerülnek. Névre kattintva: adatlap.
+              </span>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px,1.4fr) 70px 110px 110px 110px', minWidth: 560 }}>
               {['Projekt', 'Óra', 'Munkaköltség', 'Bevétel', 'Fedezet'].map((x, i) => (
                 <div key={x} style={{ ...th, textAlign: i ? 'right' : 'left' }}>
                   {x}
                 </div>
               ))}
-              {cur.projects.map((p) => (
-                <div key={p.project} style={{ display: 'contents' }}>
-                  <div style={{ ...td, textAlign: 'left', whiteSpace: 'normal' }}>
-                    <b style={{ color: C.navy }}>{p.project}</b>
-                    <span style={{ color: C.muted, fontSize: 11.5 }}>
-                      {p.leaf ? (ix.leafById[p.leaf]?.label !== p.project ? ` · ${ix.leafById[p.leaf]?.label}` : '') : ' · belső'}
-                    </span>
-                  </div>
-                  <div style={td}>{p.minutes ? h(p.minutes) : '–'}</div>
-                  <div style={td}>{p.laborCost ? fmt(p.laborCost) : '–'}</div>
-                  <div style={td}>{p.revenue ? fmt(p.revenue) : '–'}</div>
-                  <div style={{ ...td, fontWeight: 700, color: p.leaf ? (p.revenue - p.laborCost < 0 ? C.neg : '#2E7D4F') : C.muted }}>
-                    {p.leaf ? fmt(p.revenue - p.laborCost) : '–'}
-                  </div>
-                </div>
-              ))}
+              {invoiced.map((p) => projRow(p))}
+              {!invoiced.length && (
+                <div style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', color: C.muted }}>Ebben a hónapban egy ügyfélnek sem volt számlája vagy befizetése.</div>
+              )}
+              {noInv.length > 0 && (
+                <>
+                  <button
+                    onClick={() => setShowNoInv((x) => !x)}
+                    style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', border: 0, borderTop: `1px solid ${C.line3}`, background: C.bg, cursor: 'pointer', color: C.navy, fontWeight: 600 }}
+                  >
+                    {showNoInv ? '▾' : '▸'} Számla nélküli munka ebben a hónapban: {noInv.length} projekt · {h(noInv.reduce((a, p) => a + p.minutes, 0))} óra ·{' '}
+                    {fmt(noInv.reduce((a, p) => a + p.laborCost, 0))} Ft munkaköltség
+                  </button>
+                  {showNoInv && noInv.map((p) => projRow(p, true))}
+                </>
+              )}
             </div>
           </div>
           <div style={{ ...card, overflow: 'auto' }}>
