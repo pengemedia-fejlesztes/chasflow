@@ -320,9 +320,18 @@ function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: {
   const actN = es.filter((e) => e.kind === 'actual').length;
   const others = ix.leaves.filter((l) => l.id !== leafId && !l.archived && ix.sectionOf(l.id) === sec);
   const sib = new Set(siblings.map((x) => x.id));
+  // hasonló nevűek (pl. „Orange Home” ↔ „OrangeHomes”, „Orvosmost” ↔ „Orvosmost UrgentCare”): írásjel/szóköz nélkül az egyik a másik eleje
+  const compact = (x: string) => normalizeText(x).replace(/[^a-z0-9]/g, '');
+  const me = compact(L?.label || '');
+  const similar = (x: string) => {
+    const o = compact(x);
+    const a = me.length <= o.length ? me : o,
+      b = me.length <= o.length ? o : me;
+    return a.length >= 4 && b.startsWith(a.slice(0, Math.max(4, a.length - 1)));
+  };
   const cands = mergeQ.trim()
     ? others.filter((l) => normalizeText(l.label).includes(normalizeText(mergeQ))).slice(0, 8)
-    : others.filter((l) => sib.has(l.id));
+    : others.filter((l) => sib.has(l.id) || similar(l.label)).slice(0, 8);
   const gl = (id: string) => displayGroup(ix.groupById[ix.leafById[id]?.group_id]?.label || '');
   const rename = () => {
     const v = name.trim();

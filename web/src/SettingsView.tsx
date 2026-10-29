@@ -783,7 +783,7 @@ function Categories() {
   const [ng, setNg] = useState({ section: 'out', label: '' });
   const [showArchived, setShowArchived] = useState(false);
   const [openLeaf, setOpenLeaf] = useState<string | null>(null);
-  const { commit } = useStore();
+  const { commit, openPartner } = useStore();
   const used = new Set(data.entries.map((e) => e.leaf_id));
   /** a nyitott (nem Billingo) tervek dátumának igazítása a szabályhoz – visszavonható */
   const reschedule = (leafIds: string[]) => {
@@ -874,7 +874,13 @@ function Categories() {
                     background: '#fff',
                   }}
                 >
-                  {l.label}
+                  <button
+                    title="Adatlap: mappa (kategória) módosítása, összevonás, átnevezés"
+                    onClick={() => openPartner(l.id)}
+                    style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit', textDecoration: 'underline dotted' }}
+                  >
+                    {l.label}
+                  </button>
                   {l.pay_rule && (
                     <span style={{ font: `600 10.5px ${FONT}`, color: C.blueDark, background: C.bg2, borderRadius: 999, padding: '1px 6px' }}>
                       {payRuleLabel(l.pay_rule).replace('minden hónap ', '').replace('hónap ', '')}
