@@ -340,7 +340,7 @@ function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: {
   };
   const merge = (into: { id: string; label: string }) => {
     if (!confirm(`„${L.label}” (${gl(leafId)}) összevonása ide: „${into.label}” (${gl(into.id)})?\n\nMinden tétele (${es.length}: ${openN} nyitott terv, ${actN} tény), banki tétele és párosítási szabálya átkerül, a régi név a jövőben is ide párosul. A „${L.label}” sor megszűnik.`)) return;
-    run(() => api(`/api/leaves/${leafId}/merge`, { body: { into: into.id } }), `${L.label} → ${into.label} összevonva`).then(onDone);
+    run(() => api(`/api/leaves/${leafId}/merge`, { body: { into: into.id } }), `${L.label} → ${into.label} összevonva · visszavonható: Beállítások › Napló`).then(onDone);
   };
   const archive = () => {
     if (openN) {

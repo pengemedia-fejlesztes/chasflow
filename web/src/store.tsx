@@ -103,7 +103,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
       const inv = inverseOf(cur, b);
       setData(applyLocal(cur, b));
       try {
-        await api('/api/entries/batch', { body: b });
+        await api('/api/entries/batch', { body: { ...b, label: msg } });
         // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell
         if (b.delete?.length && !b.purge) reload();
         const undoable = opts.undoable !== false;

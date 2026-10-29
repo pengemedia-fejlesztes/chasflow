@@ -7,6 +7,7 @@ import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/t
 import { publicUser, requireRole, type User } from './auth';
 import { navEnabled } from './nav';
 import { refreshMonthStats } from './stats';
+import { describeEntries, logChange, rowsById } from './changelog';
 import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from './util';
 
 /** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
@@ -295,7 +296,34 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (path === '/api/entries/batch' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
     const b = await readJson<EntryBatch>(req);
+    // naplóhoz: a módosítás előtti állapot (visszavonáshoz)
+    const touched = [...(b.upsert || []).map((e) => String(e.id)), ...(b.delete || []).map(String)];
+    const before = await rowsById(env, 'entries', touched);
+    const seriesIds = [...(b.series || []).map((x) => String(x.id)), ...(b.deleteSeries || []).map(String)];
+    const seriesBefore = await rowsById(env, 'series', seriesIds);
     const n = await applyBatch(env, b, u.id);
+    const after = (b.upsert || []).map((e) => e as unknown as Record<string, unknown>);
+    const { items, counts } = describeEntries(before, after, (b.delete || []).map(String));
+    const had = new Set(before.map((r) => String(r.id)));
+    const sHad = new Set(seriesBefore.map((r) => String(r.id)));
+    const parts = [counts.new && `${counts.new} új`, counts.edit && `${counts.edit} módosítva`, counts.del && `${counts.del} ${b.rejected ? 'elutasítva' : 'törölve'}`].filter(Boolean);
+    const label = String(b.label || '').trim();
+    if (parts.length || seriesIds.length)
+      await logChange(
+        env,
+        u.id,
+        b.purge ? 'entries.undo' : 'entries',
+        (label ? label + ' · ' : '') + (parts.join(', ') || 'ismétlődés módosítva'),
+        [...before, ...after].map((r) => String(r.leaf_id || '')).filter(Boolean),
+        {
+          type: 'entries',
+          before,
+          created: (b.upsert || []).map((e) => String(e.id)).filter((id) => !had.has(id)),
+          seriesBefore,
+          seriesCreated: (b.series || []).map((x) => String(x.id)).filter((id) => !sHad.has(id)),
+        },
+        items,
+      );
     return json({ ok: true, changes: n });
   }
 
@@ -317,6 +345,10 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (lm && req.method === 'PATCH') {
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
+    const prev = await env.DB.prepare('SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
+      .bind(lm[1])
+      .first<Record<string, unknown>>();
+    if (!prev) throw new HttpError(404, 'Ismeretlen partner.');
     if (b.label !== undefined) await env.DB.prepare('UPDATE leaves SET label = ? WHERE id = ?').bind(String(b.label).trim().slice(0, 80), lm[1]).run();
     if (b.archived !== undefined)
       await env.DB.prepare('UPDATE leaves SET archived = ? WHERE id = ?')
@@ -329,6 +361,23 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       await env.DB.prepare('UPDATE leaves SET pay_days = ? WHERE id = ?').bind(n, lm[1]).run();
     }
     if (b.group_id !== undefined || b.pay_rule !== undefined || b.pay_days !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
+    const keys = ['label', 'archived', 'group_id', 'pay_rule', 'pay_days'].filter((k) => b[k] !== undefined);
+    if (keys.length) {
+      const what: string[] = [];
+      if (b.label !== undefined && String(b.label).trim() !== prev.label) what.push(`átnevezve: ${prev.label} → ${String(b.label).trim()}`);
+      if (b.group_id !== undefined && b.group_id !== prev.group_id) {
+        const g = await env.DB.prepare('SELECT label FROM groups WHERE id = ?').bind(String(b.group_id)).first<{ label: string }>();
+        what.push(`mappa: ${prev.glabel} → ${g?.label || b.group_id}`);
+      }
+      if (b.archived !== undefined && (b.archived ? 1 : 0) !== prev.archived) what.push(b.archived ? 'megszüntetve (archiválva)' : 'újra aktív');
+      if (b.pay_rule !== undefined || b.pay_days !== undefined) what.push('fizetési szabály módosítva');
+      if (what.length)
+        await logChange(env, u.id, 'leaf.update', `${prev.label}: ${what.join(', ')}`, [lm[1]], {
+          type: 'leaf.update',
+          id: lm[1],
+          before: Object.fromEntries(keys.map((k) => [k, prev[k] ?? null])),
+        });
+    }
     return json({ ok: true });
   }
   const gm = path.match(/^\/api\/groups\/([\w-]+)$/);
@@ -467,7 +516,28 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       await audit(env, u.id, 'leaf.link', { from: f, into: t });
       return json({ ok: true, linked: true });
     }
+    // naplóhoz: mi került át (visszavonáshoz)
+    const ids = async (sql: string) => (await env.DB.prepare(sql).bind(f.id).all<{ k: string | number }>()).results.map((r) => r.k);
+    const moved = {
+      entries: (await ids('SELECT id AS k FROM entries WHERE leaf_id = ?')) as string[],
+      series: (await ids('SELECT id AS k FROM series WHERE leaf_id = ?')) as string[],
+      bank_tx: (await ids('SELECT id AS k FROM bank_tx WHERE leaf_id = ?')) as string[],
+      deleted: (await ids('SELECT rowid AS k FROM deleted_entries WHERE leaf_id = ?')) as number[],
+      match_rules: (await ids('SELECT id AS k FROM match_rules WHERE leaf_id = ?')) as string[],
+      partner_rules: (await ids('SELECT pattern AS k FROM partner_rules WHERE leaf_id = ?')) as string[],
+    };
+    const ruleKey = partnerKey(f.label);
+    const prevRule = await env.DB.prepare('SELECT leaf_id FROM partner_rules WHERE pattern = ?').bind(ruleKey).first<{ leaf_id: string }>();
+    // ajánlat-mappában lévő sorba vont projekt: a cél a projekt mappájába kerül (különben eltűnne a projektek közül)
+    const grp = await env.DB.prepare('SELECT l.id, l.group_id, g.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE l.id IN (?, ?)')
+      .bind(f.id, t.id)
+      .all<{ id: string; group_id: string; label: string }>();
+    const fg = grp.results.find((r) => r.id === f.id),
+      tg = grp.results.find((r) => r.id === t.id);
+    const OFFER = /aj[áa]nlat/i;
+    const moveInto = fg && tg && OFFER.test(tg.label) && !OFFER.test(fg.label) ? fg.group_id : null;
     await env.DB.batch([
+      ...(moveInto ? [env.DB.prepare('UPDATE leaves SET group_id = ? WHERE id = ?').bind(moveInto, t.id)] : []),
       env.DB.prepare('UPDATE entries SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
       env.DB.prepare('UPDATE series SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
       env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE leaf_id = ?').bind(t.id, f.id),
@@ -481,7 +551,15 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       env.DB.prepare('UPDATE leaves SET archived = 1 WHERE id = ?').bind(f.id),
     ]);
     await audit(env, u.id, 'leaf.merge', { from: f, into: t });
-    return json({ ok: true });
+    await logChange(
+      env,
+      u.id,
+      'leaf.merge',
+      `Összevonás: ${f.label} → ${t.label} (${moved.entries.length} tétel)${moveInto ? ` · ${t.label} a(z) ${fg!.label} mappába került` : ''}`,
+      [f.id, t.id],
+      { type: 'leaf.merge', from: f.id, into: t.id, intoGroupBefore: moveInto ? tg!.group_id : undefined, moved, rule: { pattern: ruleKey, prev: prevRule?.leaf_id ?? null } },
+    );
+    return json({ ok: true, moved: moveInto ? fg!.label : null });
   }
 
   if (path === '/api/trash' && req.method === 'GET') {
@@ -509,6 +587,13 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ rids: number[] }>(req);
     const rids = (Array.isArray(b.rids) ? b.rids : []).map(Number).filter(Number.isFinite).slice(0, 500);
+    const restored = rids.length
+      ? (
+          await env.DB.prepare(`SELECT id, name, leaf_id, date, amount, kind FROM deleted_entries WHERE rowid IN (${rids.map(() => '?').join(',')})`)
+            .bind(...rids)
+            .all<Record<string, unknown>>()
+        ).results
+      : [];
     const stmts: D1PreparedStatement[] = [];
     for (const rid of rids) {
       stmts.push(
@@ -521,6 +606,17 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     }
     for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
     await audit(env, u.id, 'trash.restore', { rids });
+    const back = restored.filter((r, i, a) => a.findIndex((x) => x.id === r.id) === i);
+    if (back.length)
+      await logChange(
+        env,
+        u.id,
+        'trash.restore',
+        `Kukából visszaállítva · ${back.length} tétel`,
+        back.map((r) => String(r.leaf_id)),
+        { type: 'entries', before: [], created: back.map((r) => String(r.id)), seriesBefore: [], seriesCreated: [] },
+        back.map((r) => ({ op: 'new' as const, name: String(r.name || ''), leaf: String(r.leaf_id), date: String(r.date), amount: Number(r.amount), kind: String(r.kind) })),
+      );
     return json({ ok: true });
   }
 

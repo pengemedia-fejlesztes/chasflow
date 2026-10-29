@@ -215,4 +215,6 @@ export interface EntryBatch {
   purge?: boolean;
   /** a törölt tételek elutasított ajánlatok (beszámítanak az elfogadási arányba) */
   rejected?: boolean;
+  /** a változásnaplóba kerülő rövid leírás (a felhasználónak mutatott üzenet) */
+  label?: string;
 }

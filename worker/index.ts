@@ -10,6 +10,7 @@ import { handlePartners } from './partners';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
+import { handleChangelog } from './changelog';
 import { Env, HttpError, getSetting, json, safeEqual, withSecurityHeaders } from './util';
 import { SYNC_HOURS } from '../shared/aggreg8';
 
@@ -80,7 +81,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
   if (u.role === 'admin' && !u.totp_enabled) throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners]) {
+  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleChangelog]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }
