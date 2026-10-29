@@ -577,7 +577,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         )}
         {tab === 'income' && (
           <>
-            <MobileHeader title="Tervezett bevétel" sub="Billingo számlák" onBack={() => setTab('home')} />
+            <MobileHeader title="Tervezett bevételek, kiadások" sub="mikor fizetnek, mikor fizetünk" onBack={() => setTab('home')} />
             <IncomeView
               mobile
               onOpen={(e) => setSheet({ kind: 'detail', planId: e.kind === 'plan' ? e.id : null, actualId: e.kind === 'actual' ? e.id : null })}

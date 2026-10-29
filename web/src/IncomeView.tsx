@@ -1,7 +1,7 @@
-// Tervezett bevétel: kiküldött (Billingo) számlák és tervezett bevételek, beérkezési állapottal.
+// Tervezett bevételek, kiadások: melyik tételt mikor fizetik / fizetjük (Billingo- és NAV-számlák, tervek); a dátumra kattintva a határidő módosítható.
 import { useRef, useState } from 'react';
 import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
-import type { Entry } from '../../shared/types';
+import type { Entry, Section } from '../../shared/types';
 import { api } from './api';
 import { CalendarSheet } from './DatePicker';
 import { itemLabel } from './MonthList';
@@ -9,7 +9,7 @@ import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { markDone } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card, eyebrow, stamp, SyncPill } from './ui';
+import { C, FONT, FONT_H, Pill, Seg, card, eyebrow, stamp, SyncPill } from './ui';
 
 const BSTATUS: Record<string, [string, string]> = {
   outstanding: ['kiküldve, nyitott', C.blueDark],
@@ -22,6 +22,14 @@ const BSTATUS: Record<string, [string, string]> = {
 export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
   const { ix, data, filters, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
+  const [side, setSide] = useState<Section | 'all'>('all');
+  const inSide = (e: Entry) => side === 'all' || ix.sectionOf(e.leaf_id) === side;
+  const isOut = (e: Entry) => ix.sectionOf(e.leaf_id) === 'out';
+  const navByPlan = new Map((data.navInvoices || []).filter((d) => d.plan_id).map((d) => [d.plan_id!, d]));
+  // havidíjas (ismétlődő) tételnél a hónap is a névben: „Havi díj – 2026. november”
+  const repOf = new Map(data.series.map((x) => [x.id, x.rep]));
+  const withMonth = (e: Entry, label: string) =>
+    e.series_id && repOf.get(e.series_id) && repOf.get(e.series_id) !== 'once' ? `${label || e.name} – ${monthLong(e.period || ymOf(e.date))}` : label;
   const planOfActual = usePlanOfActual();
   // a dátumra kattintva: a várható beérkezés módosítása
   const [pickFor, setPickFor] = useState<Entry | null>(null);
@@ -35,16 +43,18 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   };
   const horizon = endOfMonth(filters.to > ix.cur ? filters.to : addMonths(ix.cur, 3));
   const docByPlan = new Map(data.billingo.filter((d) => d.plan_id).map((d) => [d.plan_id!, d]));
-  const income = data.entries.filter((e) => e.kind === 'plan' && ix.sectionOf(e.leaf_id) === 'in');
+  const income = data.entries.filter((e) => e.kind === 'plan' && inSide(e));
   const open = income.filter(
     (e) => !e.done && e.date <= horizon && (showOffers || !e.tentative) && (e.date >= addMonths(ix.cur, -6) + '-01' || e.source === 'billingo'),
   );
   const overdue = open.filter((e) => e.date < data.today && !e.tentative);
   const received = data.entries
-    .filter((e) => e.kind === 'actual' && ix.sectionOf(e.leaf_id) === 'in' && e.date >= addMonths(ix.cur, -1) + '-01')
+    .filter((e) => e.kind === 'actual' && inSide(e) && e.date >= addMonths(ix.cur, -1) + '-01')
     .sort((a, b) => b.date.localeCompare(a.date));
-  const billingoOpen = open.filter((e) => e.source === 'billingo');
+  const billingoOpen = open.filter((e) => e.source === 'billingo' || navByPlan.has(e.id));
   const sum = (es: Entry[]) => es.reduce((s, e) => s + e.amount, 0);
+  const sumAbs = (es: Entry[]) => es.reduce((s, e) => s + Math.abs(e.amount), 0);
+  const money = (v: number) => (side === 'all' ? (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) : fmt(Math.abs(v)));
   const isLate = (e: Entry) => e.date < data.today && !e.tentative;
   const shown = open.filter((e) =>
     focus === 'open'
@@ -52,12 +62,12 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
       : focus === 'overdue'
         ? isLate(e)
         : focus === 'billingo'
-          ? e.source === 'billingo'
+          ? e.source === 'billingo' || navByPlan.has(e.id)
           : focus === 'offers'
             ? !!e.tentative
             : true,
   );
-  const FOCUS_LABEL = { all: '', open: 'Nyitott tételek', overdue: 'Lejárt, még nem érkezett be', billingo: 'Kiküldött számlák', offers: 'Ajánlatok' };
+  const FOCUS_LABEL = { all: '', open: 'Nyitott tételek', overdue: 'Lejárt határidejű', billingo: 'Kiállított számlák', offers: 'Ajánlatok' };
   const byMonth = new Map<string, Entry[]>();
   shown
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -75,46 +85,59 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.blue, marginBottom: 8 }}>
-              Bevétel · Billingo
+              Bevétel · kiadás · Billingo · NAV
             </div>
-            <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Tervezett bevétel</h1>
+            <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Tervezett bevételek, kiadások</h1>
             <p style={{ margin: '10px 0 0', font: `400 15px/1.5 ${FONT}`, color: C.muted, maxWidth: '62ch' }}>
-              A Billingóban kiállított számlák automatikusan ide kerülnek a fizetési határidőre. Amikor a bankba beérkezik az összeg, a Bankszinkronban
-              jóváhagyva a terv lezárul és tény lesz belőle.
+              Melyik tételt mikor fizetik nekünk, és mikor fizetjük mi. A dátumra kattintva módosíthatod a fizetési határidőt. A kiállított és befogadott
+              számlák automatikusan a határidejükre kerülnek; a banki jóváhagyáskor a terv lezárul és tény lesz belőle.
             </p>
           </div>
           {canEdit && <SyncPill label="↻ Szinkron most" onRun={sync} />}
         </div>
       )}
+      <Seg
+        value={side}
+        onChange={setSide}
+        options={[
+          ['all', 'Mind'],
+          ['in', 'Bevételek'],
+          ['out', 'Kiadások'],
+        ]}
+      />
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit,minmax(${mobile ? 150 : 190}px,1fr))`, gap: 12 }}>
         <Stat
           dark
           active={focus === 'open'}
           onClick={() => pickFocus('open')}
           label={`Nyitott · ${monthLong(ymOf(horizon)).replace(/^\d+\. /, '')} végéig`}
-          value={fmt(sum(open.filter((e) => !e.tentative)))}
-          sub={`${open.filter((e) => !e.tentative).length} tétel`}
+          value={money(sum(open.filter((e) => !e.tentative)))}
+          sub={
+            side === 'all'
+              ? `be ${fmt(sumAbs(open.filter((e) => !e.tentative && !isOut(e))))} · ki ${fmt(sumAbs(open.filter((e) => !e.tentative && isOut(e))))}`
+              : `${open.filter((e) => !e.tentative).length} tétel`
+          }
         />
         <Stat
           active={focus === 'overdue'}
           onClick={() => pickFocus('overdue')}
-          label="Lejárt, még nem érkezett be"
-          value={fmt(sum(overdue))}
+          label={side === 'out' ? 'Lejárt, még nem fizettük ki' : side === 'in' ? 'Lejárt, még nem érkezett be' : 'Lejárt határidejű'}
+          value={money(sum(overdue))}
           sub={`${overdue.length} tétel`}
           color={overdue.length ? C.neg : undefined}
         />
         <Stat
           active={focus === 'billingo'}
           onClick={() => pickFocus('billingo')}
-          label="Kiküldött számlák (nyitott)"
-          value={fmt(sum(billingoOpen))}
+          label="Kiállított / befogadott számlák (nyitott)"
+          value={money(sum(billingoOpen))}
           sub={data.integrations.billingo ? `Billingo · ${stamp(data.settings.billingo_last_sync)}` : 'Billingo nincs bekötve'}
         />
         <Stat
           active={focus === 'offers'}
           onClick={() => pickFocus('offers')}
           label="Ajánlatok (nem biztos)"
-          value={fmt(sum(open.filter((e) => e.tentative)))}
+          value={money(sum(open.filter((e) => e.tentative)))}
           sub={`${open.filter((e) => e.tentative).length} ajánlat`}
         />
       </div>
@@ -147,11 +170,17 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
             <span style={{ font: `700 13px ${FONT_H}`, color: k === 'overdue' ? C.neg : C.navy, letterSpacing: '.04em', textTransform: 'uppercase' }}>
               {k === 'overdue' ? 'Lejárt határidejű' : monthLong(k)}
             </span>
-            <span style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(sum(es.filter((e) => !e.tentative)))} Ft</span>
+            <span style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
+              {side === 'all'
+                ? `be ${fmt(sumAbs(es.filter((e) => !e.tentative && !isOut(e))))} · ki ${fmt(sumAbs(es.filter((e) => !e.tentative && isOut(e))))} Ft`
+                : `${fmt(sumAbs(es.filter((e) => !e.tentative)))} Ft`}
+            </span>
           </div>
           <div style={{ ...card, overflow: 'hidden' }}>
             {es.map((e, i) => {
               const doc = docByPlan.get(e.id);
+              const nav = navByPlan.get(e.id);
+              const out = isOut(e);
               const bs = doc?.payment_status ? BSTATUS[doc.payment_status] : null;
               const late = e.date < data.today && !e.tentative;
               const days = Math.round((Date.parse(data.today) - Date.parse(e.date)) / 86400000);
@@ -171,7 +200,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                 >
                   <span
                     role="button"
-                    title={canEdit ? 'Várható beérkezés módosítása' : undefined}
+                    title={canEdit ? 'Fizetési határidő módosítása' : undefined}
                     onClick={(ev) => {
                       if (!canEdit) return;
                       ev.stopPropagation();
@@ -204,11 +233,11 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                     >
                       {ix.leafById[e.leaf_id]?.label || e.name}
                     </PartnerLink>
-                    {itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '') && (
+                    {withMonth(e, itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '')) && (
                       <span
                         style={{ font: `500 13.5px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: -2 }}
                       >
-                        {itemLabel(e.name, ix.leafById[e.leaf_id]?.label || '')}
+                        {withMonth(e, itemLabel(e.name, ix.leafById[e.leaf_id]?.label || ''))}
                       </span>
                     )}
                     <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
@@ -218,6 +247,16 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                         </Badge>
                       )}
                       {bs && <Badge color={bs[1]}>{bs[0]}</Badge>}
+                      {nav && (
+                        <Badge color={C.blueDark} bg={C.bg2}>
+                          NAV {nav.invoice_number}
+                        </Badge>
+                      )}
+                      {side === 'all' && (
+                        <Badge color={out ? C.neg : '#1E7A46'} bg={out ? C.negBg : '#E8F4EC'}>
+                          {out ? 'kiadás' : 'bevétel'}
+                        </Badge>
+                      )}
                       {e.tentative ? (
                         <Badge color="#8A6D1C" bg="#FFF6DD">
                           ajánlat
@@ -230,8 +269,9 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                       )}
                     </span>
                   </span>
-                  <span style={{ font: `700 15px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-                    {fmt(e.amount)} Ft
+                  <span style={{ font: `700 15px ${FONT_H}`, color: out ? C.neg : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {out ? '−' : ''}
+                    {fmt(Math.abs(e.amount))} Ft
                   </span>
                   {canEdit && (
                     <span style={{ display: 'flex', gap: 6 }} onClick={(ev) => ev.stopPropagation()}>
@@ -239,10 +279,10 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                         <Pill
                           small
                           kind="dark"
-                          title="Beérkezett (kézi lezárás – banki jóváhagyásnál automatikus)"
-                          onClick={() => commit(markDone(data, [e.id], true), `${e.name}: beérkezett ✓`)}
+                          title={`${out ? 'Kifizetve' : 'Beérkezett'} (kézi lezárás – banki jóváhagyásnál automatikus)`}
+                          onClick={() => commit(markDone(data, [e.id], true), `${e.name}: ${out ? 'kifizetve' : 'beérkezett'} ✓`)}
                         >
-                          ✓ Beérkezett
+                          ✓ {out ? 'Kifizetve' : 'Beérkezett'}
                         </Pill>
                       )}
                     </span>
@@ -260,17 +300,22 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           onPick={(v) => {
             const e = pickFor;
             setPickFor(null);
-            if (v !== e.date) commit({ upsert: [{ ...e, date: v }] }, `${e.name || 'Tétel'}: várható beérkezés ${v.replace(/-/g, '.')}.`);
+            // ismétlődő tételnél a hónap (melyik hónap díja) megmarad, csak a fizetés napja változik
+            if (v !== e.date)
+              commit(
+                { upsert: [{ ...e, date: v, ...(e.series_id ? { period: e.period || ymOf(e.date) } : {}) }] },
+                `${withMonth(e, e.name || 'Tétel')}: fizetési határidő ${v.replace(/-/g, '.')}.`,
+              );
           }}
         />
       )}
       {byMonth.size === 0 && (
-        <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs nyitott tervezett bevétel.</div>
+        <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs nyitott tervezett {side === 'out' ? 'kiadás' : side === 'in' ? 'bevétel' : 'tétel'}.</div>
       )}
 
       <div style={{ ...card, overflow: 'hidden', display: focus === 'all' ? undefined : 'none' }}>
         <div style={{ padding: '14px 16px', font: `700 15px ${FONT_H}`, color: C.navy, borderBottom: `1px solid ${C.line}` }}>
-          Beérkezett bevételek (előző és aktuális hónap)
+          {side === 'out' ? 'Kifizetett kiadások' : side === 'in' ? 'Beérkezett bevételek' : 'Befolyt és kifizetett tételek'} (előző és aktuális hónap)
         </div>
         {received.length === 0 && <div style={{ padding: 18, color: C.muted, font: `500 13.5px ${FONT}` }}>Még nincs beérkezett tétel.</div>}
         {received.slice(0, 40).map((e) => (
@@ -281,10 +326,13 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
               <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
                 <PartnerLink leaf={e.leaf_id}>{ix.leafById[e.leaf_id]?.label}</PartnerLink> ·{' '}
                 {e.source === 'bank' ? 'bankból' : e.source === 'import' ? 'xls' : e.source === 'billingo' ? 'Billingo' : 'kézi'}
-                <PlanDiff actual={e} plan={planOfActual.get(e.id)} sec="in" />
+                <PlanDiff actual={e} plan={planOfActual.get(e.id)} sec={ix.sectionOf(e.leaf_id)} />
               </span>
             </span>
-            <span style={{ font: `700 14px ${FONT}`, color: C.blueDark, fontVariantNumeric: 'tabular-nums' }}>+{fmt(e.amount)}</span>
+            <span style={{ font: `700 14px ${FONT}`, color: e.amount < 0 ? C.neg : C.blueDark, fontVariantNumeric: 'tabular-nums' }}>
+              {e.amount < 0 ? '−' : '+'}
+              {fmt(Math.abs(e.amount))}
+            </span>
           </div>
         ))}
       </div>

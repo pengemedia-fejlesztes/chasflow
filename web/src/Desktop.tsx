@@ -1,4 +1,4 @@
-// Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevétel / Bank / Beállítások.
+// Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
@@ -55,7 +55,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
     ['alerts', 'Riasztások', flags.length],
-    ['income', 'Tervezett bevétel', openIncome],
+    ['income', 'Tervezett bevételek, kiadások', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['partners', 'Partnertörzs', 0],
     ['breakeven', 'Fedezeti pont', 0],
