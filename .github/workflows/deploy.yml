@@ -81,3 +81,36 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Éles felület és API ellenőrzése
+        run: |
+          python3 - <<'PYSMOKE'
+          import hashlib, json, os, pathlib, time, urllib.request
+          from html.parser import HTMLParser
+          class Scripts(HTMLParser):
+              def __init__(self): super().__init__(); self.paths = []
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  if tag == 'script' and attrs.get('type') == 'module' and attrs.get('src'):
+                      self.paths.append(attrs['src'])
+          base = 'https://cashflow-tervezo.pengemedia.workers.dev'
+          def get(path):
+              req = urllib.request.Request(base + path, headers={'Cache-Control': 'no-cache'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return response.read()
+          local = Scripts(); local.feed(pathlib.Path('dist/index.html').read_text())
+          assert local.paths, 'No compiled application script in dist/index.html'
+          for attempt in range(6):
+              try:
+                  remote = Scripts(); remote.feed(get('/?deployment=' + os.environ['GITHUB_SHA']).decode())
+                  assert remote.paths == local.paths, 'The live HTML still serves another application build'
+                  for path in local.paths:
+                      assert path.startswith('/assets/'), 'Unexpected script location'
+                      assert hashlib.sha256(get(path)).digest() == hashlib.sha256(pathlib.Path('dist' + path).read_bytes()).digest(), 'Live script differs from deployed artifact'
+                  status = json.loads(get('/api/auth/status'))
+                  assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
+                  print('Production HTML, compiled application assets and authentication API verified.')
+                  break
+              except Exception:
+                  if attempt == 5: raise
+                  time.sleep(5)
+          PYSMOKE
