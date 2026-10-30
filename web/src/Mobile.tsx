@@ -784,14 +784,6 @@ function SheetView({
     const f = sheet;
     const set = (p: Partial<typeof f>) => setSheet({ ...f, ...p });
     const amt = parseInt(f.amount || '0');
-    const press = (k: string) => {
-      let a = f.amount || '';
-      if (k === '⌫') a = a.slice(0, -1);
-      else if (k === '000') a = a ? a + '000' : '';
-      else a = (a + k).replace(/^0+/, '');
-      if (a.length > 11) return;
-      set({ amount: a });
-    };
     const step = repStep(f.rep);
     const n = f.rep === 'once' ? 1 : Math.ceil(f.count / step);
     const mode = f.type === 'in' ? f.mode || 'simple' : 'simple';
@@ -933,9 +925,31 @@ function SheetView({
         )}
         {mode === 'simple' && (
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
-            <span style={{ font: `800 40px ${FONT_H}`, color: amt ? C.navy : C.faint, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums' }}>
-              {amt ? fmt(amt) : '0'}
-            </span>
+            {/* valódi mező: koppintásra a telefon számbillentyűzete nyílik (az ezres tagolás gépelés közben is látszik) */}
+            <input
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              enterKeyHint="done"
+              value={amt ? fmt(amt) : ''}
+              placeholder="0"
+              onChange={(ev) => set({ amount: ev.target.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 11) })}
+              style={{
+                width: '100%',
+                maxWidth: 260,
+                border: 0,
+                borderBottom: `2px solid ${C.line2}`,
+                background: 'transparent',
+                textAlign: 'right',
+                font: `800 40px ${FONT_H}`,
+                color: C.navy,
+                letterSpacing: '-.02em',
+                fontVariantNumeric: 'tabular-nums',
+                padding: 0,
+                outline: 'none',
+              }}
+            />
             <span style={{ font: `600 16px ${FONT}`, color: C.muted }}>Ft</span>
           </div>
         )}
@@ -1026,26 +1040,6 @@ function SheetView({
               {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
             </span>
           </>
-        )}
-        {mode === 'simple' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0', '⌫'].map((k) => (
-              <button
-                key={k}
-                onClick={() => press(k)}
-                style={{
-                  height: 48,
-                  border: 0,
-                  borderRadius: 12,
-                  background: k === '⌫' || k === '000' ? '#EEF2F7' : C.bg,
-                  font: `600 20px ${FONT}`,
-                  color: C.navy,
-                }}
-              >
-                {k}
-              </button>
-            ))}
-          </div>
         )}
         <button
           onClick={() => {
