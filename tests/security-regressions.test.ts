@@ -201,3 +201,26 @@ describe('concurrent login attempts', () => {
     expect(sql.prepare('SELECT COUNT(*) AS n FROM login_attempts').get()).toMatchObject({ n: 20 });
   });
 });
+
+describe('pending historical migration with existing production categories', () => {
+  it.each([true, false])('installs schema safely when destination label conflicts=%s', (conflict) => {
+    const sql = new DatabaseSync(':memory:');
+    databases.push(sql);
+    for (const name of readdirSync('migrations')
+      .filter((n) => n.endsWith('.sql') && n < '0024')
+      .sort())
+      sql.exec(readFileSync(`migrations/${name}`, 'utf8'));
+    sql.exec("INSERT INTO groups(id,section,label,sort) VALUES ('source','in','Source',0), ('dest','in','Destination',0)");
+    sql
+      .prepare("INSERT INTO leaves (id,group_id,label,sort,archived) VALUES ('l_de00a4a5','source','Orvosmost',0,0),('l_0008ee2f','dest',?,0,0)")
+      .run(conflict ? 'Orvosmost' : 'UrgentCare');
+    sql.exec("INSERT INTO partner_rules (pattern,leaf_id,hits,updated_at) VALUES ('test','l_0008ee2f',0,0)");
+    sql.exec(readFileSync('migrations/0024_change_log.sql', 'utf8'));
+    sql.exec(readFileSync('migrations/0025_mutation_guard.sql', 'utf8'));
+    expect(sql.prepare("SELECT group_id FROM leaves WHERE id='l_de00a4a5'").get()).toMatchObject({ group_id: conflict ? 'source' : 'dest' });
+    expect(sql.prepare("SELECT archived FROM leaves WHERE id='l_0008ee2f'").get()).toMatchObject({ archived: conflict ? 0 : 1 });
+    expect(sql.prepare("SELECT leaf_id FROM partner_rules WHERE pattern='test'").get()).toMatchObject({ leaf_id: conflict ? 'l_0008ee2f' : 'l_de00a4a5' });
+    expect(sql.prepare('SELECT COUNT(*) AS n FROM change_log').get()).toMatchObject({ n: conflict ? 0 : 1 });
+    expect(sql.prepare('SELECT COUNT(*) AS n FROM mutation_guard').get()).toMatchObject({ n: 0 });
+  });
+});
