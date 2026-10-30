@@ -1,6 +1,6 @@
 // Saját dátumválasztó (a natív naptár helyett): magyar hét (hétfővel kezdődik), ünnepnapok és hétvégék halványan,
 // gyorsgombok (Ma, Holnap, Jövő hétfő, Hónap utolsó munkanapja). Mobilon alsó lap, asztalon középre nyíló ablak.
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { MSL } from '../../shared/model';
 import { addDays, isWorkday, lastWorkday, mondayAfter } from '../../shared/workdays';
 import { useBack } from './back';
@@ -15,14 +15,21 @@ const todayIso = () => {
 };
 
 export function DateField(props: { value: string; onChange: (v: string) => void; min?: string; big?: boolean; style?: CSSProperties }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenS] = useState(false);
+  // mobilon a napra koppintás után a böngésző ugyanazt az érintést a naptár alatt lévő mezőre is „átkattintja” –
+  // a bezárás utáni rövid időben a mező nem nyitja újra a naptárt
+  const closedAt = useRef(0);
+  const setOpen = (v: boolean) => {
+    if (!v) closedAt.current = Date.now();
+    setOpenS(v);
+  };
   const [y, m, d] = props.value.split('-');
   const wd = WDL[new Date(props.value + 'T12:00:00').getDay()] || '';
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => Date.now() - closedAt.current > 600 && setOpen(true)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -161,6 +168,11 @@ export function CalendarSheet({ value, min, onPick, onClose }: { value: string; 
                 type="button"
                 disabled={dis}
                 onClick={() => pick(v)}
+                onTouchEnd={(e) => {
+                  // érintésnél azonnal választ, és nem engedi, hogy a böngésző a lap alatti elemre is „kattintson”
+                  e.preventDefault();
+                  pick(v);
+                }}
                 style={{
                   height: 42,
                   borderRadius: 12,
@@ -183,6 +195,11 @@ export function CalendarSheet({ value, min, onPick, onClose }: { value: string; 
               key={l}
               type="button"
               onClick={() => pick(v)}
+              onTouchEnd={(e) => {
+                // érintésnél azonnal választ, és nem engedi, hogy a böngésző a lap alatti elemre is „kattintson”
+                e.preventDefault();
+                pick(v);
+              }}
               style={{
                 height: 36,
                 borderRadius: 999,
