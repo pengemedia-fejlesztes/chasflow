@@ -110,7 +110,10 @@ jobs:
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
                   print('Production HTML, compiled application assets and authentication API verified.')
                   break
-              except Exception:
-                  if attempt == 5: raise
+              except Exception as error:
+                  if attempt == 5:
+                      message = str(error).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f'::error title=Production smoke check failed::{message}')
+                      raise
                   time.sleep(5)
           PYSMOKE
