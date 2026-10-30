@@ -221,51 +221,105 @@ function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
     >
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {setup && (
-          <input required placeholder="Beállító kód" value={f.token} onChange={(e) => setF({ ...f, token: e.target.value })} style={big} autoComplete="off" />
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+            <span>{'Beállító kód'}</span>
+            <input
+              aria-describedby={err ? 'auth-error' : undefined}
+              required
+              placeholder="Beállító kód"
+              value={f.token}
+              onChange={(e) => setF({ ...f, token: e.target.value })}
+              style={big}
+              autoComplete="off"
+            />
+          </label>
         )}
-        {setup && <input required placeholder="Név" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} style={big} autoComplete="name" />}
+        {setup && (
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+            <span>{'Név'}</span>
+            <input
+              aria-describedby={err ? 'auth-error' : undefined}
+              required
+              placeholder="Név"
+              value={f.name}
+              onChange={(e) => setF({ ...f, name: e.target.value })}
+              style={big}
+              autoComplete="name"
+            />
+          </label>
+        )}
         {!needTotp && (
           <>
-            <input
-              required
-              type="email"
-              placeholder="E-mail"
-              value={f.email}
-              onChange={(e) => setF({ ...f, email: e.target.value })}
-              style={big}
-              autoComplete="username"
-              autoCapitalize="none"
-            />
-            {!forgot && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+              <span>{'E-mail'}</span>
               <input
+                aria-describedby={err ? 'auth-error' : undefined}
                 required
-                type="password"
-                placeholder={setup ? 'Jelszó (min. 12 karakter)' : 'Jelszó'}
-                value={f.password}
-                onChange={(e) => setF({ ...f, password: e.target.value })}
+                type="email"
+                placeholder="E-mail"
+                value={f.email}
+                onChange={(e) => setF({ ...f, email: e.target.value })}
                 style={big}
-                autoComplete={setup ? 'new-password' : 'current-password'}
+                autoComplete="username"
+                autoCapitalize="none"
               />
+            </label>
+            {!forgot && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+                <span>{setup ? 'Jelszó (min. 12 karakter)' : 'Jelszó'}</span>
+                <input
+                  aria-describedby={err ? 'auth-error' : undefined}
+                  required
+                  type="password"
+                  placeholder={setup ? 'Jelszó (min. 12 karakter)' : 'Jelszó'}
+                  value={f.password}
+                  onChange={(e) => setF({ ...f, password: e.target.value })}
+                  style={big}
+                  autoComplete={setup ? 'new-password' : 'current-password'}
+                />
+              </label>
             )}
           </>
         )}
         {needTotp && (
-          <input
-            autoFocus
-            required
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="6 jegyű kód a hitelesítő alkalmazásból"
-            value={f.totp}
-            onChange={(e) => setF({ ...f, totp: e.target.value })}
-            style={big}
-          />
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+            <span>{'6 jegyű kód a hitelesítő alkalmazásból'}</span>
+            <input
+              aria-describedby={err ? 'auth-error' : undefined}
+              autoFocus
+              required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6 jegyű kód a hitelesítő alkalmazásból"
+              value={f.totp}
+              onChange={(e) => setF({ ...f, totp: e.target.value })}
+              style={big}
+            />
+          </label>
         )}
-        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        {err && (
+          <span id="auth-error" role="alert" style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>
+            {err}
+          </span>
+        )}
         {info && <span style={{ font: `500 13.5px/1.5 ${FONT}`, color: C.blueDark }}>{info}</span>}
         {!info && (
           <button type="submit" disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>
             {busy ? '…' : setup ? 'Létrehozás' : forgot ? 'Link küldése' : needTotp ? 'Ellenőrzés' : 'Belépés'}
+          </button>
+        )}
+        {needTotp && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setNeedTotp(false);
+              setF({ ...f, totp: '' });
+              setErr('');
+            }}
+            style={{ ...btn, background: C.bg2, color: C.ink }}
+          >
+            Vissza a belépési adatokhoz
           </button>
         )}
         {!setup && !needTotp && (
@@ -327,20 +381,28 @@ function Setup2fa({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogo
               Vagy add meg kézzel a kulcsot:{' '}
               <code style={{ font: `600 12.5px ui-monospace,monospace`, color: C.navy, wordBreak: 'break-all' }}>{t.secret}</code>
             </span>
-            <input
-              required
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              placeholder="6 jegyű kód"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              style={big}
-            />
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+              <span>{'6 jegyű kód'}</span>
+              <input
+                aria-describedby={err ? 'auth-error' : undefined}
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="6 jegyű kód"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                style={big}
+              />
+            </label>
           </>
         ) : (
           !err && <span style={{ font: `500 13.5px ${FONT}`, color: C.muted, textAlign: 'center' }}>Betöltés…</span>
         )}
-        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        {err && (
+          <span id="auth-error" role="alert" style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>
+            {err}
+          </span>
+        )}
         {t && (
           <button type="submit" style={btn}>
             Bekapcsolás
@@ -370,35 +432,58 @@ function ChangePw({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogo
   return (
     <Shell title="Új jelszó beállítása" sub={`Szia ${me.name}! Az ideiglenes jelszót most le kell cserélned (min. 12 karakter).`}>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input type="email" value={me.email} readOnly autoComplete="username" style={{ ...big, background: C.bg }} />
         <input
-          required
-          type="password"
-          placeholder="Ideiglenes jelszó"
-          value={f.current}
-          onChange={(e) => setF({ ...f, current: e.target.value })}
-          style={big}
-          autoComplete="current-password"
+          aria-describedby={err ? 'auth-error' : undefined}
+          type="email"
+          value={me.email}
+          readOnly
+          autoComplete="username"
+          style={{ ...big, background: C.bg }}
         />
-        <input
-          required
-          type="password"
-          placeholder="Új jelszó"
-          value={f.next}
-          onChange={(e) => setF({ ...f, next: e.target.value })}
-          style={big}
-          autoComplete="new-password"
-        />
-        <input
-          required
-          type="password"
-          placeholder="Új jelszó újra"
-          value={f.next2}
-          onChange={(e) => setF({ ...f, next2: e.target.value })}
-          style={big}
-          autoComplete="new-password"
-        />
-        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+          <span>{'Ideiglenes jelszó'}</span>
+          <input
+            aria-describedby={err ? 'auth-error' : undefined}
+            required
+            type="password"
+            placeholder="Ideiglenes jelszó"
+            value={f.current}
+            onChange={(e) => setF({ ...f, current: e.target.value })}
+            style={big}
+            autoComplete="current-password"
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+          <span>{'Új jelszó'}</span>
+          <input
+            aria-describedby={err ? 'auth-error' : undefined}
+            required
+            type="password"
+            placeholder="Új jelszó"
+            value={f.next}
+            onChange={(e) => setF({ ...f, next: e.target.value })}
+            style={big}
+            autoComplete="new-password"
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+          <span>{'Új jelszó újra'}</span>
+          <input
+            aria-describedby={err ? 'auth-error' : undefined}
+            required
+            type="password"
+            placeholder="Új jelszó újra"
+            value={f.next2}
+            onChange={(e) => setF({ ...f, next2: e.target.value })}
+            style={big}
+            autoComplete="new-password"
+          />
+        </label>
+        {err && (
+          <span id="auth-error" role="alert" style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>
+            {err}
+          </span>
+        )}
         <button type="submit" style={btn}>
           Mentés
         </button>
@@ -448,37 +533,60 @@ function ResetPw({ token, onDone }: { token: string; onDone: () => void }) {
   return (
     <Shell title="Új jelszó beállítása" sub="Legalább 12 karakter. Használj jelszókezelőt (pl. iCloud Kulcskarika).">
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input type="email" value={state.email || ''} readOnly autoComplete="username" style={{ ...big, background: C.bg }} />
         <input
-          required
-          type="password"
-          placeholder="Új jelszó"
-          value={f.next}
-          onChange={(e) => setF({ ...f, next: e.target.value })}
-          style={big}
-          autoComplete="new-password"
+          aria-describedby={err ? 'auth-error' : undefined}
+          type="email"
+          value={state.email || ''}
+          readOnly
+          autoComplete="username"
+          style={{ ...big, background: C.bg }}
         />
-        <input
-          required
-          type="password"
-          placeholder="Új jelszó újra"
-          value={f.next2}
-          onChange={(e) => setF({ ...f, next2: e.target.value })}
-          style={big}
-          autoComplete="new-password"
-        />
-        {state.needTotp && (
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+          <span>{'Új jelszó'}</span>
           <input
+            aria-describedby={err ? 'auth-error' : undefined}
             required
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="6 jegyű kód a hitelesítő alkalmazásból"
-            value={f.totp}
-            onChange={(e) => setF({ ...f, totp: e.target.value })}
+            type="password"
+            placeholder="Új jelszó"
+            value={f.next}
+            onChange={(e) => setF({ ...f, next: e.target.value })}
             style={big}
+            autoComplete="new-password"
           />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+          <span>{'Új jelszó újra'}</span>
+          <input
+            aria-describedby={err ? 'auth-error' : undefined}
+            required
+            type="password"
+            placeholder="Új jelszó újra"
+            value={f.next2}
+            onChange={(e) => setF({ ...f, next2: e.target.value })}
+            style={big}
+            autoComplete="new-password"
+          />
+        </label>
+        {state.needTotp && (
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, font: `500 13px ${FONT}`, color: C.ink }}>
+            <span>{'6 jegyű kód a hitelesítő alkalmazásból'}</span>
+            <input
+              aria-describedby={err ? 'auth-error' : undefined}
+              required
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6 jegyű kód a hitelesítő alkalmazásból"
+              value={f.totp}
+              onChange={(e) => setF({ ...f, totp: e.target.value })}
+              style={big}
+            />
+          </label>
         )}
-        {err && <span style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>{err}</span>}
+        {err && (
+          <span id="auth-error" role="alert" style={{ font: `500 13.5px ${FONT}`, color: C.neg }}>
+            {err}
+          </span>
+        )}
         <button type="submit" style={btn}>
           Jelszó mentése
         </button>

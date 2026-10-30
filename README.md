@@ -104,6 +104,12 @@ npx vite build && npx wrangler dev             # http://localhost:8787
 npm test                                       # unit tesztek
 ```
 
+A módosításütközések elleni védelemhez a `0025_mutation_guard.sql` migráció szükséges. A frontend és a Worker együtt frissítendő; régi böngészőfül esetén töltsd újra az oldalt. A kliens a tétel korábbi verzióját küldi, a szerver pedig egyetlen tranzakcióban ellenőrzi és menti a teljes módosítást. Ütközéskor 409-es választ ad, és megőrzi a másik felhasználó változtatását. A visszavonásra is ugyanez a védelem érvényes.
+
+Az összegmezők egész forintot fogadnak el, szóközös ezres tagolással is. A tizedesjel és az előjel elutasításra kerül; a bevétel/kiadás választás határozza meg az előjelet.
+
+A regressziótesztek Node.js 22.13 vagy újabb verziót igényelnek (beépített SQLite). A felületi tesztek jsdomot használnak; a natív dialógus böngészős fókuszkezelését ezek nem helyettesítik.
+
 ## Felépítés
 
 | Mappa | Tartalom |

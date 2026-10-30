@@ -191,21 +191,26 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
     await env.DB.prepare('DELETE FROM login_attempts WHERE ts < ?')
       .bind(t - 86400_000)
       .run();
-    const cnt = await env.DB.prepare('SELECT COUNT(*) AS n FROM login_attempts WHERE ip = ? AND ts > ?')
-      .bind(ip, t - 15 * 60_000)
-      .first<{ n: number }>();
-    if ((cnt?.n || 0) >= MAX_IP_ATTEMPTS) throw new HttpError(429, 'Túl sok próbálkozás. Próbáld újra 15 perc múlva.');
+    // Reserve an attempt atomically, including in-flight and successful requests.
+    const attempt = await env.DB.prepare(
+      `INSERT INTO login_attempts (ip, ts)
+      SELECT ?, ? WHERE (SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND ts > ?) < ?`,
+    )
+      .bind(ip, t, ip, t - 15 * 60_000, MAX_IP_ATTEMPTS)
+      .run();
+    if (!attempt.meta.changes) throw new HttpError(429, 'Túl sok próbálkozás. Próbáld újra 15 perc múlva.');
     const body = await readJson(req);
     const email = String(body.email || '')
       .trim()
       .toLowerCase();
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<User>();
     const fail = async (msg = 'Hibás e-mail cím vagy jelszó.') => {
-      await env.DB.prepare('INSERT INTO login_attempts (ip, ts) VALUES (?, ?)').bind(ip, t).run();
       if (u) {
-        const fails = u.failed_logins + 1;
-        await env.DB.prepare('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?')
-          .bind(fails >= MAX_USER_FAILS ? 0 : fails, fails >= MAX_USER_FAILS ? t + LOCK_MS : u.locked_until, u.id)
+        await env.DB.prepare(
+          `UPDATE users SET failed_logins = failed_logins + 1,
+          locked_until = CASE WHEN failed_logins + 1 >= ? THEN MAX(locked_until, ?) ELSE locked_until END WHERE id = ?`,
+        )
+          .bind(MAX_USER_FAILS, t + LOCK_MS, u.id)
           .run();
         await audit(env, u.id, 'login_failed', { ip });
       }
@@ -223,7 +228,12 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
       if (!body.totp) return json({ needTotp: true });
       if (!(await verifyTotp(u.totp_secret || '', String(body.totp)))) return fail('Hibás kétlépcsős kód.');
     }
-    await env.DB.prepare('UPDATE users SET failed_logins = 0, locked_until = 0, last_login = ? WHERE id = ?').bind(t, u.id).run();
+    const login = await env.DB.prepare(
+      'UPDATE users SET failed_logins = 0, locked_until = 0, last_login = ? WHERE id = ? AND locked_until <= ? AND disabled = 0',
+    )
+      .bind(t, u.id, t)
+      .run();
+    if (!login.meta.changes) throw new HttpError(429, 'A fiók zárolva van. Próbáld újra később.');
     await audit(env, u.id, 'login', { ip, ua: (req.headers.get('User-Agent') || '').slice(0, 120) });
     const token = await createSession(env, req, u.id);
     return json({ ok: true, me: publicUser(u) }, 200, { 'Set-Cookie': sessionCookie(token, SESSION_TTL / 1000) });
@@ -411,6 +421,7 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
     if (req.method === 'PATCH') {
       const body = await readJson(req);
       if (id === u.id && ((body.role && body.role !== 'admin') || body.disabled)) throw new HttpError(400, 'Saját magad nem fokozhatod le / tilthatod le.');
+      if ((body.role && body.role !== 'admin') || body.disabled) await revokeImportToken(env, id);
       if (body.role && ['admin', 'member', 'viewer'].includes(body.role))
         await env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, id).run();
       if (body.disabled !== undefined) {
@@ -424,6 +435,7 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
     }
     if (req.method === 'DELETE') {
       if (id === u.id) throw new HttpError(400, 'Saját magadat nem törölheted.');
+      await revokeImportToken(env, id);
       await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
       await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
       await audit(env, u.id, 'user_deleted', { id });
@@ -431,4 +443,8 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
     }
   }
   return null;
+}
+
+async function revokeImportToken(env: Env, id: number) {
+  await env.DB.prepare("DELETE FROM settings WHERE key = 'import_token' AND json_extract(value, '$.user_id') = ?").bind(id).run();
 }

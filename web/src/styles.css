@@ -81,3 +81,7 @@ textarea {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+dialog::backdrop {
+  background: rgba(0, 32, 64, 0.45);
+}

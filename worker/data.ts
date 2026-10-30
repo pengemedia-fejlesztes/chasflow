@@ -122,8 +122,8 @@ function cleanEntry(e: Entry): Entry {
   if (!e || typeof e.id !== 'string' || !/^[\w:-]{1,80}$/.test(e.id)) throw new HttpError(400, 'Hibás tétel azonosító.');
   if (e.kind !== 'actual' && e.kind !== 'plan') throw new HttpError(400, 'Hibás tétel típus.');
   if (!DATE_RE.test(e.date)) throw new HttpError(400, 'Hibás dátum.');
-  const amount = Math.round(Number(e.amount));
-  if (!isFinite(amount) || Math.abs(amount) > 1e12) throw new HttpError(400, 'Hibás összeg.');
+  const amount = Number(e.amount);
+  if (!Number.isSafeInteger(amount) || Math.abs(amount) > 1e12) throw new HttpError(400, 'Hibás összeg.');
   return {
     ...e,
     amount,
@@ -145,6 +145,28 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
   const P = await hasPeriod(env);
   const stmts: D1PreparedStatement[] = [];
+  const entryIds = [...new Set([...(b.upsert || []).map((e) => e.id), ...(b.delete || [])])];
+  const seriesIds = [...new Set([...(b.series || []).map((s) => s.id), ...(b.deleteSeries || [])])];
+  for (const id of entryIds) {
+    const version = b.expected?.[id];
+    if (version !== null && (!Number.isSafeInteger(version) || Number(version) < 0)) throw new HttpError(409, 'Hiányzó tételverzió. Frissítsd az oldalt.');
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO mutation_guard (ok)
+      SELECT CASE WHEN (SELECT updated_at FROM entries WHERE id = ?) IS ? THEN 1 ELSE 0 END`,
+      ).bind(id, version),
+    );
+  }
+  for (const id of seriesIds) {
+    const version = b.expectedSeries?.[id];
+    if (version !== null && typeof version !== 'string') throw new HttpError(409, 'Hiányzó sorozatverzió. Frissítsd az oldalt.');
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO mutation_guard (ok)
+      SELECT CASE WHEN (SELECT json_array(leaf_id, name, rep, day) FROM series WHERE id = ?) IS ? THEN 1 ELSE 0 END`,
+      ).bind(id, version),
+    );
+  }
   for (const s of b.series || []) {
     const rep = ['once', 'monthly', 'quarterly', 'yearly'].includes(s.rep) ? s.rep : 'once';
     stmts.push(
@@ -166,7 +188,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
              WHEN entries.accepted_at IS NULL AND entries.tentative = 1 AND (excluded.tentative = 0 OR excluded.done = 1)
              THEN excluded.updated_at ELSE entries.accepted_at END,
            ${P ? 'period = excluded.period, ' : ''}source = excluded.source, ext_ref = excluded.ext_ref, link_id = excluded.link_id, note = excluded.note,
-           updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           updated_at = MAX(entries.updated_at + 1, excluded.updated_at), updated_by = excluded.updated_by`,
       ).bind(
         e.id,
         e.kind,
@@ -216,8 +238,20 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   }
   for (const id of b.deleteSeries || []) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ?').bind(String(id)));
   if (stmts.length > 2000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
-  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
-  return stmts.length;
+  stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
+  const versionIds = (b.upsert || []).map((e) => e.id);
+  for (const id of versionIds) stmts.push(env.DB.prepare('SELECT id, updated_at FROM entries WHERE id = ?').bind(id));
+  let results: D1Result[];
+  // D1 batch is a single transaction: any stale version rolls back every statement.
+  try {
+    results = await env.DB.batch(stmts);
+  } catch (e: any) {
+    if (String(e?.message).includes('entry_version_conflict'))
+      throw new HttpError(409, 'Ezt a tételt vagy sorozatot közben módosították. Frissítsd az adatokat, és ellenőrizd a változtatást.');
+    throw e;
+  }
+  const versions = Object.fromEntries(results.slice(results.length - versionIds.length).flatMap((r) => r.results.map((e: any) => [e.id, e.updated_at])));
+  return { changes: stmts.length, versions: versionIds.length ? versions : {} };
 }
 
 /** Kategória biztosítása (import, Billingo, bank). */
@@ -306,7 +340,11 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const { items, counts } = describeEntries(before, after, (b.delete || []).map(String));
     const had = new Set(before.map((r) => String(r.id)));
     const sHad = new Set(seriesBefore.map((r) => String(r.id)));
-    const parts = [counts.new && `${counts.new} új`, counts.edit && `${counts.edit} módosítva`, counts.del && `${counts.del} ${b.rejected ? 'elutasítva' : 'törölve'}`].filter(Boolean);
+    const parts = [
+      counts.new && `${counts.new} új`,
+      counts.edit && `${counts.edit} módosítva`,
+      counts.del && `${counts.del} ${b.rejected ? 'elutasítva' : 'törölve'}`,
+    ].filter(Boolean);
     const label = String(b.label || '').trim();
     if (parts.length || seriesIds.length)
       await logChange(
@@ -317,6 +355,13 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         [...before, ...after].map((r) => String(r.leaf_id || '')).filter(Boolean),
         {
           type: 'entries',
+          expected: Object.fromEntries(touched.map((id) => [id, n.versions[id] ?? null])),
+          expectedSeries: Object.fromEntries(
+            seriesIds.map((id) => {
+              const s = b.series?.find((x) => x.id === id);
+              return [id, s ? JSON.stringify([s.leaf_id, s.name, s.rep, s.day]) : null];
+            }),
+          ),
           before,
           created: (b.upsert || []).map((e) => String(e.id)).filter((id) => !had.has(id)),
           seriesBefore,
@@ -324,7 +369,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         },
         items,
       );
-    return json({ ok: true, changes: n });
+    return json({ ok: true, ...n });
   }
 
   if (path === '/api/leaves' && req.method === 'POST') {
@@ -345,7 +390,9 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (lm && req.method === 'PATCH') {
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
-    const prev = await env.DB.prepare('SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?')
+    const prev = await env.DB.prepare(
+      'SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?',
+    )
       .bind(lm[1])
       .first<Record<string, unknown>>();
     if (!prev) throw new HttpError(404, 'Ismeretlen partner.');
@@ -557,7 +604,14 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       'leaf.merge',
       `Összevonás: ${f.label} → ${t.label} (${moved.entries.length} tétel)${moveInto ? ` · ${t.label} a(z) ${fg!.label} mappába került` : ''}`,
       [f.id, t.id],
-      { type: 'leaf.merge', from: f.id, into: t.id, intoGroupBefore: moveInto ? tg!.group_id : undefined, moved, rule: { pattern: ruleKey, prev: prevRule?.leaf_id ?? null } },
+      {
+        type: 'leaf.merge',
+        from: f.id,
+        into: t.id,
+        intoGroupBefore: moveInto ? tg!.group_id : undefined,
+        moved,
+        rule: { pattern: ruleKey, prev: prevRule?.leaf_id ?? null },
+      },
     );
     return json({ ok: true, moved: moveInto ? fg!.label : null });
   }
@@ -615,7 +669,14 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         `Kukából visszaállítva · ${back.length} tétel`,
         back.map((r) => String(r.leaf_id)),
         { type: 'entries', before: [], created: back.map((r) => String(r.id)), seriesBefore: [], seriesCreated: [] },
-        back.map((r) => ({ op: 'new' as const, name: String(r.name || ''), leaf: String(r.leaf_id), date: String(r.date), amount: Number(r.amount), kind: String(r.kind) })),
+        back.map((r) => ({
+          op: 'new' as const,
+          name: String(r.name || ''),
+          leaf: String(r.leaf_id),
+          date: String(r.date),
+          amount: Number(r.amount),
+          kind: String(r.kind),
+        })),
       );
     return json({ ok: true });
   }

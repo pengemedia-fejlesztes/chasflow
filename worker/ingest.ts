@@ -44,6 +44,8 @@ async function tokenUser(env: Env, req: Request): Promise<number> {
   const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   const st = JSON.parse((await getSetting(env, KEY)) || 'null') as { hash: string; user_id: number } | null;
   if (!token || !st || !safeEqual(await sha256(token), st.hash)) throw new HttpError(401, 'Érvénytelen feltöltési kulcs.');
+  const owner = await env.DB.prepare('SELECT role, disabled FROM users WHERE id = ?').bind(st.user_id).first<{ role: string; disabled: number }>();
+  if (!owner || owner.disabled || owner.role !== 'admin') throw new HttpError(401, 'A feltöltési kulcs tulajdonosa már nem jogosult feltölteni.');
   return st.user_id;
 }
 

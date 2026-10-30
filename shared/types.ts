@@ -207,6 +207,10 @@ export interface DeletedEntry extends Entry {
 }
 
 export interface EntryBatch {
+  /** Required by the API: previous entry version, null only for a new/absent ID. */
+  expected?: Record<string, number | null>;
+  /** Previous series fields serialized as [leaf_id, name, rep, day], null for a new ID. */
+  expectedSeries?: Record<string, string | null>;
   upsert?: Entry[];
   delete?: string[];
   series?: Series[];

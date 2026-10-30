@@ -18,7 +18,7 @@ interface Store {
   setFilters: (p: Partial<Filters>) => void;
   resetFilters: () => void;
   reload: () => Promise<void>;
-  commit: (b: EntryBatch, msg: string, opts?: { undoable?: boolean }) => Promise<void>;
+  commit: (b: EntryBatch, msg: string, opts?: { undoable?: boolean }) => Promise<boolean>;
   run: (fn: () => Promise<unknown>, msg?: string, undo?: () => Promise<unknown>) => Promise<boolean>;
   toast: Toast | null;
   showToast: (t: Toast | string) => void;
@@ -76,9 +76,15 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
     tt.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
 
+  const revision = useRef(0);
   const reload = useCallback(async () => {
+    const requestedRevision = revision.current;
     try {
-      setData(await api<DataBundle>('/api/data'));
+      const refreshed = await api<DataBundle>('/api/data');
+      if (requestedRevision === revision.current) {
+        dataRef.current = refreshed;
+        setData(refreshed);
+      }
     } catch (e: any) {
       showToast({ msg: e.message, error: true });
     }
@@ -94,16 +100,45 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
     };
   }, [reload]);
 
+  const committing = useRef(false);
   const dataRef = useRef(data);
   dataRef.current = data;
 
   const commit = useCallback(
     async (b: EntryBatch, msg: string, opts: { undoable?: boolean } = {}) => {
       const cur = dataRef.current;
+      if (committing.current) {
+        showToast({ msg: 'Egy mentés még folyamatban van. Várd meg a végét.', error: true });
+        return false;
+      }
+      committing.current = true;
       const inv = inverseOf(cur, b);
-      setData(applyLocal(cur, b));
+      const expected =
+        b.expected ||
+        Object.fromEntries([
+          ...(b.upsert || []).map((e) => [e.id, e.updated_at ?? cur.entries.find((x) => x.id === e.id)?.updated_at ?? null]),
+          ...(b.delete || []).map((id) => [id, cur.entries.find((e) => e.id === id)?.updated_at ?? null]),
+        ]);
+      const seriesVersion = (id: string) => {
+        const s = cur.series.find((x) => x.id === id);
+        return s ? JSON.stringify([s.leaf_id, s.name, s.rep, s.day]) : null;
+      };
+      const expectedSeries =
+        b.expectedSeries ||
+        Object.fromEntries([...(b.series || []).map((s) => [s.id, seriesVersion(s.id)]), ...(b.deleteSeries || []).map((id) => [id, seriesVersion(id)])]);
       try {
-        await api('/api/entries/batch', { body: { ...b, label: msg } });
+        const result = await api<{ versions: Record<string, number> }>('/api/entries/batch', { body: { ...b, expected, expectedSeries, label: msg } });
+        revision.current++;
+        const saved = applyLocal(dataRef.current, { ...b, upsert: b.upsert?.map((e) => ({ ...e, updated_at: result.versions[e.id] })) });
+        dataRef.current = saved;
+        setData(saved);
+        const undoExpected = Object.fromEntries(Object.keys(expected).map((id) => [id, result.versions[id] ?? null]));
+        const undoSeries = Object.fromEntries(
+          Object.keys(expectedSeries).map((id) => {
+            const s = saved.series.find((x) => x.id === id);
+            return [id, s ? JSON.stringify([s.leaf_id, s.name, s.rep, s.day]) : null];
+          }),
+        );
         // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell
         if (b.delete?.length && !b.purge) reload();
         const undoable = opts.undoable !== false;
@@ -112,13 +147,17 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
           undo: undoable
             ? () => {
                 setToast(null);
-                commit({ ...inv, purge: true }, 'Visszavonva', { undoable: false });
+                commit({ ...inv, expected: undoExpected, expectedSeries: undoSeries, purge: true }, 'Visszavonva', { undoable: false });
               }
             : undefined,
         });
+        return true;
       } catch (e: any) {
         showToast({ msg: e.message, error: true });
-        reload();
+        await reload();
+        return false;
+      } finally {
+        committing.current = false;
       }
     },
     [reload, showToast],

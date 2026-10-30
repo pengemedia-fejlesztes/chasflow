@@ -17,7 +17,15 @@ export interface ChangeItem {
 }
 
 export type Undo =
-  | { type: 'entries'; before: Row[]; created: string[]; seriesBefore: Row[]; seriesCreated: string[] }
+  | {
+      type: 'entries';
+      before: Row[];
+      created: string[];
+      seriesBefore: Row[];
+      seriesCreated: string[];
+      expected?: Record<string, number | null>;
+      expectedSeries?: Record<string, string | null>;
+    }
   | {
       type: 'leaf.merge';
       from: string;
@@ -34,25 +42,31 @@ const chunks = <T>(a: T[], n = 90) => Array.from({ length: Math.ceil(a.length / 
 export async function rowsById(env: Env, table: 'entries' | 'series', ids: string[]): Promise<Row[]> {
   const out: Row[] = [];
   for (const c of chunks([...new Set(ids)]))
-    out.push(...(await env.DB.prepare(`SELECT * FROM ${table} WHERE id IN (${c.map(() => '?').join(',')})`).bind(...c).all<Row>()).results);
+    out.push(
+      ...(
+        await env.DB.prepare(`SELECT * FROM ${table} WHERE id IN (${c.map(() => '?').join(',')})`)
+          .bind(...c)
+          .all<Row>()
+      ).results,
+    );
   return out;
 }
 
 const MAX_UNDO_BYTES = 800_000;
 
-export async function logChange(
-  env: Env,
-  userId: number | null,
-  action: string,
-  summary: string,
-  leafIds: string[],
-  undo: Undo | null,
-  items?: ChangeItem[],
-) {
+export async function logChange(env: Env, userId: number | null, action: string, summary: string, leafIds: string[], undo: Undo | null, items?: ChangeItem[]) {
   let u = undo ? JSON.stringify(undo) : null;
   if (u && u.length > MAX_UNDO_BYTES) u = null; // túl nagy (pl. tömeges import) – naplózva, de nem visszavonható
   await env.DB.prepare('INSERT INTO change_log (ts, user_id, action, summary, leaf_ids, items, undo) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(now(), userId, action, summary.slice(0, 500), leafIds.length ? ',' + [...new Set(leafIds)].join(',') + ',' : '', items ? JSON.stringify(items.slice(0, 60)) : null, u)
+    .bind(
+      now(),
+      userId,
+      action,
+      summary.slice(0, 500),
+      leafIds.length ? ',' + [...new Set(leafIds)].join(',') + ',' : '',
+      items ? JSON.stringify(items.slice(0, 60)) : null,
+      u,
+    )
     .run();
 }
 
@@ -61,7 +75,13 @@ export function describeEntries(before: Row[], after: Row[], deleted: string[]):
   const bMap = new Map(before.map((r) => [String(r.id), r]));
   const items: ChangeItem[] = [];
   const counts = { new: 0, edit: 0, del: 0 };
-  const base = (r: Row) => ({ name: String(r.name || ''), leaf: String(r.leaf_id || ''), date: String(r.date || ''), amount: Number(r.amount) || 0, kind: String(r.kind || '') });
+  const base = (r: Row) => ({
+    name: String(r.name || ''),
+    leaf: String(r.leaf_id || ''),
+    date: String(r.date || ''),
+    amount: Number(r.amount) || 0,
+    kind: String(r.kind || ''),
+  });
   for (const a of after) {
     const b = bMap.get(String(a.id));
     if (!b) {
@@ -97,7 +117,10 @@ async function upsertStmts(env: Env, table: 'entries' | 'series', rows: Row[]): 
     const keys = Object.keys(r).filter((k) => cols.has(k) && /^\w+$/.test(k));
     return env.DB.prepare(
       `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})
-       ON CONFLICT(id) DO UPDATE SET ${keys.filter((k) => k !== 'id').map((k) => `${k} = excluded.${k}`).join(', ')}`,
+       ON CONFLICT(id) DO UPDATE SET ${keys
+         .filter((k) => k !== 'id')
+         .map((k) => `${k} = ${table === 'entries' && k === 'updated_at' ? 'MAX(entries.updated_at + 1, excluded.updated_at)' : `excluded.${k}`}`)
+         .join(', ')}`,
     ).bind(...keys.map((k) => (r[k] === undefined ? null : r[k])));
   });
 }
@@ -111,28 +134,57 @@ async function undoChange(env: Env, row: { id: number; ts: number; undo: string 
   if (undo.type === 'entries') {
     const ids = [...undo.before.map((r) => String(r.id)), ...undo.created];
     // ha valaki azóta újra módosította ezeket a tételeket, előbb rákérdezünk
-    if (!force) {
+    if (!force && undo.expected) {
+      for (const [id, version] of Object.entries(undo.expected))
+        stmts.push(
+          env.DB.prepare('INSERT INTO mutation_guard (ok) SELECT CASE WHEN (SELECT updated_at FROM entries WHERE id = ?) IS ? THEN 1 ELSE 0 END').bind(
+            id,
+            version,
+          ),
+        );
+      for (const [id, version] of Object.entries(undo.expectedSeries || {}))
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO mutation_guard (ok) SELECT CASE WHEN (SELECT json_array(leaf_id, name, rep, day) FROM series WHERE id = ?) IS ? THEN 1 ELSE 0 END',
+          ).bind(id, version),
+        );
+    } else if (!force) {
       let later = 0;
       for (const c of chunks(ids))
-        later += (
-          await env.DB.prepare(`SELECT count(*) AS n FROM entries WHERE id IN (${c.map(() => '?').join(',')}) AND updated_at > ?`)
-            .bind(...c, row.ts + 2000)
-            .first<{ n: number }>()
-        )?.n || 0;
+        later +=
+          (
+            await env.DB.prepare(`SELECT count(*) AS n FROM entries WHERE id IN (${c.map(() => '?').join(',')}) AND updated_at > ?`)
+              .bind(...c, row.ts + 2000)
+              .first<{ n: number }>()
+          )?.n || 0;
       if (later) throw new HttpError(409, `${later} érintett tételt azóta újra módosítottak – a visszavonás felülírja ezeket a későbbi módosításokat.`);
     }
     // az akkor létrehozott tételek a kukába kerülnek
     for (const id of undo.created) {
       stmts.push(
-        env.DB.prepare(`INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries WHERE id = ?`).bind(t, u.id, id),
+        env.DB.prepare(`INSERT INTO deleted_entries (${ENTRY_COLS}, deleted_at, deleted_by) SELECT ${ENTRY_COLS}, ?, ? FROM entries WHERE id = ?`).bind(
+          t,
+          u.id,
+          id,
+        ),
         env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(id),
       );
     }
     // a korábbi állapot vissza; az akkor törölt tételek kukás másolata kikerül
     stmts.push(...(await upsertStmts(env, 'series', undo.seriesBefore)));
-    stmts.push(...(await upsertStmts(env, 'entries', undo.before.map((r) => ({ ...r, updated_at: t, updated_by: u.id })))));
-    for (const r of undo.before) stmts.push(env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_at >= ? AND deleted_at <= ?').bind(r.id, row.ts - 60_000, row.ts + 60_000));
-    for (const id of undo.seriesCreated) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ? AND NOT EXISTS (SELECT 1 FROM entries WHERE series_id = ?)').bind(id, id));
+    stmts.push(
+      ...(await upsertStmts(
+        env,
+        'entries',
+        undo.before.map((r) => ({ ...r, updated_at: t, updated_by: u.id })),
+      )),
+    );
+    for (const r of undo.before)
+      stmts.push(
+        env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_at >= ? AND deleted_at <= ?').bind(r.id, row.ts - 60_000, row.ts + 60_000),
+      );
+    for (const id of undo.seriesCreated)
+      stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ? AND NOT EXISTS (SELECT 1 FROM entries WHERE series_id = ?)').bind(id, id));
   } else if (undo.type === 'leaf.merge') {
     const { from, moved } = undo;
     const back = (table: string, col: string, ids: (string | number)[]) =>
@@ -153,9 +205,18 @@ async function undoChange(env: Env, row: { id: number; ts: number; undo: string 
     const allowed = ['label', 'archived', 'group_id', 'pay_rule', 'pay_days'];
     const keys = Object.keys(undo.before).filter((k) => allowed.includes(k));
     if (keys.length)
-      stmts.push(env.DB.prepare(`UPDATE leaves SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).bind(...keys.map((k) => undo.before[k] ?? null), undo.id));
+      stmts.push(
+        env.DB.prepare(`UPDATE leaves SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).bind(...keys.map((k) => undo.before[k] ?? null), undo.id),
+      );
   }
-  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
+  try {
+    await env.DB.batch(stmts);
+  } catch (e: any) {
+    if (String(e?.message).includes('entry_version_conflict'))
+      throw new HttpError(409, 'Az érintett adatokat azóta módosították. A visszavonás felülírná ezeket a változásokat.');
+    throw e;
+  }
   return undo.type;
 }
 

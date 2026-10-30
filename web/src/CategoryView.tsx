@@ -1,3 +1,4 @@
+import { parseWholeForint } from '../../shared/amount';
 // Kategória (csoport) nézet: tervezett sorozatok havi rácsban + a szűrt időszak tényei.
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
@@ -6,7 +7,22 @@ import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
 import { itemLabel } from './MonthList';
-import { REP, planActual, planNameOf, repStep, ruleOf, dateIn, deleteEntries, extendRows, genSeries, markDone, rowKey, shiftEntries, signed, uid } from './logic';
+import {
+  REP,
+  planActual,
+  planNameOf,
+  repStep,
+  ruleOf,
+  dateIn,
+  deleteEntries,
+  extendRows,
+  genSeries,
+  markDone,
+  rowKey,
+  shiftEntries,
+  signed,
+  uid,
+} from './logic';
 import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { RejectedOffers } from './RejectedOffers';
@@ -52,8 +68,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   // a kategória utolsó tervezett hónapjáig látszik (pl. 2027. decemberig tervezett tétel), legfeljebb 24 hónap –
   // a múltbeli hónapok is látszanak (terv vs. tény), lapozni a fejléc nyilaival lehet
   // az Ajánlatok oldalon minden nyitott ajánlat látszik, akkor is, ha egy másik mappában (pl. Projektek) lévő partner tétele
-  const inView = (e: Entry) =>
-    leafIds.has(e.leaf_id) || (offerGroup && e.kind === 'plan' && !!e.tentative && !e.done && ix.sectionOf(e.leaf_id) === section);
+  const inView = (e: Entry) => leafIds.has(e.leaf_id) || (offerGroup && e.kind === 'plan' && !!e.tentative && !e.done && ix.sectionOf(e.leaf_id) === section);
   const lastPlanYm = data.entries.reduce((a, e) => (e.kind === 'plan' && !e.done && inView(e) && ymOf(e.date) > a ? ymOf(e.date) : a), filters.to);
   const allMonths = monthRange(filters.from, lastPlanYm);
   const months = allMonths.slice(0, 24);
@@ -109,8 +124,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const clear = () => setSel({});
 
   const qaSave = async () => {
-    const amt = parseInt(String(qa.amount).replace(/\D/g, '')) || 0;
-    if (!amt) return showToast({ msg: 'Add meg az összeget.', error: true });
+    const amt = parseWholeForint(qa.amount) || 0;
+    if (!amt) return showToast({ msg: 'Pozitív egész forintösszeget adj meg, tizedesjel nélkül.', error: true });
     let leaf = qaLeaf;
     let payRule: string | null = null;
     if (leaf === NEW) {
@@ -130,7 +145,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     } else payRule = ruleOf(ix, leaf);
     const name = qa.name.trim() || ix.leafById[leaf]?.label || qa.newLeaf.trim();
     const b = genSeries({ leaf, section, name, amount: amt, startYm: qa.m, count: qa.count, rep: qa.rep, day: 10, payRule, tentative: offerGroup });
-    commit(b, `${b.upsert!.length} tétel felvéve: ${name}`);
+    if (!(await commit(b, `${b.upsert!.length} tétel felvéve: ${name}`))) return;
     setQa({ ...qa, name: '', amount: '', leaf, newLeaf: '' });
   };
 
@@ -462,6 +477,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                             ...src,
                             name: planNameOf(src.name),
                             id: uid('e'),
+                            updated_at: undefined,
                             date: dateIn(m, Number(src.date.slice(8))),
                             done: 0,
                             link_id: null,
@@ -1246,7 +1262,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
 /** Lebegő sáv: a kijelölt tétel(ek) új összege – beírás + Enter. */
 function SelAmount({ onSave }: { onSave: (v: number) => void }) {
   const [v, setV] = useState('');
-  const n = parseInt(v.replace(/\D/g, '')) || 0;
+  const n = parseWholeForint(v) || 0;
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ ...eyebrow, color: C.muted2, margin: '0 0 0 6px' }}>Összeg</span>

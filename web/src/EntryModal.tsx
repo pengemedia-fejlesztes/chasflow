@@ -1,5 +1,6 @@
 // Új tétel / sorozat szerkesztése (asztali nézet).
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { parseWholeForint } from '../../shared/amount';
 import { addMonths, fmt, monthLabel, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { REP, repStep, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } from './logic';
@@ -14,8 +15,12 @@ export interface EditTarget {
 
 export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit?: EditTarget | null; onClose: () => void }) {
   const { ix, data, commit } = useStore();
-  const rowEntries = useMemo(() => (edit ? data.entries.filter((e) => e.kind === 'plan' && rowKey(e) === edit.key) : []), [edit, data.entries]);
-  const series = edit ? data.series.find((s) => s.id === rowEntries[0]?.series_id) : undefined;
+  const [snapshot] = useState(data);
+  const rowEntries = useMemo(() => (edit ? snapshot.entries.filter((e) => e.kind === 'plan' && rowKey(e) === edit.key) : []), [edit, snapshot]);
+  const series = edit ? snapshot.series.find((s) => s.id === rowEntries[0]?.series_id) : undefined;
+  const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  const [error, setError] = useState('');
   const first = rowEntries.find((e) => !e.done) || rowEntries[0];
   const initLeaf = edit ? first?.leaf_id : leaf || null;
   const [f, setF] = useState(() => ({
@@ -30,53 +35,88 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
     tentative: !!first?.tentative,
     date: data.today,
   }));
+  const initialForm = useRef(JSON.stringify(f));
   // új tételnél a kezdő dátum (év–hónap–nap)
   const startDate = f.date;
   const set = (p: Partial<typeof f>) => setF((x) => ({ ...x, ...p }));
-  const amt = parseInt(String(f.amount).replace(/\D/g, '')) || 0;
+  const parsedAmount = parseWholeForint(f.amount);
+  const amt = parsedAmount || 0;
   const step = repStep(f.rep);
   const n = f.rep === 'once' ? 1 : Math.ceil(Math.min(f.count, 36) / step);
   const L = f.leaf ? ix.leafById[f.leaf] : null;
 
-  const save = () => {
-    if (!amt) return alert('Adj meg összeget.');
-    if (!f.leaf) return alert('Válassz kategóriát.');
-    const name = f.name.trim() || L?.label || '';
-    const day = Math.min(31, Math.max(1, parseInt(f.day) || 1));
-    if (edit) {
-      const open = rowEntries.filter((e) => !e.done);
-      const upsert: Entry[] = open.map((e) => ({
-        ...e,
-        name,
-        leaf_id: f.leaf!,
-        amount: signed(f.type, amt),
-        date: dateIn(ymOf(e.date), day),
-        tentative: f.tentative ? 1 : 0,
-      }));
-      rowEntries.filter((e) => e.done).forEach((e) => upsert.push({ ...e, name, leaf_id: f.leaf! }));
-      commit({ upsert, series: series ? [{ ...series, name, leaf_id: f.leaf!, day }] : [] }, `Frissítve: ${name} (${open.length} nyitott tétel)`);
-    } else {
-      const b = genSeries({
-        leaf: f.leaf,
-        section: f.type,
-        name,
-        amount: amt,
-        startYm: ymOf(startDate),
-        count: f.count,
-        rep: f.rep,
-        day: Number(startDate.slice(8)),
-        tentative: f.tentative,
-        payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
-      });
-      commit(b, `${b.upsert!.length} tétel felvéve → ${L?.label}`);
+  const save = async () => {
+    if (saving.current) return;
+    setError('');
+    if (parsedAmount === null) return setError('Egész forintösszeget adj meg, tizedesjel és előjel nélkül.');
+    if (!amt) return setError('Adj meg összeget.');
+    if (!f.leaf) return setError('Válassz kategóriát.');
+    saving.current = true;
+    setBusy(true);
+    let ok = false;
+    try {
+      const name = f.name.trim() || L?.label || '';
+      const day = Math.min(31, Math.max(1, parseInt(f.day) || 1));
+      if (edit) {
+        const open = rowEntries.filter((e) => !e.done);
+        const upsert: Entry[] = open.map((e) => ({
+          ...e,
+          name,
+          leaf_id: f.leaf!,
+          amount: signed(f.type, amt),
+          date: dateIn(ymOf(e.date), day),
+          tentative: f.tentative ? 1 : 0,
+        }));
+        rowEntries.filter((e) => e.done).forEach((e) => upsert.push({ ...e, name, leaf_id: f.leaf! }));
+        ok = await commit(
+          {
+            upsert,
+            series: series ? [{ ...series, name, leaf_id: f.leaf!, day }] : [],
+            expectedSeries: series ? { [series.id]: JSON.stringify([series.leaf_id, series.name, series.rep, series.day]) } : {},
+          },
+          `Frissítve: ${name} (${open.length} nyitott tétel)`,
+        );
+      } else {
+        const b = genSeries({
+          leaf: f.leaf,
+          section: f.type,
+          name,
+          amount: amt,
+          startYm: ymOf(startDate),
+          count: f.count,
+          rep: f.rep,
+          day: Number(startDate.slice(8)),
+          tentative: f.tentative,
+          payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
+        });
+        ok = await commit(b, `${b.upsert!.length} tétel felvéve → ${L?.label}`);
+      }
+      if (ok) onClose();
+      else setError('A mentés nem sikerült. A bevitt adatok megmaradtak. Ütközés esetén nyisd újra a szerkesztőt a friss adatokkal.');
+    } finally {
+      saving.current = false;
+      setBusy(false);
     }
-    onClose();
   };
 
-  const del = () => {
+  const del = async () => {
     if (!confirm('Törlöd a sorozat összes nyitott tételét?')) return;
-    commit({ delete: rowEntries.filter((e) => !e.done).map((e) => e.id) }, 'Sorozat nyitott tételei törölve');
-    onClose();
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    try {
+      if (
+        await commit(
+          { delete: rowEntries.filter((e) => !e.done).map((e) => e.id), expected: Object.fromEntries(rowEntries.map((e) => [e.id, e.updated_at ?? null])) },
+          'Sorozat nyitott tételei törölve',
+        )
+      )
+        onClose();
+      else setError('A törlés nem sikerült. Az ablak nyitva maradt.');
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
   };
 
   const summary = edit
@@ -86,8 +126,16 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
       : 'Válassz kategóriát — Enter menti.';
 
   return (
-    <Modal onClose={onClose}>
-      <div
+    <Modal
+      onClose={() => {
+        if (!saving.current && (JSON.stringify(f) === initialForm.current || confirm('Elveted a nem mentett módosításokat?'))) onClose();
+      }}
+      label={edit ? 'Tétel szerkesztése' : 'Új tétel'}
+    >
+      <fieldset
+        disabled={busy}
+        aria-busy={busy}
+        style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
             e.preventDefault();
@@ -125,8 +173,10 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
               <input
                 autoFocus
                 inputMode="numeric"
-                value={amt ? fmt(amt) : f.amount}
-                onChange={(e) => set({ amount: e.target.value.replace(/\D/g, '') })}
+                value={f.amount}
+                onChange={(e) => set({ amount: e.target.value })}
+                aria-label="Összeg forintban"
+                aria-invalid={parsedAmount === null && f.amount !== ''}
                 placeholder="0"
                 style={{
                   flex: 1,
@@ -242,16 +292,28 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
         >
           <span style={{ flex: 1, minWidth: 200, font: `500 13px/1.4 ${FONT}`, color: C.muted }}>{summary}</span>
           {edit && (
-            <Pill kind="danger" onClick={del}>
+            <Pill kind="danger" disabled={busy} onClick={del}>
               Törlés
             </Pill>
           )}
-          <Pill onClick={onClose}>Mégse</Pill>
-          <Pill kind="primary" onClick={save}>
-            Mentés ↵
+          <Pill
+            disabled={busy}
+            onClick={() => {
+              if (JSON.stringify(f) === initialForm.current || confirm('Elveted a nem mentett módosításokat?')) onClose();
+            }}
+          >
+            Mégse
+          </Pill>
+          {error && (
+            <span role="alert" style={{ color: C.neg }}>
+              {error}
+            </span>
+          )}
+          <Pill kind="primary" disabled={busy} onClick={save}>
+            {busy ? 'Mentés…' : 'Mentés ↵'}
           </Pill>
         </div>
-      </div>
+      </fieldset>
     </Modal>
   );
 }

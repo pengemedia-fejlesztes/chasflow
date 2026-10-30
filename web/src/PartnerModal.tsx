@@ -1,3 +1,4 @@
+import { parseWholeForint } from '../../shared/amount';
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
@@ -34,7 +35,7 @@ const monthRangeOf = (a: string, b: string) => {
   return out;
 };
 const dot = (d: string) => d.replace(/-/g, '. ') + '.';
-const num = (s: string) => parseInt(String(s).replace(/\D/g, '')) || 0;
+const num = (s: string) => parseWholeForint(s) || 0;
 
 interface Item {
   key: string;
@@ -217,7 +218,11 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                     today={data.today}
                     cur={ix.cur}
                     onCancel={() => setOpen(null)}
-                    onSave={(b, msg) => commit(b, msg).then(() => setOpen(null))}
+                    onSave={(b, msg) =>
+                      commit(b, msg).then((ok) => {
+                        if (ok) setOpen(null);
+                      })
+                    }
                   />
                 ) : (
                   <button
@@ -276,7 +281,9 @@ function ClosedItems({ leaf, focusKey, keyOf }: { leaf: string; focusKey: string
   const [show, setShow] = useState(!!focusKey);
   const from = addMonths(ix.cur, -12) + '-01';
   const links = planLinks(data.entries, (e) => e.leaf_id === leaf && e.date >= from).sort(
-    (a, b) => Number(focusKey !== null && keyOf(b.plan) === focusKey) - Number(focusKey !== null && keyOf(a.plan) === focusKey) || b.plan.date.localeCompare(a.plan.date),
+    (a, b) =>
+      Number(focusKey !== null && keyOf(b.plan) === focusKey) - Number(focusKey !== null && keyOf(a.plan) === focusKey) ||
+      b.plan.date.localeCompare(a.plan.date),
   );
   if (!links.length) return null;
   const sum = links.reduce((a, l) => a + (l.diff || 0), 0);
@@ -285,7 +292,17 @@ function ClosedItems({ leaf, focusKey, keyOf }: { leaf: string; focusKey: string
     <div style={{ marginTop: 12, border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
       <button
         onClick={() => setShow(!show)}
-        style={{ width: '100%', border: 0, background: '#fff', padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', textAlign: 'left' }}
+        style={{
+          width: '100%',
+          border: 0,
+          background: '#fff',
+          padding: '12px 16px',
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+          cursor: 'pointer',
+          textAlign: 'left',
+        }}
       >
         <span style={{ color: C.muted }}>{show ? '▾' : '▸'}</span>
         <b style={{ flex: 1, font: `700 14px ${FONT}`, color: C.navy }}>Lezárt tételek – terv és tény ({links.length})</b>
@@ -665,7 +682,9 @@ function ItemRow({
               kind="danger"
               small
               onClick={() =>
-                confirm(`Törlöd: ${it.name} – ${editable.length} nyitott tétel?${it.tentative ? '\n\n(Sima törlés: nem számít elutasításnak. Ha az ügyfél nemet mondott, az „Elutasítva” gombot használd.)' : ''}`) && onSave({ delete: editable.map((e) => e.id) }, `${it.name}: törölve`)
+                confirm(
+                  `Törlöd: ${it.name} – ${editable.length} nyitott tétel?${it.tentative ? '\n\n(Sima törlés: nem számít elutasításnak. Ha az ügyfél nemet mondott, az „Elutasítva” gombot használd.)' : ''}`,
+                ) && onSave({ delete: editable.map((e) => e.id) }, `${it.name}: törölve`)
               }
             >
               Törlés
@@ -709,7 +728,9 @@ function NewItem({
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [rep, setRep] = useState<Mode>(initYm ? 'once' : 'monthly');
-  const [date, setDate] = useState(() => (initYm ? `${initYm}-${String(Math.min(28, Number(addDays(today, oneoffDays).slice(8)))).padStart(2, '0')}` : addDays(today, oneoffDays)));
+  const [date, setDate] = useState(() =>
+    initYm ? `${initYm}-${String(Math.min(28, Number(addDays(today, oneoffDays).slice(8)))).padStart(2, '0')}` : addDays(today, oneoffDays),
+  );
   const [parts, setParts] = useState<Parts>(() => halves(0, addDays(today, oneoffDays)));
   const [startYm, setStartYm] = useState(initYm || addMonths(cur, 1));
   const [count, setCount] = useState(12);
@@ -950,7 +971,9 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
   // kimaradt hónap (se terv, se befizetés) az első felvett hónaptól a mai hónapig
   const got = new Set(rows.map(periodOf));
   const gaps = periodOf(rows[0]) < cur ? monthRangeOf(periodOf(rows[0]), cur).filter((m) => !got.has(m)) : [];
-  const list: { ym: string; e?: Entry }[] = [...rows.map((e) => ({ ym: periodOf(e), e })), ...gaps.map((ym) => ({ ym }))].sort((a, b) => a.ym.localeCompare(b.ym));
+  const list: { ym: string; e?: Entry }[] = [...rows.map((e) => ({ ym: periodOf(e), e })), ...gaps.map((ym) => ({ ym }))].sort((a, b) =>
+    a.ym.localeCompare(b.ym),
+  );
   // a terv nélküli tényhez tartozó Billingo-számla: azonos összeg, a fizetés ±10 napon belül
   const docOfActual = (e: Entry) =>
     data.billingo.find((d) => !d.plan_id && d.gross === e.amount && d.paid_date && Math.abs(Date.parse(d.paid_date) - Date.parse(e.date)) <= 10 * 86400_000);
@@ -980,7 +1003,15 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
               key={'gap' + ym}
               {...pick(ym)}
               title={`${monthName(ym)}: nincs felvéve se terv, se befizetés – kattints, és felveheted`}
-              style={{ cursor: onPick ? 'pointer' : undefined, borderRadius: 999, padding: '2px 8px', background: C.negBg, color: C.neg, font: `600 11px ${FONT}`, whiteSpace: 'nowrap' }}
+              style={{
+                cursor: onPick ? 'pointer' : undefined,
+                borderRadius: 999,
+                padding: '2px 8px',
+                background: C.negBg,
+                color: C.neg,
+                font: `600 11px ${FONT}`,
+                whiteSpace: 'nowrap',
+              }}
             >
               {monthLabel(ym)} · nincs felvéve
             </span>
@@ -1002,7 +1033,15 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
             key={e.id}
             {...pick(periodOf(e))}
             title={`${monthName(periodOf(e))} · fizetés ${dot(e.date)} · ${fmt(Math.abs(e.amount))} Ft${doc ? ` · számla ${doc.number || ''}` : nav ? ` · NAV-számla ${nav.invoice_number}` : ''}`}
-            style={{ cursor: onPick ? 'pointer' : undefined, borderRadius: 999, padding: '2px 8px', background: bg, color: fg, font: `600 11px ${FONT}`, whiteSpace: 'nowrap' }}
+            style={{
+              cursor: onPick ? 'pointer' : undefined,
+              borderRadius: 999,
+              padding: '2px 8px',
+              background: bg,
+              color: fg,
+              font: `600 11px ${FONT}`,
+              whiteSpace: 'nowrap',
+            }}
           >
             {monthLabel(periodOf(e))}
             {doc?.number || nav?.invoice_number ? ` · ${short(doc?.number || nav?.invoice_number)}` : ''} · {txt}
@@ -1130,7 +1169,17 @@ function MonthList({
             <div
               key={'gap' + e.gap}
               data-ym={e.gap}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, background: '#FFF7F6', ...hl(e.gap) }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                padding: '8px 12px',
+                borderTop: `1px solid ${C.line3}`,
+                font: `500 13px ${FONT}`,
+                background: '#FFF7F6',
+                ...hl(e.gap),
+              }}
             >
               {title(e.gap)}
               <span style={{ flex: 1, minWidth: 150, color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
@@ -1148,7 +1197,17 @@ function MonthList({
             <div
               key={e.id}
               data-ym={periodOf(e)}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 12px', borderTop: `1px solid ${C.line3}`, font: `500 13px ${FONT}`, background: '#F6FBF8', ...hl(periodOf(e)) }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                padding: '8px 12px',
+                borderTop: `1px solid ${C.line3}`,
+                font: `500 13px ${FONT}`,
+                background: '#F6FBF8',
+                ...hl(periodOf(e)),
+              }}
             >
               {title(periodOf(e))}
               <span style={{ color: C.muted, minWidth: 150 }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
@@ -1193,7 +1252,15 @@ function MonthList({
                   type="button"
                   title="Fizetési határidő módosítása"
                   onClick={() => setDating(e)}
-                  style={{ border: 0, background: 'transparent', padding: 0, font: 'inherit', color: C.blueDark, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                  style={{
+                    border: 0,
+                    background: 'transparent',
+                    padding: 0,
+                    font: 'inherit',
+                    color: C.blueDark,
+                    cursor: 'pointer',
+                    textDecoration: 'underline dotted',
+                  }}
                 >
                   fizetés {dot(e.date)} ✎
                 </button>
@@ -1203,7 +1270,10 @@ function MonthList({
               {shifted ? ' · később számlázva' : ''}
             </span>
             {canEdit && !doc ? (
-              <MonthAmount e={e} onSave={(v) => onApply({ upsert: [{ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }] }, `${it.name} – ${monthName(p)}: ${fmt(v)} Ft`)} />
+              <MonthAmount
+                e={e}
+                onSave={(v) => onApply({ upsert: [{ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }] }, `${it.name} – ${monthName(p)}: ${fmt(v)} Ft`)}
+              />
             ) : (
               <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(e.amount))} Ft</span>
             )}
@@ -1307,7 +1377,6 @@ function MonthAmount({ e, onSave }: { e: Entry; onSave: (v: number) => void }) {
 }
 
 function AmountInput({ value, onChange, onNet }: { value: string; onChange: (v: string) => void; onNet?: (gross: string) => void }) {
-  const n = num(value);
   return (
     <span
       style={{
@@ -1324,8 +1393,10 @@ function AmountInput({ value, onChange, onNet }: { value: string; onChange: (v: 
     >
       <input
         inputMode="numeric"
-        value={n ? fmt(n) : ''}
-        onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))}
+        value={value}
+        aria-invalid={!!value && parseWholeForint(value) === null}
+        aria-label="Összeg egész forintban"
+        onChange={(e) => onChange(e.target.value)}
         placeholder="0"
         style={{
           flex: 1,

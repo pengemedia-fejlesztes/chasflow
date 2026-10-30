@@ -144,6 +144,7 @@ export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch
       add.push({
         ...last,
         id: uid('e'),
+        updated_at: undefined,
         date: shiftDate(last.date, i * step),
         done: 0,
         link_id: null,

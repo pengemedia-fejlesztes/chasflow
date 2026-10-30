@@ -28,5 +28,5 @@ export default defineConfig({
   },
   build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
   server: { proxy: { '/api': 'http://127.0.0.1:8787' } },
-  test: { root: '.', include: ['tests/**/*.test.ts'] },
+  test: { root: '.', include: ['tests/**/*.test.{ts,tsx}'] },
 } as any);

@@ -1,5 +1,7 @@
 // Design tokenek (a 360 Marketing Cashflow designból) és apró közös komponensek.
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { parseWholeForint } from '../../shared/amount';
 import { displayGroup } from '../../shared/categories';
 import { fmt, type Index } from '../../shared/model';
 import { VAT_RATE } from '../../shared/vat';
@@ -186,38 +188,65 @@ export function ToastView(props: { msg: string; undo?: () => void; error?: boole
   );
 }
 
-export function Modal(props: { onClose: () => void; children: ReactNode; width?: number; title?: ReactNode }) {
-  return (
-    <div
-      onClick={props.onClose}
+export function Modal(props: { onClose: () => void; children: ReactNode; width?: number; title?: ReactNode; label?: string }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const close = useRef(props.onClose);
+  close.current = props.onClose;
+  useEffect(() => {
+    const dialog = ref.current!;
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return createPortal(
+    <dialog
+      ref={ref}
+      aria-modal="true"
+      aria-labelledby={props.title ? titleId : undefined}
+      aria-label={props.title ? undefined : props.label || 'Szerkesztőablak'}
+      onCancel={(e) => {
+        e.preventDefault();
+        close.current();
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) close.current();
+      }}
       style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 60,
-        background: 'rgba(0,32,64,.45)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        padding: '7vh 16px',
-        overflow: 'auto',
+        border: 0,
+        padding: 0,
+        background: 'transparent',
+        color: 'inherit',
+        width: '100%',
+        maxWidth: '100%',
+        height: '100%',
+        maxHeight: '100%',
+        margin: 0,
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.key === 'Escape' && props.onClose()}
         style={{
           width: props.width || 640,
-          maxWidth: '100%',
+          maxWidth: 'calc(100% - 32px)',
+          margin: '7vh auto',
           background: '#fff',
           borderRadius: 20,
           boxShadow: '0 2px 4px rgba(0,32,64,.06),0 24px 48px rgba(0,32,64,.2)',
           overflow: 'hidden',
         }}
       >
-        {props.title && <div style={{ padding: '20px 24px 0', font: `700 18px ${FONT_H}`, color: C.navy }}>{props.title}</div>}
+        {props.title && (
+          <div id={titleId} style={{ padding: '20px 24px 0', font: `700 18px ${FONT_H}`, color: C.navy }}>
+            {props.title}
+          </div>
+        )}
         {props.children}
       </div>
-    </div>
+    </dialog>,
+    document.body,
   );
 }
 
@@ -329,7 +358,7 @@ export function SyncPill({
  * A program mindenhol bruttóval számol – a mező értéke mindig a bruttó. Ha bejelölés után átírod az összeget, a jelölő kikapcsol.
  */
 export function NetBox({ value, onChange, small }: { value: string | number; onChange: (gross: string) => void; small?: boolean }) {
-  const cur = Number(String(value).replace(/\D/g, '')) || 0;
+  const cur = parseWholeForint(value) || 0;
   const [st, setSt] = useState<{ net: number; gross: number } | null>(null);
   const on = !!st && st.gross === cur;
   const toggle = () => {
@@ -347,9 +376,23 @@ export function NetBox({ value, onChange, small }: { value: string | number; onC
       // a fókusz az összegmezőben marad (a kattintás nem ment előre a nettó összeggel)
       onMouseDown={(e) => e.preventDefault()}
       title="A beírt összeg nettó: a program hozzáadja a 27% ÁFÁ-t (mindenhol bruttóval számol)"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: cur ? 'pointer' : 'default', font: `600 ${small ? 11.5 : 12.5}px ${FONT}`, color: on ? C.blueDark : C.muted, whiteSpace: 'nowrap' }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        cursor: cur ? 'pointer' : 'default',
+        font: `600 ${small ? 11.5 : 12.5}px ${FONT}`,
+        color: on ? C.blueDark : C.muted,
+        whiteSpace: 'nowrap',
+      }}
     >
-      <input type="checkbox" checked={on} onChange={toggle} disabled={!cur && !on} style={{ width: small ? 14 : 16, height: small ? 14 : 16, cursor: 'inherit' }} />
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={toggle}
+        disabled={!cur && !on}
+        style={{ width: small ? 14 : 16, height: small ? 14 : 16, cursor: 'inherit' }}
+      />
       {on ? `nettó ${fmt(st!.net)} + ÁFA` : 'nettó'}
     </label>
   );

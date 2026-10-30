@@ -1,5 +1,6 @@
+import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
@@ -690,7 +691,15 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         </div>
       </div>
 
-      {sheet && <SheetView sheet={sheet} setSheet={setSheet} onSaved={(ym) => setM(ym)} onPartner={(leaf) => (setSheet(null), openPartner(leaf))} />}
+      {sheet && (
+        <SheetView
+          key={sheet.kind + ('id' in sheet ? sheet.id : '')}
+          sheet={sheet}
+          setSheet={setSheet}
+          onSaved={(ym) => setM(ym)}
+          onPartner={(leaf) => (setSheet(null), openPartner(leaf))}
+        />
+      )}
       {toast && <ToastView {...toast} mobile />}
     </div>
   );
@@ -764,9 +773,27 @@ function SheetView({
   onSaved: (ym: string) => void;
   onPartner: (leaf: string) => void;
 }) {
-  const { ix, data, commit } = useStore();
-  const close = () => setSheet(null);
+  const { ix, data, commit: storeCommit } = useStore();
+  const [snapshot] = useState(data);
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const commit = async (...args: Parameters<typeof storeCommit>) => {
+    if (saving.current) return false;
+    saving.current = true;
+    setBusy(true);
+    try {
+      return await storeCommit(...args);
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+  };
+  const close = () => {
+    if (!saving.current) setSheet(null);
+  };
   let body: React.ReactNode = null;
+  // Keep a readable pending state while the sheet awaits the server.
+  const pending = busy ? <span role="status">Mentés…</span> : null;
 
   if (sheet.kind === 'filters') {
     body = (
@@ -783,13 +810,13 @@ function SheetView({
   if (sheet.kind === 'new') {
     const f = sheet;
     const set = (p: Partial<typeof f>) => setSheet({ ...f, ...p });
-    const amt = parseInt(f.amount || '0');
+    const amt = parseWholeForint(f.amount) || 0;
     const step = repStep(f.rep);
     const n = f.rep === 'once' ? 1 : Math.ceil(f.count / step);
     const mode = f.type === 'in' ? f.mode || 'simple' : 'simple';
     // az „Ajánlatok” csoport ügyfelénél alapból ajánlat
     const offer = f.tentative ?? (!!f.leaf && /aj[aá]nlat/i.test(ix.groupById[ix.leafById[f.leaf]?.group_id]?.label || ''));
-    const num = (v?: string) => parseInt(v || '0') || 0;
+    const num = (v?: string) => parseWholeForint(v || '') || 0;
     const money = (v: string | undefined, on: (v: string) => void) => (
       <div
         style={{
@@ -804,8 +831,10 @@ function SheetView({
         }}
       >
         <input
-          value={num(v) ? fmt(num(v)) : ''}
-          onChange={(e) => on(e.target.value.replace(/\D/g, '').slice(0, 11))}
+          value={v || ''}
+          aria-invalid={!!v && parseWholeForint(v) === null}
+          aria-label="Összeg egész forintban"
+          onChange={(e) => on(e.target.value)}
           inputMode="numeric"
           placeholder="0"
           style={{ flex: 1, minWidth: 0, border: 0, outline: 0, font: `700 17px ${FONT_H}`, color: C.navy, background: 'transparent' }}
@@ -818,8 +847,11 @@ function SheetView({
     );
     const count =
       mode === 'setup' ? (num(f.setup) ? 1 : 0) + (num(f.monthly) ? f.months || 12 : 0) : mode === 'parts' ? (num(f.p1) ? 1 : 0) + (num(f.p2) ? 1 : 0) : n;
-    const ready = !!f.leaf && (mode === 'simple' ? !!amt : count > 0);
-    const saveComposite = () => {
+    const validAmounts = (mode === 'simple' ? [f.amount] : mode === 'setup' ? [f.setup, f.monthly] : [f.p1, f.p2]).every(
+      (v) => !v || parseWholeForint(v) !== null,
+    );
+    const ready = validAmounts && !!f.leaf && (mode === 'simple' ? !!amt : count > 0);
+    const saveComposite = async () => {
       if (!ready || !f.leaf) return;
       const base = f.name.trim() || ix.leafById[f.leaf].label;
       const parts: { name: string; amount: number; date: string; rep: Rep; count: number }[] = [];
@@ -847,7 +879,7 @@ function SheetView({
         batch.upsert.push(...(b.upsert || []));
         batch.series.push(...(b.series || []));
       }
-      commit(batch, `${batch.upsert.length} tétel${offer ? ' (ajánlat)' : ''} → ${ix.leafById[f.leaf].label}`);
+      if (!(await commit(batch, `${batch.upsert.length} tétel${offer ? ' (ajánlat)' : ''} → ${ix.leafById[f.leaf].label}`))) return;
       onSaved(ymOf(parts[0].date));
       close();
     };
@@ -932,9 +964,11 @@ function SheetView({
               inputMode="numeric"
               pattern="[0-9]*"
               enterKeyHint="done"
-              value={amt ? fmt(amt) : ''}
+              value={f.amount}
+              aria-invalid={!!f.amount && parseWholeForint(f.amount) === null}
+              aria-label="Összeg egész forintban"
               placeholder="0"
-              onChange={(ev) => set({ amount: ev.target.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 11) })}
+              onChange={(ev) => set({ amount: ev.target.value })}
               style={{
                 width: '100%',
                 maxWidth: 260,
@@ -1042,7 +1076,7 @@ function SheetView({
           </>
         )}
         <button
-          onClick={() => {
+          onClick={async () => {
             if (mode !== 'simple') return saveComposite();
             if (!amt || !f.leaf) return;
             const name = f.name.trim() || ix.leafById[f.leaf].label;
@@ -1058,7 +1092,7 @@ function SheetView({
               payRule: f.rep === 'once' ? null : ruleOf(ix, f.leaf),
               tentative: offer,
             });
-            commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`);
+            if (!(await commit(b, `${b.upsert!.length} tétel → ${ix.leafById[f.leaf].label}`))) return;
             onSaved(ymOf(f.date));
             close();
           }}
@@ -1071,10 +1105,10 @@ function SheetView({
   }
 
   if (sheet.kind === 'item') {
-    const e = data.entries.find((x) => x.id === sheet.id);
+    const e = snapshot.entries.find((x) => x.id === sheet.id);
     if (e) {
       const sign = sheet.section === 'in' ? 1 : -1;
-      const later = data.entries.filter((x) => e.series_id && x.series_id === e.series_id && x.date >= e.date && !x.done).map((x) => x.id);
+      const later = snapshot.entries.filter((x) => e.series_id && x.series_id === e.series_id && x.date >= e.date && !x.done).map((x) => x.id);
       const ids = sheet.all && later.length ? later : [e.id];
       const set = (p: Partial<typeof sheet>) => setSheet({ ...sheet, ...p });
       const series = data.series.find((s) => s.id === e.series_id);
@@ -1088,12 +1122,13 @@ function SheetView({
       const leafLabel = ix.leafById[sheet.leaf]?.label || '';
       const groupLabel = displayGroup(ix.groupById[ix.leafById[sheet.leaf]?.group_id]?.label || '');
       const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
-      const save = () => {
-        const v = parseInt(sheet.amount) || 0;
+      const save = async () => {
+        const v = parseWholeForint(sheet.amount);
+        if (v === null) return alert('Egész forintösszeget adj meg, tizedesjel és előjel nélkül.');
         const shift = dayDiff(e.date, sheet.date);
-        commit(
+        const ok = await commit(
           {
-            upsert: data.entries
+            upsert: snapshot.entries
               .filter((x) => ids.includes(x.id))
               .map((x) => ({
                 ...x,
@@ -1105,7 +1140,7 @@ function SheetView({
           },
           `${ids.length > 1 ? ids.length + ' tétel' : sheet.name || 'Tétel'} mentve · ${fmt(v)} Ft`,
         );
-        close();
+        if (ok) close();
       };
       body = (
         <>
@@ -1139,8 +1174,10 @@ function SheetView({
             }}
           >
             <input
-              value={sheet.amount ? fmt(parseInt(sheet.amount)) : ''}
-              onChange={(ev) => set({ amount: ev.target.value.replace(/\D/g, '').slice(0, 11) })}
+              value={sheet.amount}
+              aria-invalid={!!sheet.amount && parseWholeForint(sheet.amount) === null}
+              aria-label="Összeg egész forintban"
+              onChange={(ev) => set({ amount: ev.target.value })}
               inputMode="numeric"
               placeholder="0"
               style={{ flex: 1, minWidth: 0, height: 58, border: 0, outline: 0, background: 'transparent', font: `800 26px ${FONT_H}`, color: C.navy }}
@@ -1244,9 +1281,8 @@ function SheetView({
             </label>
           )}
           <button
-            onClick={() => {
-              commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓');
-              close();
+            onClick={async () => {
+              if (await commit(markDone(snapshot, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓')) close();
             }}
             style={{
               height: 50,
@@ -1262,9 +1298,17 @@ function SheetView({
           </button>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
             <button
-              onClick={() => {
-                commit(deleteEntries(data, ids), `${ids.length} tétel törölve`);
-                close();
+              onClick={async () => {
+                if (
+                  await commit(
+                    {
+                      ...deleteEntries(snapshot, ids),
+                      expected: Object.fromEntries(snapshot.entries.filter((x) => ids.includes(x.id)).map((x) => [x.id, x.updated_at ?? null])),
+                    },
+                    `${ids.length} tétel törölve`,
+                  )
+                )
+                  close();
               }}
               style={{ height: 50, border: `1.5px solid ${C.line}`, borderRadius: 999, background: '#fff', font: `600 14px ${FONT}`, color: C.neg }}
             >
@@ -1476,6 +1520,7 @@ function SheetView({
             </button>
           </span>
         </div>
+        {pending}
         {body}
       </div>
     </div>
