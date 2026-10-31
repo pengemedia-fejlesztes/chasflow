@@ -359,7 +359,14 @@ function HeroKpi(p: { label: string; value: string; sub: string; color?: string;
       }}
     >
       <span style={{ ...eyebrow, fontSize: 10.5, color: p.boxed ? C.blueDark : C.muted }}>{p.label}</span>
-      <span style={{ font: `800 ${p.boxed ? 26 : 24}px/1.1 ${FONT_H}`, color: p.color || C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+      <span
+        style={{
+          font: `800 ${p.boxed ? 'clamp(20px,1.8vw,26px)' : 'clamp(19px,1.65vw,24px)'}/1.1 ${FONT_H}`,
+          color: p.color || C.navy,
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
+        }}
+      >
         {p.value}
       </span>
       {p.sub && <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{p.sub}</span>}
@@ -734,7 +741,7 @@ function Overview({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,330px)', gap: 14, alignItems: 'stretch' }}>
         <div style={{ ...card, minWidth: 0, padding: '18px 22px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12 }}>
             <HeroKpi label="Ma · bankban" value={fmt(ix.anchor)} sub="" />
             <HeroKpi
               boxed
