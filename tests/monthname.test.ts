@@ -18,3 +18,11 @@ describe('havidíj név a hónappal', () => {
     expect(baseName('Havi díj')).toBe('Havi díj');
   });
 });
+
+describe('minden ismétlődő tétel a hónappal', () => {
+  it('munkabér sorozatban: a hónap a névbe kerül; egyszeri tétel nem', () => {
+    expect(withMonth('Munkabér', '2026-10', true)).toBe('Munkabér – 2026. október');
+    expect(withMonth('Munkabér', '2026-10')).toBe('Munkabér');
+    expect(withMonth('ÁFA – 2026. október', '2026-11', true)).toBe('ÁFA – 2026. október');
+  });
+});

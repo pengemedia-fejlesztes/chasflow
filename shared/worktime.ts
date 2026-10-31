@@ -1,6 +1,7 @@
 // Munkaidő-import (Clockify-szerű havi XLS) és a fedezeti pont számítása.
 // Az XLS lapjai: „YYYY.MM-Feladatok” (Tag · Projekt · Description · Idő) – ebből a ledolgozott idő hónap × projekt × feladat.
 import { namesMatch } from './billingopay';
+import { partnerIdOf } from './partners';
 import type { Entry, Group, Leaf } from './types';
 
 export interface WorkRow {
@@ -8,6 +9,8 @@ export interface WorkRow {
   project: string;
   tag: string;
   minutes: number;
+  /** a sor összege euróban (Feladatok lap „Összeg (EUR)” oszlop) – ennek arányában oszlik meg a munkaköltség */
+  eur?: number;
 }
 
 export interface Employee {
@@ -63,15 +66,20 @@ export function parseWorkSheets(sheets: Record<string, unknown[][]>): WorkRow[] 
     const hours = head.findIndex((h) => isTime(h) && (h.includes('óra') || h.includes('hour') || h.includes('decimal')));
     const di = hm >= 0 ? hm : hours >= 0 ? hours : head.findIndex(isTime);
     const decimalHours = hm < 0 && di === hours;
+    const ei = head.findIndex((h) => (h.startsWith('összeg') || h.startsWith('osszeg') || h.startsWith('amount')) && h.includes('eur'));
     if (pi < 0 || di < 0) continue;
     for (const r of rows.slice(1)) {
       const project = String(r[pi] ?? '').trim();
       const minutes = decimalHours ? Math.round((parseFloat(String(r[di] ?? '').replace(',', '.')) || 0) * 60) : cellMinutes(r[di]);
       if (!project || minutes <= 0) continue;
       const tag = ti >= 0 ? String(r[ti] ?? '').trim() : '';
+      // az összesítő sor („Munkaidő összesen”) nem projekt – különben a bontás duplán számítana
+      if (/(^|\s)(összesen|osszesen|total|sum)\b/i.test(project) || /(^|\s)(összesen|osszesen|total)\b/i.test(tag)) continue;
+      const eur = ei >= 0 ? parseFloat(String(r[ei] ?? '').replace(',', '.')) || 0 : 0;
       const k = `${ym}|${project}|${tag}`;
-      const x = acc.get(k) || { ym, project, tag, minutes: 0 };
+      const x: WorkRow = acc.get(k) || { ym, project, tag, minutes: 0, ...(ei >= 0 ? { eur: 0 } : {}) };
       x.minutes += minutes;
+      if (ei >= 0) x.eur = Math.round(((x.eur || 0) + eur) * 100) / 100;
       acc.set(k, x);
     }
   }
@@ -85,7 +93,11 @@ export const isInternalProject = (p: string) => /^(360\b|without project|egyéb|
 export function projectLeaf(project: string, incomeLeaves: Leaf[], aliases: Map<string, string[]>): string | null {
   if (isInternalProject(project)) return null;
   // „MrBIG” = „Mr. Big”: írásjel, szóköz, ékezet és kis/nagybetű nélkül is egyezik
-  const compact = (x: string) => x.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+  const compact = (x: string) =>
+    x
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[^a-z0-9]/g, '');
   const pc = compact(project);
   const same = (a: string) => namesMatch(project, a) || (pc.length >= 3 && compact(a) === pc);
   const hit = incomeLeaves.find((l) => same(l.label) || (aliases.get(l.id) || []).some(same));
@@ -145,7 +157,8 @@ export function breakeven(o: {
     const acts = o.entries.filter((e) => e.kind === 'actual' && e.date.startsWith(ym));
     const revenue = acts.filter((e) => sectionOf.get(e.leaf_id) === 'in').reduce((a, e) => a + e.amount, 0);
     const expenses = -acts.filter((e) => sectionOf.get(e.leaf_id) === 'out').reduce((a, e) => a + e.amount, 0);
-    const wt = o.worktime.filter((w) => w.ym === ym);
+    // a régebben importált összesítő sor („Munkaidő összesen”) kimarad
+    const wt = o.worktime.filter((w) => w.ym === ym && !/(^|\s)(összesen|osszesen|total)\b/i.test(w.project));
     const projects = new Map<string, ProjectMonth>();
     const people: BreakevenMonth['people'] = [];
     let laborTotal = 0,
@@ -157,12 +170,15 @@ export function breakeven(o: {
       const mins = rows.reduce((a, w) => a + w.minutes, 0);
       const cost = emp.cost_leaf_id ? -acts.filter((e) => e.leaf_id === emp.cost_leaf_id).reduce((a, e) => a + e.amount, 0) : 0;
       if (!mins && !cost) continue;
-      const perMin = mins ? cost / mins : 0;
+      // a költség megosztása: az elszámolás euró-összege (Feladatok „Összeg (EUR)” oszlop) arányában; ha nincs, az idő arányában
+      const eurTotal = rows.reduce((a, w) => a + (w.eur || 0), 0);
+      const share = (w: WorktimeRow) => (eurTotal > 0 ? ((w.eur || 0) / eurTotal) * cost : mins ? (w.minutes / mins) * cost : 0);
       let bill = 0;
       for (const w of rows) {
         const leaf = leafOf(w.project);
-        // egy partner = egy sor: a partnerhez (név vagy alternatív név szerint) tartozó projektek összevonva
-        const pk = leaf ? 'leaf:' + leaf : w.project;
+        // egy partner = egy sor: a partnerhez (név vagy alternatív név szerint) tartozó projektek összevonva – akkor is, ha a
+        // partner több mappában szerepel (pl. Ajánlatok és Projektek alatt is „Orvosmost”)
+        const pk = leaf ? 'p:' + partnerIdOf(o.leaves.find((l) => l.id === leaf)?.label || leaf) : w.project;
         const p = projects.get(pk) || {
           project: leaf ? o.leaves.find((l) => l.id === leaf)?.label || w.project : w.project,
           names: [],
@@ -173,11 +189,11 @@ export function breakeven(o: {
         };
         if (!p.names.includes(w.project)) p.names.push(w.project);
         p.minutes += w.minutes;
-        p.laborCost += w.minutes * perMin;
+        p.laborCost += share(w);
         projects.set(pk, p);
         if (leaf) {
           bill += w.minutes;
-          directLabor += w.minutes * perMin;
+          directLabor += share(w);
         }
       }
       laborTotal += cost;
@@ -186,20 +202,21 @@ export function breakeven(o: {
       people.push({ key: emp.key, name: emp.name, minutes: mins, billableMinutes: bill, cost, hourly: mins ? (cost / mins) * 60 : null });
     }
     // projektbevétel: a projekthez párosított partner bevételi tényei a hónapban (egy partnerhez több projekt is tartozhat)
-    const leafRevenue = new Map<string, number>();
-    for (const e of acts) if (sectionOf.get(e.leaf_id) === 'in') leafRevenue.set(e.leaf_id, (leafRevenue.get(e.leaf_id) || 0) + e.amount);
-    const seenLeaf = new Set<string>();
-    for (const p of projects.values())
-      if (p.leaf && !seenLeaf.has(p.leaf)) {
-        p.revenue = leafRevenue.get(p.leaf) || 0;
-        seenLeaf.add(p.leaf);
+    // partnerenként (a partner minden bevételi alkategóriája együtt)
+    const labelOf = (id: string) => o.leaves.find((l) => l.id === id)?.label || id;
+    const keyOfLeaf = (id: string) => 'p:' + partnerIdOf(labelOf(id));
+    const leafRevenue = new Map<string, { rev: number; leaf: string }>();
+    for (const e of acts)
+      if (sectionOf.get(e.leaf_id) === 'in') {
+        const k = keyOfLeaf(e.leaf_id);
+        const x = leafRevenue.get(k) || { rev: 0, leaf: e.leaf_id };
+        x.rev += e.amount;
+        leafRevenue.set(k, x);
       }
+    for (const [k, p] of projects) if (p.leaf) p.revenue = leafRevenue.get(k)?.rev || 0;
     // bevételes partner, akin ebben a hónapban senki nem dolgozott (a felvitt munkatársak közül)
-    for (const [leaf, rev] of leafRevenue)
-      if (!seenLeaf.has(leaf)) {
-        const label = o.leaves.find((l) => l.id === leaf)?.label || leaf;
-        projects.set('leaf:' + leaf, { project: label, names: [], leaf, minutes: 0, laborCost: 0, revenue: rev });
-      }
+    for (const [k, x] of leafRevenue)
+      if (!projects.has(k)) projects.set(k, { project: labelOf(x.leaf), names: [], leaf: x.leaf, minutes: 0, laborCost: 0, revenue: x.rev });
     const contribution = revenue - directLabor;
     const ratio = revenue > 0 ? contribution / revenue : 0;
     const fixed = expenses - directLabor;

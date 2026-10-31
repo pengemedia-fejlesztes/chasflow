@@ -1,4 +1,4 @@
-import { baseName } from '../../shared/monthname';
+import { MONTHLY_RX, baseName } from '../../shared/monthname';
 import { parseWholeForint } from '../../shared/amount';
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
@@ -544,7 +544,16 @@ function ItemRow({
         }}
       >
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+          <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {it.name}
+            {(() => {
+              // havidíjnál a nyitott hónapok is a névben („Havi díj · 2026. október – 2026. december”)
+              const ms = [...new Set(it.open.map(periodOf))].sort();
+              return (it.rep !== 'once' || MONTHLY_RX.test(it.name)) && ms.length
+                ? ` · ${monthLong(ms[0])}${ms.length > 1 ? ' – ' + monthLong(ms[ms.length - 1]) : ''}`
+                : '';
+            })()}
+          </span>
           <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', font: `500 12px ${FONT}`, color: C.muted }}>
             <span>{REP[it.rep]}</span>
             {next && (
@@ -1263,7 +1272,7 @@ function MonthList({
                     textDecoration: 'underline dotted',
                   }}
                 >
-                  fizetés {dot(e.date)} ✎
+                  📅 fizetés {dot(e.date)} ✎
                 </button>
               ) : (
                 <>fizetés {dot(e.date)}</>

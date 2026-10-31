@@ -101,3 +101,16 @@ describe('elszámoló tábla link', () => {
     expect(sheetIdOf('')).toBeNull();
   });
 });
+
+describe('munkaidő: összesítő sor és euró-oszlop', () => {
+  it('a „Munkaidő összesen” sor kimarad, az „Összeg (EUR)” beolvasódik', () => {
+    const rows = parseWorkSheets({
+      '2026.10-Feladatok': [
+        ['Tag', 'Projekt', 'Idő (óra)', 'Idő (H:MM)', 'Összeg (EUR)'],
+        ['SEO', 'Kalmia', 1.5, '1:30', 9],
+        [null, 'Munkaidő összesen', 1.5, '1:30', 9],
+      ],
+    });
+    expect(rows).toEqual([{ ym: '2026-10', project: 'Kalmia', tag: 'SEO', minutes: 90, eur: 9 }]);
+  });
+});

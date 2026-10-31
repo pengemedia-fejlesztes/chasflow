@@ -210,6 +210,22 @@ export function BreakevenView() {
     ['Bevétel / ügyfélóra', (r) => (r.revenuePerBillableHour ? fmt(r.revenuePerBillableHour) : '–')],
   ];
 
+  // bevételi ügyfelek (partnerenként egyszer) a belső projekt hozzárendeléséhez
+  const clients = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of ix.leaves) if (!l.archived && ix.sectionOf(l.id) === 'in' && !m.has(partnerIdOf(l.label))) m.set(partnerIdOf(l.label), l.label);
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'hu'));
+  }, [ix]);
+  const attach = (project: string, key: string) => {
+    const cur = (data.partners || []).find((x) => x.key === key)?.aliases || [];
+    const label = clients.find(([k]) => k === key)?.[1] || key;
+    return run(
+      () => api(`/api/partners/${encodeURIComponent(key)}`, { method: 'PUT', body: { aliases: [...cur, project] } }),
+      `${project} → ${label}: összevonva`,
+      () => api(`/api/partners/${encodeURIComponent(key)}`, { method: 'PUT', body: { aliases: cur } }),
+    );
+  };
+
   const projRow = (p: ProjectMonth, muted?: boolean) => (
     <div key={(p.leaf || '') + p.project} style={{ display: 'contents' }}>
       <div style={{ ...td, textAlign: 'left', whiteSpace: 'normal', background: muted ? '#FAFBFC' : undefined }}>
@@ -225,8 +241,28 @@ export function BreakevenView() {
           <b style={{ color: C.navy }}>{p.project}</b>
         )}
         <span style={{ color: C.muted, fontSize: 11.5 }}>
-          {p.leaf ? (p.names.filter((n) => n !== p.project).length ? ` · munkaidőben: ${p.names.filter((n) => n !== p.project).join(', ')}` : '') : ' · belső / nincs párosítva'}
+          {p.leaf
+            ? p.names.filter((n) => n !== p.project).length
+              ? ` · munkaidőben: ${p.names.filter((n) => n !== p.project).join(', ')}`
+              : ''
+            : ' · belső / nincs párosítva'}
         </span>
+        {/* belső / párosítatlan projekt → ügyfélhez rendelés: a név az ügyfél alternatív neve lesz, a munkaidő onnantól ott számít */}
+        {!p.leaf && isAdmin && (
+          <select
+            value=""
+            onChange={(ev) => ev.target.value && attach(p.project, ev.target.value)}
+            title="A projekt ehhez az ügyfélhez tartozik (alternatív név lesz az adatlapján)"
+            style={{ marginLeft: 8, height: 26, maxWidth: 170, borderRadius: 8, border: `1px solid ${C.line2}`, font: `500 12px ${FONT}`, color: C.blueDark }}
+          >
+            <option value="">Ügyfélhez rendel…</option>
+            {clients.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <div style={td}>{p.minutes ? h(p.minutes) : '–'}</div>
       <div style={td}>{p.laborCost ? fmt(p.laborCost) : '–'}</div>
@@ -298,7 +334,10 @@ export function BreakevenView() {
                     const v = e.target.value.trim();
                     if (v === (emp.sheet_url || '')) return;
                     if (v && !sheetIdOf(v)) return showToast({ msg: 'Ez nem Google-táblázat (Drive XLS) link.', error: true });
-                    saveEmp({ key: emp.key, name: emp.name, cost_leaf_id: emp.cost_leaf_id, sheet_url: v } as any, `${emp.name}: Drive-tábla ${v ? 'mentve' : 'törölve'}`);
+                    saveEmp(
+                      { key: emp.key, name: emp.name, cost_leaf_id: emp.cost_leaf_id, sheet_url: v } as any,
+                      `${emp.name}: Drive-tábla ${v ? 'mentve' : 'törölve'}`,
+                    );
                   }}
                   placeholder="Drive XLS (Google-táblázat) link"
                   style={{ ...inputStyle, height: 34, flex: '1 1 220px', borderColor: emp.sheet_url ? undefined : C.neg }}
@@ -439,7 +478,8 @@ export function BreakevenView() {
             <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <b style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Ügyfelek · {monthLong(cur.ym)}</b>
               <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
-                Akinek ebben a hónapban számlája vagy befizetése volt. A partner alternatív nevei (pl. Kalmia → Pharmazone) egy sorba kerülnek. Névre kattintva: adatlap.
+                Akinek ebben a hónapban számlája vagy befizetése volt. A partner alternatív nevei (pl. Kalmia → Pharmazone) egy sorba kerülnek. Névre kattintva:
+                adatlap.
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px,1.4fr) 70px 110px 110px 110px', minWidth: 560 }}>
@@ -450,13 +490,25 @@ export function BreakevenView() {
               ))}
               {invoiced.map((p) => projRow(p))}
               {!invoiced.length && (
-                <div style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', color: C.muted }}>Ebben a hónapban egy ügyfélnek sem volt számlája vagy befizetése.</div>
+                <div style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', color: C.muted }}>
+                  Ebben a hónapban egy ügyfélnek sem volt számlája vagy befizetése.
+                </div>
               )}
               {noInv.length > 0 && (
                 <>
                   <button
                     onClick={() => setShowNoInv((x) => !x)}
-                    style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', border: 0, borderTop: `1px solid ${C.line3}`, background: C.bg, cursor: 'pointer', color: C.navy, fontWeight: 600 }}
+                    style={{
+                      ...td,
+                      gridColumn: '1 / -1',
+                      textAlign: 'left',
+                      border: 0,
+                      borderTop: `1px solid ${C.line3}`,
+                      background: C.bg,
+                      cursor: 'pointer',
+                      color: C.navy,
+                      fontWeight: 600,
+                    }}
                   >
                     {showNoInv ? '▾' : '▸'} Számla nélküli munka ebben a hónapban: {noInv.length} projekt · {h(noInv.reduce((a, p) => a + p.minutes, 0))} óra ·{' '}
                     {fmt(noInv.reduce((a, p) => a + p.laborCost, 0))} Ft munkaköltség

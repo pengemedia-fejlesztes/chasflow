@@ -15,10 +15,13 @@ export const baseName = (name: string) =>
     .trim();
 export const hasMonth = (name: string) => SUFFIX.test(String(name || ''));
 
-/** havidíjnál a hónap a név végére (ha még nincs benne); más tételnél a név változatlan */
-export function withMonth(name: string, ym: string): string {
+/**
+ * Ismétlődő (havi, negyedéves… ütemezésű) tételnél és havidíjnál a hónap a név végére, ha még nincs benne
+ * (pl. „Munkabér – 2026. október”); egyszeri tételnél a név változatlan.
+ */
+export function withMonth(name: string, ym: string, recurring = false): string {
   const n = String(name || '').trim();
-  if (!MONTHLY_RX.test(n) || hasMonth(n) || !/^\d{4}-\d{2}$/.test(ym)) return name;
+  if (!n || !(recurring || MONTHLY_RX.test(n)) || hasMonth(n) || /\d{4}\.\s*\p{L}/u.test(n) || !/^\d{4}-\d{2}$/.test(ym)) return name;
   return `${n} – ${monthLong(ym)}`;
 }
 

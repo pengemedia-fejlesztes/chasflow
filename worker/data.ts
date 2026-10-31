@@ -90,7 +90,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     ),
     env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
     env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name'),
-    env.DB.prepare('SELECT employee, ym, project, tag, minutes FROM worktime ORDER BY ym'),
+    env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym'),
   ]);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
@@ -122,10 +122,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function cleanEntry(e: Entry): Entry {
   const ent = cleanEntryRaw(e);
   if (ent.kind !== 'plan') return ent;
-  // havidíj: a név a díj hónapjával („Havi díj – 2026. október”); a hónap (period) rögzül, így a fizetés napja szabadon mozgatható
+  // ismétlődő tétel (havidíj, munkabér, bérleti díj…): a név a hónappal („Munkabér – 2026. október”); a hónap (period) rögzül,
+  // így a fizetés napja szabadon mozgatható, a név (melyik hónapé) marad
   const ym = ent.period || ent.date.slice(0, 7);
-  const name = withMonth(ent.name, ym);
-  return name !== ent.name || (MONTHLY_RX.test(ent.name) && !ent.period) ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
+  const recurring = !!ent.series_id || MONTHLY_RX.test(ent.name);
+  const name = withMonth(ent.name, ym, recurring);
+  return name !== ent.name || (recurring && !ent.period) ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
 }
 
 function cleanEntryRaw(e: Entry): Entry {
@@ -505,7 +507,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   // munkaidő import: a feltöltött hónapok sorai felülírják az adott munkatárs korábbi sorait azokra a hónapokra
   if (path === '/api/worktime/import' && req.method === 'POST') {
     requireRole(u, 'admin');
-    const b = await readJson<{ employee: string; rows: { ym: string; project: string; tag: string; minutes: number }[] }>(req);
+    const b = await readJson<{ employee: string; rows: { ym: string; project: string; tag: string; minutes: number; eur?: number }[] }>(req);
     const emp = String(b.employee || '').slice(0, 80);
     if (!emp || !(await env.DB.prepare('SELECT 1 FROM employees WHERE key = ?').bind(emp).first())) throw new HttpError(400, 'Ismeretlen munkatárs.');
     const rows = (b.rows || []).filter((r) => /^\d{4}-\d{2}$/.test(r.ym) && r.project && Number(r.minutes) > 0).slice(0, 5000);
@@ -514,8 +516,15 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     for (const r of rows)
       stmts.push(
         env.DB.prepare(
-          'INSERT INTO worktime (employee, ym, project, tag, minutes) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET minutes = worktime.minutes + excluded.minutes',
-        ).bind(emp, r.ym, String(r.project).slice(0, 120), String(r.tag || '').slice(0, 60), Math.round(Number(r.minutes))),
+          'INSERT INTO worktime (employee, ym, project, tag, minutes, eur) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET minutes = worktime.minutes + excluded.minutes, eur = worktime.eur + excluded.eur',
+        ).bind(
+          emp,
+          r.ym,
+          String(r.project).slice(0, 120),
+          String(r.tag || '').slice(0, 60),
+          Math.round(Number(r.minutes)),
+          Math.max(0, Math.round((Number(r.eur) || 0) * 100) / 100),
+        ),
       );
     for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
     await audit(env, u.id, 'worktime_import', { employee: emp, months: months.length, rows: rows.length });

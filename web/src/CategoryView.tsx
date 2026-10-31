@@ -1,9 +1,9 @@
-import { baseName } from '../../shared/monthname';
+import { baseName, hasMonth } from '../../shared/monthname';
 import { parseWholeForint } from '../../shared/amount';
 // Kategória (csoport) nézet: tervezett sorozatok havi rácsban + a szűrt időszak tényei.
 import { useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { addMonths, endOfMonth, fmt, monthLabel, monthRange, ymOf } from '../../shared/model';
+import { addMonths, endOfMonth, fmt, monthLabel, monthLong, monthRange, ymOf } from '../../shared/model';
 import type { DeletedEntry, Entry, Rep } from '../../shared/types';
 import { api } from './api';
 import type { EditTarget } from './EntryModal';
@@ -26,6 +26,8 @@ import {
 } from './logic';
 import { PlanDiff, usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
+import { CalendarSheet } from './DatePicker';
+import { budgetMonth } from '../../shared/budget';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
 import { C, FONT, FONT_H, LeafSelect, NetBox, Seg, card, eyebrow, inputStyle } from './ui';
@@ -59,6 +61,14 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       localStorage.setItem('cf_facts_open', v ? '1' : '0');
     } catch {}
   };
+  // a kijelölt tétel(ek) fizetésének pontos napja naptárból
+  const [selCal, setSelCal] = useState(false);
+  // a tervhez kötött tény a terv hónapjába számít (pl. a novemberi könyvelési díjat október 30-án fizettük → november)
+  const planOfAct = useMemo(() => {
+    const m = new Map<string, Entry>();
+    for (const e of data.entries) if (e.kind === 'plan' && e.link_id) m.set(e.link_id, e);
+    return m;
+  }, [data.entries]);
   if (!G) return null;
   const NEW = '__new';
   const qaLeaf = qa.leaf === NEW || !firstLeaf ? NEW : leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
@@ -156,7 +166,16 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   const linkedActual = new Set(planEntries.filter((e) => e.link_id).map((e) => e.link_id as string));
   const sumBy = (es: Entry[], m: string) => es.filter((e) => ymOf(e.date) === m).reduce((a, e) => a + e.amount * sign, 0);
   const plansOf = (leaf: string) => planEntries.filter((e) => e.leaf_id === leaf && !e.tentative);
-  const leafPlan = (leaf: string, m: string) => sumBy(plansOf(leaf), m);
+  // keret-terv (pl. „Előre nem látható költség” 50 000/hó): a kategóriába sorolt tételek ebből fogynak, nem adódnak hozzá
+  const budgetOf = (leaf: string, m: string) =>
+    section === 'out'
+      ? budgetMonth(
+          groupEntries.filter((e) => e.leaf_id === leaf),
+          ix.leafById[leaf]?.label || '',
+          m,
+        )
+      : null;
+  const leafPlan = (leaf: string, m: string) => budgetOf(leaf, m)?.plan ?? sumBy(plansOf(leaf), m);
   // ajánlatok (még nem biztos tervek) külön – a „Terv” sorban nincsenek benne, az „Ajánlat” sorban látszanak
   const offersAll = planEntries.filter((e) => e.tentative && !e.done);
   const leafOffer = (leaf: string, m: string) =>
@@ -165,16 +184,15 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       m,
     );
   const monthOffer = (m: string) => sumBy(offersAll, m);
+  const actMonth = (e: Entry) => {
+    const p = planOfAct.get(e.id);
+    return p ? p.period || ymOf(p.date) : ymOf(e.date);
+  };
   const leafAct = (leaf: string, m: string) =>
-    sumBy(
-      actualsIn.filter((e) => e.leaf_id === leaf),
-      m,
-    );
-  const monthPlan = (m: string) =>
-    sumBy(
-      planEntries.filter((e) => !e.tentative),
-      m,
-    );
+    groupEntries
+      .filter((e) => e.kind === 'actual' && e.leaf_id === leaf && actMonth(e) === m && ymOf(e.date) <= ix.cur)
+      .reduce((a, e) => a + e.amount * sign, 0);
+  const monthPlan = (m: string) => [...new Set(planEntries.map((e) => e.leaf_id))].reduce((a, l) => a + leafPlan(l, m), 0);
   // terv ↔ tény: a tervhez az a tény tartozik, amihez számlamozgás (kötés) van – a terv hónapjában
   const pa = planActual(data.entries, (l) => leafIds.has(l), sign);
   /**
@@ -233,9 +251,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     )
     .sort((a, b) => (ix.leafById[a]?.label || '').localeCompare(ix.leafById[b]?.label || '', 'hu'));
 
-  // javaslat: az elmúlt 3 hónap (a folyó hónappal) tényleges átlaga vs. a jövő havi terv – ha a költség tartósan több
+  // javaslat: az elmúlt 3 lezárt hónap tényleges átlaga vs. ugyanezen hónapok terve – ha a költség tartósan több
   // (bevételnél kevesebb), mint amennyit terveztünk, látszódjon, mennyi lenne a reális havi keret
-  const sugMonths = [2, 1, 0].map((i) => addMonths(ix.cur, -i));
+  // a lezárt (elmúlt 3) hónap: a folyó hónap még nem teljes, ezért nem számít bele
+  const sugMonths = [3, 2, 1].map((i) => addMonths(ix.cur, -i));
   const suggest = (() => {
     const out: { leaf: string; avg: number; plan: number; suggested: number; diff: number }[] = [];
     if (section !== 'out') return out;
@@ -246,8 +265,15 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       const used = per.filter((v) => v !== 0);
       if (!used.length) continue;
       const avg = Math.round(used.reduce((a, v) => a + v, 0) / used.length);
+      // ugyanezen hónapok terve (átlag) – a tény ehhez mérve; ha akkor nem volt terv, a jövő havi terv
+      const planPer = sugMonths.map((m) =>
+        groupEntries.filter((e) => e.kind === 'plan' && !e.tentative && e.leaf_id === leaf && ymOf(e.date) === m).reduce((a, e) => a + e.amount * sign, 0),
+      );
+      const planUsed = planPer.filter((v, i) => v !== 0 && per[i] !== 0);
       const next = addMonths(ix.cur, 1);
-      const plan = planEntries.filter((e) => e.leaf_id === leaf && !e.tentative && ymOf(e.date) === next).reduce((a, e) => a + e.amount * sign, 0);
+      const plan = planUsed.length
+        ? Math.round(planUsed.reduce((a, v) => a + v, 0) / planUsed.length)
+        : planEntries.filter((e) => e.leaf_id === leaf && !e.tentative && ymOf(e.date) === next).reduce((a, e) => a + e.amount * sign, 0);
       // csak rendszeres költség/bevétel: van jövő havi terv, vagy legalább 2 hónapban volt tény
       if (!plan && used.length < 2) continue;
       const suggested = Math.ceil(avg / 1000) * 1000;
@@ -420,7 +446,12 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
           title="Szerkesztés"
         >
           <span style={{ font: `500 13.5px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {itemLabel(es[0].name, ix.leafById[es[0].leaf_id]?.label || '') || es[0].name || ix.leafById[es[0].leaf_id]?.label}
+            {(() => {
+              // havidíj-sorozat: az alapnév + mely hónapok („Havi díj · 2026. október – 2026. december”); egy hónapnál a teljes név
+              const nm = itemLabel(es[0].name, ix.leafById[es[0].leaf_id]?.label || '') || es[0].name || ix.leafById[es[0].leaf_id]?.label || '';
+              const ms = [...new Set(es.map((e) => e.period || ymOf(e.date)))].sort();
+              return ms.length > 1 && hasMonth(nm) ? `${baseName(nm)} · ${monthLong(ms[0])} – ${monthLong(ms[ms.length - 1])}` : nm;
+            })()}
           </span>
           <span style={{ font: `400 11.5px ${FONT}`, color: C.muted }}>
             fizetés:{' '}
@@ -630,7 +661,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     );
   };
 
-  const gridCols = `44px minmax(220px,1.5fr) 118px repeat(${months.length},minmax(112px,1fr)) 48px`;
+  const gridCols = `44px minmax(220px,1.5fr) 118px repeat(${months.length},minmax(156px,1fr)) 48px`;
   const minW = 450 + months.length * 116;
 
   return (
@@ -812,7 +843,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     {ix.leafById[x.leaf]?.label}
                   </PartnerLink>
                   <span style={{ color: C.muted }}>
-                    tény átlag <b style={{ color: C.neg }}>{fmt(x.avg)}</b>/hó · jövő havi terv <b style={{ color: C.navy }}>{fmt(x.plan)}</b>
+                    tény átlag <b style={{ color: C.neg }}>{fmt(x.avg)}</b>/hó · terv átlag ugyanezekben a hónapokban{' '}
+                    <b style={{ color: C.navy }}>{fmt(x.plan)}</b>
                   </span>
                   <span style={{ color: C.navy }}>
                     várható túllépés: <b style={{ color: C.neg }}>+{fmt(x.diff)} Ft/hó</b> (reális keret ≈ {fmt(x.suggested)})
@@ -913,6 +945,40 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       const offer = leafOffer(leaf, m);
                       const act = m <= ix.cur ? leafAct(leaf, m) : 0;
                       const hasAct = m <= ix.cur && act !== 0;
+                      const bm = budgetOf(leaf, m);
+                      if (bm && (bm.used > 0 || m <= ix.cur)) {
+                        // keret: mennyi fogyott el belőle, mennyi maradt (megtakarítás) vagy mennyivel léptük túl
+                        const rest = bm.budget - bm.used;
+                        const over = rest < 0;
+                        return (
+                          <div key={m} style={{ padding: '6px 4px' }}>
+                            <div
+                              title={`keret ${fmt(bm.budget)} Ft · felhasználva ${fmt(bm.used)} Ft · ${over ? `túllépés ${fmt(-rest)}` : `maradt ${fmt(rest)}`} Ft`}
+                              style={{
+                                minHeight: 34,
+                                borderRadius: 8,
+                                padding: '3px 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-end',
+                                lineHeight: 1.15,
+                                border: `1px solid ${over ? C.neg : GOOD}`,
+                                background: over ? C.negBg : GOOD_BG,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              <b style={{ font: `700 12.5px ${FONT}`, color: over ? C.neg : GOOD }}>{fmt(bm.used)}</b>
+                              <span style={{ font: `500 10px ${FONT}`, color: C.muted, whiteSpace: 'nowrap' }}>
+                                keret {fmt(bm.budget)}
+                                <b style={{ marginLeft: 4, color: over ? C.neg : GOOD }}>
+                                  {over ? `▲ ${fmt(-rest)}` : `▼ ${fmt(rest)} ${m < ix.cur ? 'megtakarítás' : 'maradt'}`}
+                                </b>
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
                       if (!plan && !hasAct && !offer)
                         return canEdit && cont.length && m === contYm ? (
                           <div key={m} style={{ padding: '6px 4px' }} onClick={(ev) => ev.stopPropagation()}>
@@ -964,26 +1030,91 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       const judged = cmp && plan !== 0;
                       const good = judged && diff !== 0 && (section === 'in' ? diff > 0 : diff < 0);
                       const bad = judged && diff !== 0 && !good && Math.abs(diff) >= Math.max(1000, Math.abs(plan) * 0.01);
+                      if (cmp)
+                        // múlt / folyó hónap: két oszlop – bal a terv, jobb a tény (piros, ha rosszabb a tervnél: kiadásnál több,
+                        // bevételnél kevesebb; zöld, ha jobb), alatta az eltérés ▲/▼
+                        return (
+                          <div
+                            key={m}
+                            style={{ padding: '6px 4px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}
+                            title={`terv ${fmt(plan)} Ft · tény ${fmt(act)} Ft · különbség ${diff > 0 ? '+' : ''}${fmt(diff)} Ft`}
+                          >
+                            <div
+                              style={{
+                                minHeight: 34,
+                                borderRadius: 8,
+                                padding: '3px 6px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-end',
+                                lineHeight: 1.15,
+                                background: C.bg2,
+                                border: `1px solid ${C.line2}`,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              <span style={{ font: `600 9px ${FONT}`, color: C.muted, letterSpacing: '.04em' }}>TERV</span>
+                              <b style={{ font: `700 12px ${FONT}`, color: C.navy }}>{plan ? fmt(plan) : '–'}</b>
+                            </div>
+                            <div
+                              style={{
+                                minHeight: 34,
+                                borderRadius: 8,
+                                padding: '3px 6px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-end',
+                                lineHeight: 1.15,
+                                border: `1px solid ${bad ? C.neg : good ? GOOD : C.blue}`,
+                                background: bad ? C.negBg : good ? GOOD_BG : '#fff',
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              <span style={{ font: `600 9px ${FONT}`, color: C.muted, letterSpacing: '.04em' }}>
+                                TÉNY
+                                {judged && diff !== 0 && (
+                                  <b style={{ marginLeft: 3, color: good ? GOOD : bad ? C.neg : C.muted }}>
+                                    {diff < 0 ? '▼' : '▲'}
+                                    {fmt(Math.abs(diff))}
+                                  </b>
+                                )}
+                              </span>
+                              <b style={{ font: `700 12px ${FONT}`, color: bad ? C.neg : good ? GOOD : C.blueDark }}>{fmt(act)}</b>
+                            </div>
+                          </div>
+                        );
                       return (
                         <div key={m} style={{ padding: '6px 4px' }}>
                           <div
                             title={`terv ${fmt(plan)} Ft${cmp ? ` · tény ${fmt(act)} Ft · különbség ${diff > 0 ? '+' : ''}${fmt(diff)} Ft` : ''}`}
                             style={{
-                              height: 34,
+                              minHeight: 34,
                               borderRadius: 8,
-                              padding: '0 8px',
+                              padding: '3px 8px',
                               display: 'flex',
                               flexDirection: 'column',
                               justifyContent: 'center',
                               alignItems: 'flex-end',
-                              lineHeight: 1.1,
+                              lineHeight: 1.15,
                               border: `1px solid ${bad ? C.neg : good ? GOOD : cmp ? C.blue : C.line2}`,
                               background: bad ? C.negBg : good ? GOOD_BG : cmp ? '#fff' : C.bg2,
                               fontVariantNumeric: 'tabular-nums',
                             }}
                           >
                             <b style={{ font: `700 12.5px ${FONT}`, color: bad ? C.neg : good ? GOOD : cmp ? C.blueDark : C.navy }}>{fmt(cmp ? act : plan)}</b>
-                            {cmp && plan !== 0 && <span style={{ font: `500 10px ${FONT}`, color: C.muted }}>terv {fmt(plan)}</span>}
+                            {cmp && plan !== 0 && (
+                              <span style={{ font: `500 10px ${FONT}`, color: C.muted, whiteSpace: 'nowrap' }}>
+                                terv {fmt(plan)}
+                                {diff !== 0 && (
+                                  // eltérés a tervtől: ▼ kevesebb (csökkenés), ▲ több – kiadásnál a kevesebb a jó
+                                  <b style={{ marginLeft: 4, color: good ? GOOD : bad ? C.neg : C.muted }}>
+                                    {diff < 0 ? '▼' : '▲'} {fmt(Math.abs(diff))}
+                                  </b>
+                                )}
+                              </span>
+                            )}
                             {!cmp && plan !== 0 && sugMap.get(leaf) && (
                               <span style={{ font: `700 10px ${FONT}`, color: C.neg }}>≈ {fmt(sugMap.get(leaf)!.avg)} várható</span>
                             )}
@@ -1032,10 +1163,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       ['Terv + ajánlat', (m: string) => monthPlan(m) + monthOffer(m), C.navy],
                     ] as [string, (m: string) => number | null, string | null][])
                   : []),
-                ['Tény (tervhez kötött)', (m: string) => (m <= ix.cur || pa.linked.get(m) ? pa.linked.get(m) || 0 : null), C.blue],
-                ['Különbség', (m: string) => (m <= ix.cur ? (pa.linked.get(m) || 0) - monthPlan(m) : null), null],
+                ['Tény', (m: string) => (m <= ix.cur || pa.linked.get(m) ? (pa.linked.get(m) || 0) + (pa.other.get(m) || 0) : null), C.blue],
+                ['Különbség', (m: string) => (m <= ix.cur ? (pa.linked.get(m) || 0) + (pa.other.get(m) || 0) - monthPlan(m) : null), null],
                 ...(months.some((m) => m <= ix.cur && pa.other.get(m))
-                  ? ([['Egyéb tény (terv nélkül)', (m: string) => (m <= ix.cur ? pa.other.get(m) || 0 : null), C.muted]] as [
+                  ? ([['ebből terv nélküli tény', (m: string) => (m <= ix.cur ? pa.other.get(m) || 0 : null), C.muted]] as [
                       string,
                       (m: string) => number | null,
                       string | null,
@@ -1056,7 +1187,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               >
                 <div />
                 <div style={{ padding: '10px 8px', font: `700 13px ${FONT_H}`, color: C.navy }}>{label}</div>
-                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{label === 'Különbség' ? 'kötött tény − terv' : ''}</div>
+                <div style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>{label === 'Különbség' ? 'tény − terv (▼ kevesebb, ▲ több)' : ''}</div>
                 {months.map((m) => {
                   const v = f(m);
                   const c = col || (v === null || v === 0 ? C.blueDark : (section === 'in' ? v > 0 : v < 0) ? GOOD : C.neg);
@@ -1189,6 +1320,31 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
         )}
       </div>
 
+      {selCal &&
+        (() => {
+          const es = data.entries.filter((e) => sel[e.id] && !e.done).sort((a, b) => a.date.localeCompare(b.date));
+          if (!es.length) return null;
+          return (
+            <CalendarSheet
+              value={es[0].date}
+              onClose={() => setSelCal(false)}
+              onPick={(v) => {
+                setSelCal(false);
+                // egy tételnél pontosan erre a napra; többnél az első kerül ide, a többi ugyanannyi nappal tolódik
+                const d = Math.round((Date.parse(v) - Date.parse(es[0].date)) / 86400000);
+                if (!d) return;
+                const ups = es.map((e) => ({ ...e, date: new Date(Date.parse(e.date) + d * 86400000).toISOString().slice(0, 10) }));
+                commit(
+                  { upsert: ups },
+                  ups.length === 1
+                    ? `${ups[0].name || 'Tétel'}: fizetés ${v.replace(/-/g, '.')}.`
+                    : `${ups.length} tétel fizetése ${d > 0 ? '+' : ''}${d} nappal`,
+                );
+                clear();
+              }}
+            />
+          );
+        })()}
       {selIds.length > 0 && (
         <div style={{ position: 'sticky', bottom: 20, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
           <div
@@ -1206,7 +1362,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             }}
           >
             <span style={{ font: `600 13.5px ${FONT}`, marginRight: 6 }}>
-              {selIds.length} tétel · {fmt(selSum)} Ft
+              {selIds.length === 1 ? data.entries.find((e) => e.id === selIds[0])?.name || '1 tétel' : `${selIds.length} tétel`} · {fmt(selSum)} Ft
             </span>
             <span style={{ width: 1, height: 22, background: 'rgba(255,255,255,.15)' }} />
             <SelAmount
@@ -1219,7 +1375,10 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             />
             <span style={{ width: 1, height: 22, background: 'rgba(255,255,255,.15)' }} />
             <span style={{ ...eyebrow, color: C.muted2, margin: '0 4px 0 6px' }}>Áthelyezés</span>
-            {[-1, 1, 2, 3].map((n) => (
+            <button onClick={() => setSelCal(true)} style={selBtn(C.blue)} title="A fizetés pontos napja (naptár)">
+              📅 Fizetés napja
+            </button>
+            {[-1, 1].map((n) => (
               <button
                 key={n}
                 onClick={() => (commit(shiftEntries(data, selIds, n), `${selIds.length} tétel áthelyezve ${n > 0 ? '+' : ''}${n} hónappal`), clear())}

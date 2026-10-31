@@ -1,4 +1,5 @@
 // Cashflow számítások: havi/éves mátrix, egyenleg (tény + előrejelzés), becslés.
+import { budgetMonth, isBudgetPlan } from './budget';
 import type { DataBundle, Entry, Group, Leaf, Section } from './types';
 
 export const MS = ['Jan.', 'Feb.', 'Márc.', 'Ápr.', 'Máj.', 'Jún.', 'Júl.', 'Aug.', 'Szept.', 'Okt.', 'Nov.', 'Dec.'];
@@ -93,6 +94,23 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
       add(plan, e.leaf_id, ym, e.amount);
       if (!e.done) add(openPlan, e.leaf_id, ym, e.amount);
       if (!lastPlanMonth[e.leaf_id] || ym > lastPlanMonth[e.leaf_id]) lastPlanMonth[e.leaf_id] = ym;
+    }
+  }
+  // keret-terv (pl. „Előre nem látható költség” 50 000/hó): a kategória többi tétele ebből fogy, nem adódik hozzá
+  const curYm = ymOf(d.today);
+  const outByLeaf = new Map<string, Entry[]>();
+  for (const e of d.entries) if (sectionOf(e.leaf_id) === 'out') (outByLeaf.get(e.leaf_id) || outByLeaf.set(e.leaf_id, []).get(e.leaf_id)!).push(e);
+  for (const [leaf, es] of outByLeaf) {
+    const label = leafById[leaf]?.label || '';
+    const yms = new Set(es.filter((e) => isBudgetPlan(e, label)).map((e) => ymOf(e.date)));
+    for (const ym of yms) {
+      const bm = budgetMonth(es, label, ym);
+      if (!bm) continue;
+      if (!plan.has(leaf)) plan.set(leaf, new Map());
+      if (!openPlan.has(leaf)) openPlan.set(leaf, new Map());
+      plan.get(leaf)!.set(ym, -bm.plan);
+      // a lezárt hónap maradéka megtakarítás (nem várható kiadás); a folyó és jövő hónapé még elkölthető
+      openPlan.get(leaf)!.set(ym, -(bm.openOther + (ym >= curYm ? bm.left : 0)));
     }
   }
   const opening = Number(d.settings.opening_balance || 0) || 0;

@@ -5,6 +5,7 @@ import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
+import { isBudgetPlan } from '../shared/budget';
 import { requireRole, type User } from './auth';
 import { fillPartnerKind, fillPartnerTax, mergePartnerNames } from './partnertax';
 import { attachInvoiceStmts, autoPayBillingo, promoteOfferLeaves, billingoPublicUrl, invoiceRefs, reconcileInvoicePlans, syncBillingo } from './billingo';
@@ -199,7 +200,63 @@ export async function markBankFees(env: Env): Promise<number> {
   }
   if (moves.length) await env.DB.batch(moves);
   if (pending.length) await approve(env, null, pending);
+  // a díjból tévesen indított havi sorozat (pl. „Szignetta 92 Ft havonta”) nyitott tervei törlődnek – a díj nem partner-tétel
+  await env.DB.prepare(
+    "DELETE FROM entries WHERE kind = 'plan' AND done = 0 AND leaf_id <> ? AND series_id IN (SELECT 's' || id FROM bank_tx WHERE leaf_id = ? AND amount < 0)",
+  )
+    .bind(fee, fee)
+    .run();
   return pending.length + moves.length / 3;
+}
+
+/** Az ismétlődő tételek neve a hónappal (a szerveren létrejött sorozatokra is, pl. NAV-számlából rendszeres terv). */
+const RECURRING_MONTH_SQL = `UPDATE entries
+SET period = COALESCE(period, substr(date, 1, 7)),
+    name = trim(name) || ' – ' || substr(COALESCE(period, date), 1, 4) || '. ' || CASE substr(COALESCE(period, date), 6, 2) WHEN '01' THEN 'január' WHEN '02' THEN 'február' WHEN '03' THEN 'március' WHEN '04' THEN 'április' WHEN '05' THEN 'május' WHEN '06' THEN 'június' WHEN '07' THEN 'július' WHEN '08' THEN 'augusztus' WHEN '09' THEN 'szeptember' WHEN '10' THEN 'október' WHEN '11' THEN 'november' ELSE 'december' END
+WHERE kind = 'plan' AND trim(name) <> ''
+  AND (series_id IS NOT NULL OR lower(trim(name)) LIKE 'havi d_j%' OR lower(trim(name)) LIKE 'havid_j%')
+  AND name NOT GLOB '*[12][0-9][0-9][0-9]. *'
+  AND lower(trim(name)) NOT LIKE '%január' AND lower(trim(name)) NOT LIKE '%február' AND lower(trim(name)) NOT LIKE '%március' AND lower(trim(name)) NOT LIKE '%április' AND lower(trim(name)) NOT LIKE '%május' AND lower(trim(name)) NOT LIKE '%június' AND lower(trim(name)) NOT LIKE '%július' AND lower(trim(name)) NOT LIKE '%augusztus' AND lower(trim(name)) NOT LIKE '%szeptember' AND lower(trim(name)) NOT LIKE '%október' AND lower(trim(name)) NOT LIKE '%november' AND lower(trim(name)) NOT LIKE '%december'`;
+
+/**
+ * Terv ↔ tény összevonás: ha egy kategóriában a hónap nyitott terve és egy (tervhez nem kötött) tény összege
+ * legfeljebb 200 Ft-tal (vagy 1%-kal) tér el, a tény a tervhez kötődik, a terv teljesül – nem marad két külön sor
+ * (pl. Könyvelési díj 36 830 terv + 36 830 tény „terv nélkül”). A keret-terv (pl. Előre nem látható költség) kimarad.
+ */
+export async function linkSameMonthActuals(env: Env): Promise<number> {
+  const [pR, aR, lR] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT id, leaf_id, date, period, amount, name FROM entries WHERE kind = 'plan' AND done = 0 AND COALESCE(tentative, 0) = 0 AND amount <> 0 AND date >= date('now', '-150 days') AND date <= date('now', '+40 days')",
+    ),
+    env.DB.prepare(
+      `SELECT a.id, a.leaf_id, a.date, a.amount FROM entries a WHERE a.kind = 'actual' AND a.date >= date('now', '-150 days')
+       AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)`,
+    ),
+    env.DB.prepare('SELECT id, label FROM leaves'),
+  ]);
+  const label = new Map((lR.results as any[]).map((l) => [l.id as string, l.label as string]));
+  const acts = aR.results as any[];
+  const used = new Set<string>();
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  for (const p of (pR.results as any[]).sort((a, b) => a.date.localeCompare(b.date))) {
+    if (isBudgetPlan(p as Entry, label.get(p.leaf_id) || '')) continue;
+    const ym = p.period || p.date.slice(0, 7);
+    const tol = Math.max(200, Math.abs(p.amount) * 0.01);
+    const hit = acts
+      .filter((a) => !used.has(a.id) && a.leaf_id === p.leaf_id && Math.sign(a.amount) === Math.sign(p.amount) && Math.abs(a.amount - p.amount) <= tol)
+      .filter((a) => a.date.slice(0, 7) === ym || Math.abs(Date.parse(a.date) - Date.parse(p.date)) <= 10 * 86400_000)
+      .sort(
+        (a, b) =>
+          Math.abs(a.amount - p.amount) - Math.abs(b.amount - p.amount) ||
+          Math.abs(Date.parse(a.date) - Date.parse(p.date)) - Math.abs(Date.parse(b.date) - Date.parse(p.date)),
+      )[0];
+    if (!hit) continue;
+    used.add(hit.id);
+    stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(hit.id, t, p.id));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return stmts.length;
 }
 
 export async function syncAll(env: Env) {
@@ -272,6 +329,16 @@ export async function syncAll(env: Env) {
     res.invoicePlansError = e.message;
   }
   try {
+    res.linkedSameMonth = await linkSameMonthActuals(env);
+  } catch (e: any) {
+    res.linkedSameMonthError = e.message;
+  }
+  try {
+    res.monthNames = (await env.DB.prepare(RECURRING_MONTH_SQL).run()).meta?.changes ?? 0;
+  } catch (e: any) {
+    res.monthNamesError = e.message;
+  }
+  try {
     res.leafFixed = await fixLinkedLeaves(env);
   } catch (e: any) {
     res.leafFixError = e.message;
@@ -286,7 +353,7 @@ export async function syncAll(env: Env) {
 export async function fixLinkedLeaves(env: Env): Promise<number> {
   const r = await env.DB.prepare(
     `SELECT a.id AS aid, p.leaf_id AS leaf FROM entries p JOIN entries a ON a.id = p.link_id
-     WHERE p.kind = 'plan' AND p.ext_ref LIKE 'billingo:%' AND a.kind = 'actual' AND a.leaf_id <> p.leaf_id`,
+     WHERE p.kind = 'plan' AND a.kind = 'actual' AND a.leaf_id <> p.leaf_id`,
   ).all<{ aid: string; leaf: string }>();
   if (!r.results.length) return 0;
   const t = now();

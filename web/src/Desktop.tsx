@@ -49,6 +49,11 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
   const sideMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
+  // az Ajánlatok mappa összege mindig az ajánlatokkal együtt (különben ajánlat-szűrő nélkül 0 lenne)
+  const offerTotals = useMemo(() => {
+    const m = buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '', includeOffers: true });
+    return new Map(m.rows.filter((r) => r.type === 'group' && /aj[áa]nlat/i.test(r.label)).map((r) => [r.id, r.total]));
+  }, [ix, filters]);
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   const goGroup = (id: string) => {
     setFilters({ groupId: id });
@@ -190,7 +195,9 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
                     }}
                   >
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayGroup(g.label)}</span>
-                    <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtM(offerTotals.get(g.id) ?? g.total)}
+                    </span>
                   </button>
                 ))}
               </Fragment>
