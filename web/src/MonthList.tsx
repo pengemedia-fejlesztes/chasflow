@@ -81,7 +81,9 @@ export function MonthList(props: {
   const done = rows.filter((r) => r.completed);
   const rest = rows.filter((r) => !r.completed);
   const isOpen = !!open[m];
-  const devN = done.filter((r) => r.dev).length;
+  // csak a kedvezőtlen eltérés piros (bevételnél kevesebb jött, kiadásnál többet fizettünk); a kedvező zöld
+  const devN = done.filter((r) => r.dev && r.diff < 0).length;
+  const goodN = done.filter((r) => r.dev && r.diff > 0).length;
   const unpN = done.filter(unplanned).length;
   return (
     <>
@@ -105,7 +107,8 @@ export function MonthList(props: {
           <span style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>✓ Teljesült · {done.length} tétel</b>
             <span style={{ font: `500 12px ${FONT}`, color: devN ? C.neg : C.muted }}>
-              {[devN && `${devN} eltérés a tervtől`, unpN && `${unpN} nem tervezett`].filter(Boolean).join(' · ') || 'kiszámlázva, kifizetve'}
+              {[devN && `${devN} kedvezőtlen eltérés`, goodN && `${goodN} kedvező eltérés`, unpN && `${unpN} nem tervezett`].filter(Boolean).join(' · ') ||
+                'kiszámlázva, kifizetve'}
             </span>
           </span>
           <b style={{ font: `700 15px ${FONT_H}`, color: C.blueDark, fontVariantNumeric: 'tabular-nums' }}>
@@ -152,7 +155,11 @@ function Row(p: {
   const [pickDate, setPickDate] = useState(false);
   const canPick = canEdit && !!planId && !p.selMode;
   const s = !!(planId && p.sel[planId]);
-  const red = r.late || r.dev;
+  // eltérés iránya: a tény − terv (nyers, előjeles) pozitív = bevételnél több jött be, kiadásnál kevesebbet fizettünk → jó (zöld)
+  const good = r.dev && !r.late && r.diff > 0;
+  const red = r.late || (r.dev && !good);
+  const GOOD = '#1A7340',
+    GOOD_BG = '#E8F4EC';
   const chip =
     r.kind === 'merged'
       ? 'Terv → Tény'
@@ -187,7 +194,7 @@ function Row(p: {
       style={{
         width: '100%',
         minHeight: 68,
-        border: `1.5px solid ${s ? C.blue : red ? C.negLight : C.line}`,
+        border: `1.5px solid ${s ? C.blue : red ? C.negLight : good ? '#9FD3B2' : C.line}`,
         background: s ? C.bg2 : '#fff',
         borderRadius: 14,
         padding: '12px 14px',
@@ -232,12 +239,12 @@ function Row(p: {
           lineHeight: 1.05,
           padding: '6px 0',
           borderRadius: 10,
-          background: red ? C.negBg : r.completed ? C.bg2 : C.bg,
+          background: red ? C.negBg : good ? GOOD_BG : r.completed ? C.bg2 : C.bg,
           outline: canPick ? `1px dashed ${red ? C.negLight : C.line2}` : undefined,
         }}
       >
-        <b style={{ font: `800 19px ${FONT_H}`, color: red ? C.neg : r.completed ? C.blueDark : C.navy }}>{Number(r.date.slice(8))}</b>
-        <span style={{ font: `600 10.5px ${FONT}`, color: red ? C.neg : r.completed ? C.blueDark : C.navy, textTransform: 'uppercase' }}>
+        <b style={{ font: `800 19px ${FONT_H}`, color: red ? C.neg : good ? GOOD : r.completed ? C.blueDark : C.navy }}>{Number(r.date.slice(8))}</b>
+        <span style={{ font: `600 10.5px ${FONT}`, color: red ? C.neg : good ? GOOD : r.completed ? C.blueDark : C.navy, textTransform: 'uppercase' }}>
           {monthLabel(r.date.slice(0, 7)).replace('.', '')}
         </span>
       </span>
@@ -277,7 +284,15 @@ function Row(p: {
             {chip}
           </span>
           {sub && (
-            <span style={{ font: `600 12px ${FONT}`, color: red ? C.neg : C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span
+              style={{
+                font: `600 12px ${FONT}`,
+                color: red ? C.neg : good ? GOOD : C.muted,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {sub}
             </span>
           )}
@@ -287,7 +302,7 @@ function Row(p: {
         <span
           style={{
             font: `700 15px ${FONT_H}`,
-            color: red ? C.neg : r.completed ? C.blueDark : C.navy,
+            color: red ? C.neg : good ? GOOD : r.completed ? C.blueDark : C.navy,
             fontVariantNumeric: 'tabular-nums',
             whiteSpace: 'nowrap',
           }}

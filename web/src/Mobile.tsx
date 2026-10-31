@@ -1,6 +1,6 @@
 import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
@@ -22,7 +22,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ToastView, relTime } from './ui';
 
-type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more';
+type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more' | 'sched';
 type Sheet =
   | {
       kind: 'new';
@@ -46,6 +46,8 @@ type Sheet =
       p2d?: string;
     }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
+  /** nyitott terv összevonása egy banki tétellel (keresés a bankszámla tételei között) */
+  | { kind: 'bankpick'; planId: string; q: string; back?: Sheet }
   | {
       kind: 'item';
       id: string;
@@ -127,9 +129,39 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const inM = (e: Entry) => ymOf(e.date) === m;
   const visibleEntry = (e: Entry) =>
     isPast ? e.kind === 'actual' : (e.kind === 'plan' && (filters.includeOffers || !e.tentative)) || (m === ix.cur && e.kind === 'actual' && !e.link_id);
-  // a hónap tételei (ütemezés): ugyanaz a láthatóság, mint a kategóriáknál
-  const monthEntries = data.entries.filter((e) => inM(e) && visibleEntry(e) && (filters.section === 'all' || filters.section === ix.sectionOf(e.leaf_id)));
-  const [expSec, setExpSec] = useState<Section | null>(null);
+  const [schedSec, setSchedSec] = useState<Section | null>(null);
+  // új képernyőre lépve (ütemezés, kategória, bank …) a lap tetejéről indul
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tab]);
+  // ütemezés: a hónap ténye (a tervhez kötött is), a nyitott és késznek jelölt tervek, az ajánlatok, és jövőbeli hónapra
+  // a tényekből becsült, még nem tervezett rendszeres tételek (becslés)
+  const schedEst = useMemo(() => buildEstimates(ix, addMonths(ix.cur, 12)), [ix]);
+  const schedEntries = (ym: string, sec: Section | null): Entry[] => {
+    const inSec = (e: Entry) => !sec || ix.sectionOf(e.leaf_id) === sec;
+    const out = data.entries.filter((e) => ymOf(e.date) === ym && inSec(e) && (e.kind === 'actual' || !(e.done && e.link_id)));
+    if (ym > ix.cur)
+      for (const [leaf, mm] of schedEst) {
+        const v = mm.get(ym);
+        if (!v || !inSec({ leaf_id: leaf } as Entry)) continue;
+        out.push({
+          id: `est:${leaf}:${ym}`,
+          kind: 'plan',
+          date: ym + '-15',
+          leaf_id: leaf,
+          name: 'becsült rendszeres tétel',
+          amount: Math.round(v),
+          series_id: null,
+          done: 0,
+          tentative: 0,
+          source: 'estimate',
+          ext_ref: null,
+          link_id: null,
+          note: null,
+        } as Entry);
+      }
+    return out;
+  };
   const moveDate = (e: Entry, date: string) =>
     commit({ upsert: [{ ...e, date }] }, `${e.name || ix.leafById[e.leaf_id]?.label || 'Tétel'}: dátum ${date.replace(/-/g, '.')}.`);
   const openEntry = (e: Entry) =>
@@ -453,27 +485,33 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   Ebben a hónapban nincs tétel.
                 </div>
               )}
-              {/* a hónap ütemezése: minden bevétel és kiadás dátum szerint; oldalra húzva az előző / következő hónap */}
-              <MonthSchedule
-                m={m}
-                today={data.today}
-                entries={monthEntries}
-                sectionOf={ix.sectionOf}
-                leafLabel={(l) => ix.leafById[l]?.label || ''}
-                onMonth={(d) => {
-                  const nm = addMonths(m, d);
-                  setM(nm);
-                  scrollToMonth(nm, true);
+              {/* a hónap ütemezése külön képernyőn: minden bevétel és kiadás napokra bontva */}
+              <button
+                onClick={() => (setSchedSec(null), setTab('sched'))}
+                style={{
+                  border: `1px solid ${C.line}`,
+                  background: '#fff',
+                  borderRadius: 14,
+                  padding: '12px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  textAlign: 'left',
                 }}
-                onOpen={openEntry}
-                onDate={moveDate}
-                collapsible="home"
-              />
+              >
+                <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>📅 Ütemezés · {monthLong(m)}</b>
+                  <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+                    {schedEntries(m, null).length} tétel napokra bontva · tény, terv, ajánlat, becslés
+                  </span>
+                </span>
+                <span style={{ font: `600 18px ${FONT}`, color: C.blueDark }}>›</span>
+              </button>
               {sections.map(({ s, tot, groups }) => (
                 <div key={s} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {/* a Bevétel / Kiadás fejlécre vagy az összegre koppintva: a hónap összes tétele a kategóriákból, dátum szerint */}
                   <button
-                    onClick={() => setExpSec(expSec === s ? null : s)}
+                    onClick={() => (setSchedSec(s), setTab('sched'))}
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -485,30 +523,14 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                     }}
                   >
                     <span style={{ font: `700 13px ${FONT_H}`, color: C.navy, letterSpacing: '.04em', textTransform: 'uppercase' }}>
-                      {expSec === s ? '▾' : '▸'} {s === 'in' ? 'Bevétel' : 'Kiadás'} {isPast ? '· tény' : ''}
+                      {s === 'in' ? 'Bevétel' : 'Kiadás'} {isPast ? '· tény' : ''} ›
                     </span>
                     <span style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
                       {s === 'in' ? '+' : '−'}
                       {fmt(tot)}
                     </span>
                   </button>
-                  {expSec === s && (
-                    <MonthSchedule
-                      title={s === 'in' ? 'Bevételek' : 'Kiadások'}
-                      m={m}
-                      today={data.today}
-                      entries={monthEntries.filter((e) => ix.sectionOf(e.leaf_id) === s)}
-                      sectionOf={ix.sectionOf}
-                      leafLabel={(l) => ix.leafById[l]?.label || ''}
-                      onMonth={(d) => {
-                        const nm = addMonths(m, d);
-                        setM(nm);
-                        scrollToMonth(nm, true);
-                      }}
-                      onOpen={openEntry}
-                      onDate={moveDate}
-                    />
-                  )}
+
                   <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
                     {groups.map(({ g, plan, done, n, open }, gi) => (
                       <button
@@ -733,6 +755,31 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
             </div>
           </>
         )}
+        {tab === 'sched' && (
+          <>
+            <MobileHeader
+              title={schedSec === 'in' ? 'Bevételek' : schedSec === 'out' ? 'Kiadások' : 'Ütemezés'}
+              sub="napokra bontva · oldalra húzva előző / következő hónap"
+              onBack={() => setTab('home')}
+            />
+            <div style={{ padding: '12px 16px 24px' }}>
+              <MonthSchedule
+                m={m}
+                today={data.today}
+                entries={schedEntries(m, schedSec)}
+                sectionOf={ix.sectionOf}
+                leafLabel={(l) => ix.leafById[l]?.label || ''}
+                onMonth={(d) => {
+                  const nm = addMonths(m, d);
+                  setM(nm);
+                  scrollToMonth(nm);
+                }}
+                onOpen={openEntry}
+                onDate={moveDate}
+              />
+            </div>
+          </>
+        )}
         {tab === 'alerts' && (
           <>
             <MobileHeader title="Riasztások" sub="Eltérések a havi tervtől" onBack={() => setTab('home')} />
@@ -936,7 +983,7 @@ function SheetView({
   onSaved: (ym: string) => void;
   onPartner: (leaf: string) => void;
 }) {
-  const { ix, data, commit: storeCommit, canEdit } = useStore();
+  const { ix, data, commit: storeCommit, canEdit, run } = useStore();
   const [snapshot] = useState(data);
   const saving = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -1508,6 +1555,103 @@ function SheetView({
     }
   }
 
+  if (sheet.kind === 'bankpick') {
+    const plan = data.entries.find((x) => x.id === sheet.planId);
+    if (plan) {
+      const q = sheet.q.trim().toLowerCase().replace(/\s+/g, '');
+      const cands = data.bankTx
+        .filter((t) => !t.actual_id && (t.status === 'new' || t.status === 'ignored') && Math.sign(t.amount) === Math.sign(plan.amount))
+        .filter((t) => !q || `${t.partner} ${t.memo} ${Math.abs(t.amount)}`.toLowerCase().replace(/\s+/g, '').includes(q))
+        .map((t) => ({
+          t,
+          score:
+            Math.abs(Math.abs(t.amount) - Math.abs(plan.amount)) / Math.max(1, Math.abs(plan.amount)) +
+            Math.abs(Date.parse(t.date) - Date.parse(plan.date)) / (30 * 86400000) +
+            (t.leaf_id === plan.leaf_id ? -0.5 : 0) +
+            (t.plan_id === plan.id ? -1 : 0),
+        }))
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 40);
+      const link = (t: (typeof cands)[number]['t']) =>
+        run(
+          async () => {
+            if (t.status === 'ignored') await api('/api/bank/ignore', { body: { ids: [t.id], undo: true } });
+            await api('/api/bank/approve', { body: { items: [{ id: t.id, plan_id: plan.id, leaf_id: plan.leaf_id }] } });
+          },
+          `${plan.name || ix.leafById[plan.leaf_id]?.label}: összevonva a banki tétellel (${fmt(Math.abs(t.amount))} Ft)`,
+        ).then((ok) => ok && close());
+      body = (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>Összevonás banki tétellel</span>
+            <span style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>
+              {ix.leafById[plan.leaf_id]?.label} · {plan.name}
+            </span>
+            <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+              terv {fmt(Math.abs(plan.amount))} Ft · {plan.date.replace(/-/g, '.')}. – válaszd ki a hozzá tartozó banki tételt
+            </span>
+          </div>
+          <input
+            autoFocus
+            value={sheet.q}
+            onChange={(ev) => setSheet({ ...sheet, q: ev.target.value })}
+            placeholder="🔍 Keresés: partner, közlemény, összeg…"
+            style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: 12, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
+          />
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              border: `1px solid ${C.line}`,
+              borderRadius: 14,
+              overflow: 'hidden',
+              maxHeight: '52vh',
+              overflowY: 'auto',
+            }}
+          >
+            {!cands.length && <div style={{ padding: 16, font: `500 13.5px ${FONT}`, color: C.muted }}>Nincs összevonható banki tétel.</div>}
+            {cands.map(({ t }, i) => {
+              const same = Math.abs(t.amount) === Math.abs(plan.amount);
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => link(t)}
+                  style={{
+                    border: 0,
+                    borderTop: i ? `1px solid ${C.line3}` : 0,
+                    background: t.plan_id === plan.id ? C.bg2 : '#fff',
+                    padding: '10px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ width: 44, flex: 'none', font: `700 13px ${FONT_H}`, color: C.navy, textAlign: 'center' }}>
+                    {t.date.slice(5).replace('-', '.')}.
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ font: `600 14px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {t.partner || '—'}
+                    </span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {t.plan_id === plan.id ? 'javasolt · ' : ''}
+                      {t.status === 'ignored' ? 'kihagyott · ' : ''}
+                      {t.memo}
+                    </span>
+                  </span>
+                  <b style={{ font: `700 14px ${FONT}`, color: same ? '#1A7340' : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {fmt(Math.abs(t.amount))}
+                  </b>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      );
+    }
+  }
+
   if (sheet.kind === 'detail') {
     const plan = sheet.planId ? data.entries.find((x) => x.id === sheet.planId) : undefined;
     const actual = sheet.actualId ? data.entries.find((x) => x.id === sheet.actualId) : undefined;
@@ -1651,22 +1795,25 @@ function SheetView({
           )}
           {plan && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <button
-                onClick={() => {
-                  commit(markDone(data, [plan.id], !plan.done), plan.done ? 'Terv újra nyitott' : 'Kész ✓');
-                  close();
-                }}
-                style={{
-                  height: 46,
-                  border: `1.5px solid ${plan.done ? C.line2 : C.blue}`,
-                  borderRadius: 999,
-                  background: plan.done ? '#fff' : C.blue,
-                  font: `600 14px ${FONT}`,
-                  color: plan.done ? C.navy : '#fff',
-                }}
-              >
-                {plan.done ? 'Visszaállítás nyitottra' : '✓ Késznek jelöl'}
-              </button>
+              {plan.done ? (
+                <button
+                  onClick={() => {
+                    commit(markDone(data, [plan.id], false), 'Terv újra nyitott');
+                    close();
+                  }}
+                  style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: 999, background: '#fff', font: `600 14px ${FONT}`, color: C.navy }}
+                >
+                  Visszaállítás nyitottra
+                </button>
+              ) : (
+                // a „kész” jelölés helyett: összevonás a hozzá tartozó banki tétellel (a tény a bankból jön)
+                <button
+                  onClick={() => setSheet({ kind: 'bankpick', planId: plan.id, q: '', back: sheet })}
+                  style={{ height: 46, border: 0, borderRadius: 999, background: C.blue, font: `600 14px ${FONT}`, color: '#fff' }}
+                >
+                  ⇄ Banki tétellel összevon
+                </button>
+              )}
               <button
                 onClick={() =>
                   setSheet({
