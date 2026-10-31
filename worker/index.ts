@@ -99,6 +99,16 @@ export default {
     } catch (e: any) {
       if (e instanceof HttpError) return withSecurityHeaders(json({ error: e.message }, e.status));
       console.error(e);
+      // diagnosztikához: a legutóbbi szerverhibák (végpont + hibaüzenet, adat nélkül) – a diag lekérdezés olvassa
+      try {
+        const u = new URL(req.url);
+        const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'server_errors'").first<{ value: string }>();
+        const list: unknown[] = JSON.parse(row?.value || '[]');
+        list.unshift({ at: new Date().toISOString(), m: req.method, p: u.pathname, e: String(e?.message || e).slice(0, 300), s: String(e?.stack || '').slice(0, 400) });
+        await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('server_errors', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+          .bind(JSON.stringify(list.slice(0, 20)))
+          .run();
+      } catch {}
       // a belső hiba részletei csak a naplóba kerülnek, a válaszba nem
       return withSecurityHeaders(json({ error: 'Szerverhiba. Próbáld újra később.' }, 500));
     }
