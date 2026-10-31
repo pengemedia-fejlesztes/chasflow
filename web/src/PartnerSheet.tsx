@@ -3,14 +3,14 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { fmt, monthLong, ymOf } from '../../shared/model';
-import { hasMonth } from '../../shared/monthname';
+import { baseName, hasMonth } from '../../shared/monthname';
 import type { PartnerStat } from '../../shared/partners';
 import type { Entry } from '../../shared/types';
 import { BankPickDialog } from './BankPick';
 import { CalendarSheet } from './DatePicker';
 import { usePlanOfActual } from './LinkChain';
 import { itemLabel } from './MonthList';
-import { shiftDate } from './logic';
+import { rowKey, shiftDate } from './logic';
 import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, relTime } from './ui';
@@ -75,7 +75,7 @@ export function PartnerSheet({
     // Billingo-számlából jött terv: a név „Cégnév · Penge / 2026-000001 …” – ebből nincs tételnév, csak „Számla – hónap”
     const raw = (e.name || '').replace(/\s*·\s*\S+\s*\/\s*\d{4}-\d+.*$/, '').trim();
     if (!raw || raw !== e.name?.trim()) return `Számla – ${monthLong(e.period || ymOf(e.date)).replace(/^\d+\.\s*/, '')}`;
-    return itemLabel(e.name, p.name) || sn || fb;
+    return baseName(itemLabel(e.name, p.name)) || sn || fb;
   };
   const planOfActual = usePlanOfActual();
 
@@ -117,6 +117,23 @@ export function PartnerSheet({
       }));
     return [...inv, ...acts].sort((a, b) => b.ym.localeCompare(a.ym));
   }, [p, byId, planOfActual, seriesName]);
+
+  // miből áll: a befolyt tények a Cashflow-ban rögzített tételnév szerint (a tényhez kötött terv neve, hónap nélkül)
+  const comps = useMemo(() => {
+    const m = new Map<string, Comp>();
+    for (const e of p.past) {
+      if (e.kind !== 'actual' || ix.sectionOf(e.leaf_id) !== sec) continue;
+      const pl = planOfActual.get(e.id);
+      const name = baseName(pl?.name || e.name || '') || '(név nélkül)';
+      const k = name.toLowerCase();
+      const c = m.get(k) || { name, total: 0, count: 0, leaf: (pl || e).leaf_id, key: pl ? rowKey(pl) : undefined };
+      c.total += Math.abs(e.amount);
+      c.count++;
+      if (!c.key && pl) c.key = rowKey(pl);
+      m.set(k, c);
+    }
+    return [...m.values()];
+  }, [p.past, planOfActual, ix, sec]);
 
   const openItems = p.future.filter((e) => e.kind === 'plan' && !e.done).sort((a, b) => a.date.localeCompare(b.date));
   const lateNow = p.outstanding || openItems.filter((e) => e.date < data.today).reduce((a, e) => a + Math.abs(e.amount), 0);
@@ -252,13 +269,13 @@ export function PartnerSheet({
               );
             })}
 
-            {p.pastComponents.length > 0 && (
+            {comps.length > 0 && (
               <>
                 <Head
                   title={`Miből áll a ${sec === 'in' ? 'bevétel' : 'kiadás'}`}
-                  right={`${p.first ? p.first.slice(0, 7).replace('-', '.') + '. óta · ' : ''}${(p.pastComponents.reduce((a, c) => a + c.total, 0) >= 0 ? '+' : '−') + (Math.abs(p.pastComponents.reduce((a, c) => a + c.total, 0)) / 1e6).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} M`}
+                  right={`${p.first ? p.first.slice(0, 7).replace('-', '.') + '. óta · ' : ''}+${(comps.reduce((a, c) => a + c.total, 0) / 1e6).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} M`}
                 />
-                <Composition comps={p.pastComponents} />
+                <Composition comps={comps} onEdit={onEditItem} />
               </>
             )}
           </div>
@@ -433,11 +450,14 @@ function Btn({ children, onClick, dark }: { children: ReactNode; onClick: () => 
 }
 
 /** Miből áll a bevétel: tételnév szerinti arányos sáv + jelmagyarázat. */
-function Composition({ comps }: { comps: PartnerStat['pastComponents'] }) {
+type Comp = { name: string; total: number; count: number; leaf: string; key?: string };
+
+function Composition({ comps, onEdit }: { comps: Comp[]; onEdit: (leaf: string, key?: string) => void }) {
   const list = [...comps].filter((c) => c.total > 0).sort((a, b) => b.total - a.total);
   const top = list.slice(0, 4);
   const rest = list.slice(4).reduce((a, c) => a + c.total, 0);
-  const parts = rest > 0 ? [...top, { name: 'egyéb', total: rest, count: list.slice(4).reduce((a, c) => a + c.count, 0) }] : top;
+  const parts: (Comp | { name: string; total: number; count: number; leaf?: undefined; key?: undefined })[] =
+    rest > 0 ? [...top, { name: 'egyéb', total: rest, count: list.slice(4).reduce((a, c) => a + c.count, 0) }] : top;
   const sum = parts.reduce((a, c) => a + c.total, 0) || 1;
   const COL = [C.blue, '#C3DCEB', '#7FB3D5', '#E3EEF6', C.line2];
   return (
@@ -451,11 +471,23 @@ function Composition({ comps }: { comps: PartnerStat['pastComponents'] }) {
           />
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', font: `400 15px ${FONT}`, color: C.ink }}>
+      <div style={{ display: 'flex', gap: '8px 22px', flexWrap: 'wrap', font: `400 15px ${FONT}`, color: C.ink }}>
         {parts.map((c, i) => (
           <span key={c.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <i style={{ width: 13, height: 13, borderRadius: 3, background: COL[i % COL.length], display: 'inline-block' }} />
-            {c.name} · {c.count} db · <b style={{ color: C.navy }}>{fmt(c.total)}</b>
+            <i style={{ width: 13, height: 13, borderRadius: 3, background: COL[i % COL.length], display: 'inline-block', flex: 'none' }} />
+            {c.leaf ? (
+              <button
+                type="button"
+                title="Tétel szerkesztése"
+                onClick={() => onEdit(c.leaf!, c.key)}
+                style={{ border: 0, background: 'transparent', padding: 0, font: `600 15px ${FONT}`, color: C.blueDark, cursor: 'pointer', textAlign: 'left' }}
+              >
+                {c.name}
+              </button>
+            ) : (
+              c.name
+            )}{' '}
+            · {c.count} db · <b style={{ color: C.navy }}>{fmt(c.total)}</b>
           </span>
         ))}
       </div>
