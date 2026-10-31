@@ -514,7 +514,9 @@ function ItemRow({
 
   /** a nyitott, nem kiszámlázott tervek újragenerálása (ismétlődés, fizetés napja, tervezés hossza változásakor) */
   const regen = (o: { rep: Rep; day: string; months: number; tentative?: boolean; startDate?: string }) => {
-    const start = o.startDate || firstOpen?.date || data.today;
+    // ha már minden hónap lezárt (kifizetett), az új tervek a következő hónaptól indulnak – a kifizetett hónap nem duplázódik
+    const after = firstOpen && !editable.length ? `${addMonths(ymOf(firstOpen.date), 1)}-${firstOpen.date.slice(8)}` : null;
+    const start = o.startDate || after || firstOpen?.date || data.today;
     const dnum = Number(o.day.replace(/\D/g, '')) || 1;
     const b = genSeries({
       leaf: curLeaf,

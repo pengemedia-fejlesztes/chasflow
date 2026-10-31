@@ -3,7 +3,24 @@
 // Itt forditjuk at az SQLite-nyelvjarast MySQL-re.
 import mysql from 'mysql2/promise';
 
-const RESERVED_UNUSED = ['key', 'keys', 'order', 'groups', 'rank', 'status', 'range', 'read', 'write', 'usage', 'option', 'lines', 'rows', 'partition', 'leave', 'leaves'];
+const RESERVED_UNUSED = [
+  'key',
+  'keys',
+  'order',
+  'groups',
+  'rank',
+  'status',
+  'range',
+  'read',
+  'write',
+  'usage',
+  'option',
+  'lines',
+  'rows',
+  'partition',
+  'leave',
+  'leaves',
+];
 
 export function translate(sqlIn) {
   let sql = sqlIn;
@@ -21,6 +38,16 @@ export function translate(sqlIn) {
   // ON CONFLICT(...) DO UPDATE SET x = excluded.y  ->  ON DUPLICATE KEY UPDATE x = VALUES(y)
   sql = sql.replace(/ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET/gi, 'ON DUPLICATE KEY UPDATE');
   sql = sql.replace(/\bexcluded\.([A-Za-z_][\w]*)/gi, (m, c) => `VALUES(${quote(c)})`);
+
+  // SQLite „IS ?” (null-biztos egyenlőség) -> MySQL <=>; a sorozat-verzió (json_array) szövegként, szóközök nélkül hasonlítva
+  sql = sql.replace(
+    /\(\s*SELECT\s+json_array\(([^)]*)\)\s+FROM\s+(\w+)\s+WHERE\s+id\s*=\s*\?\s*\)\s+IS\s+\?/gi,
+    (m, cols, tbl) => `(SELECT REPLACE(CAST(json_array(${cols}) AS CHAR), ' ', '') FROM ${tbl} WHERE id = ?) <=> REPLACE(?, ' ', '')`,
+  );
+  sql = sql.replace(/\)\s+IS\s+\?/gi, ') <=> ?');
+  // SQLite kétargumentumú MAX(a, b) / MIN(a, b) -> GREATEST / LEAST (az aggregát MAX(x) marad)
+  sql = sql.replace(/\bMAX\(\s*([\w.]+)\s*,/gi, 'GREATEST($1,');
+  sql = sql.replace(/\bMIN\(\s*([\w.]+)\s*,/gi, 'LEAST($1,');
 
   // SQLite datum-aritmetika
   sql = sql.replace(/date\(\s*'now'\s*,\s*'([+-]?\d+)\s+days?'\s*\)/gi, (m, n) => {
@@ -54,19 +81,34 @@ export function translate(sqlIn) {
     const wm = tail.match(/\sWHERE\s([\s\S]*)$/i);
     if (wm) {
       let cond = wm[1].trim().replace(/;\s*$/, '');
-      const assigns = tail.slice(0, wm.index).replace(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i, '').trim();
+      const assigns = tail
+        .slice(0, wm.index)
+        .replace(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i, '')
+        .trim();
       // a feltetelben a tabla-prefixet elhagyjuk (a meglevo sor), az excluded-bol VALUES() lesz
       cond = cond.replace(/\b[A-Za-z_][\w]*\.(?=[A-Za-z_])/g, (mm) => (/^excluded\./i.test(mm) ? mm : ''));
       cond = cond.replace(/excluded\.([A-Za-z_][\w]*)/gi, (mm, c) => `VALUES(${quote(c)})`);
       const parts = [];
-      let depth = 0, cur = '';
+      let depth = 0,
+        cur = '';
       for (const ch of assigns) {
         if (ch === '(') depth++;
         if (ch === ')') depth--;
-        if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+        if (ch === ',' && depth === 0) {
+          parts.push(cur);
+          cur = '';
+          continue;
+        }
         cur += ch;
       }
       if (cur.trim()) parts.push(cur);
+      // a MySQL balról jobbra frissít és a feltételt már a frissített értékekkel számolja: előbb a feltételben nem
+      // szereplő oszlopok, utána a feltétel oszlopai (így a feltétel az eredeti sorra vonatkozik)
+      const inCond = (a) => {
+        const col = a.slice(0, a.indexOf('=')).trim().replace(/`/g, '');
+        return new RegExp(`(^|[^\w])${col}([^\w]|$)`).test(cond);
+      };
+      parts.sort((x, y) => Number(inCond(x)) - Number(inCond(y)));
       const wrapped = parts
         .map((a) => {
           const eq = a.indexOf('=');
@@ -86,7 +128,7 @@ export function translate(sqlIn) {
 
   // foglalt szo: a semaban egyedul a `key` oszlopnev utkozik (settings, partners, employees)
   sql = sql.replace(/(^|[\s(,.])key(?=[\s),=]|$)/gi, (m, pre) => {
-    if (/primary\s*$/i.test(pre)) return m;      // PRIMARY KEY
+    if (/primary\s*$/i.test(pre)) return m; // PRIMARY KEY
     if (/foreign\s*$/i.test(pre)) return m;
     return `${pre}\`key\``;
   });
@@ -96,7 +138,6 @@ export function translate(sqlIn) {
   return sql;
 }
 
-
 function globToRegex(pat) {
   let out = '^';
   for (let i = 0; i < pat.length; i++) {
@@ -104,8 +145,12 @@ function globToRegex(pat) {
     if (c === '*') out += '.*';
     else if (c === '?') out += '.';
     else if (c === '[') {
-      let j = i + 1, cls = '[';
-      if (pat[j] === '!') { cls += '^'; j++; }
+      let j = i + 1,
+        cls = '[';
+      if (pat[j] === '!') {
+        cls += '^';
+        j++;
+      }
       for (; j < pat.length && pat[j] !== ']'; j++) cls += pat[j];
       cls += ']';
       out += cls;
