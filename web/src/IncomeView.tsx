@@ -72,7 +72,8 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   shown
     .sort((a, b) => a.date.localeCompare(b.date))
     .forEach((e) => {
-      const k = e.date < data.today && !e.tentative ? 'overdue' : ymOf(e.date);
+      // a lejárt tételek is hónaponként (a határidő hónapja szerint), külön „Lejárt · hónap” fejléccel
+      const k = e.date < data.today && !e.tentative ? 'overdue:' + ymOf(e.date) : ymOf(e.date);
       if (!byMonth.has(k)) byMonth.set(k, []);
       byMonth.get(k)!.push(e);
     });
@@ -167,8 +168,9 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
       {[...byMonth.entries()].map(([k, es]) => (
         <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '0 4px' }}>
-            <span style={{ font: `700 13px ${FONT_H}`, color: k === 'overdue' ? C.neg : C.navy, letterSpacing: '.04em', textTransform: 'uppercase' }}>
-              {k === 'overdue' ? 'Lejárt határidejű' : monthLong(k)}
+            <span style={{ font: `700 13px ${FONT_H}`, color: k.startsWith('overdue:') ? C.neg : C.navy, letterSpacing: '.04em', textTransform: 'uppercase' }}>
+              {k.startsWith('overdue:') ? `Lejárt · ${monthLong(k.slice(8))}` : monthLong(k)}
+              <span style={{ color: C.muted, fontWeight: 600, letterSpacing: 0, textTransform: 'none' }}> · {es.length} tétel</span>
             </span>
             <span style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
               {side === 'all'
@@ -310,7 +312,9 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
         />
       )}
       {byMonth.size === 0 && (
-        <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs nyitott tervezett {side === 'out' ? 'kiadás' : side === 'in' ? 'bevétel' : 'tétel'}.</div>
+        <div style={{ ...card, padding: 28, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>
+          Nincs nyitott tervezett {side === 'out' ? 'kiadás' : side === 'in' ? 'bevétel' : 'tétel'}.
+        </div>
       )}
 
       <div style={{ ...card, overflow: 'hidden', display: focus === 'all' ? undefined : 'none' }}>
