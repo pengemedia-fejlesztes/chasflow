@@ -259,6 +259,67 @@ export async function linkSameMonthActuals(env: Env): Promise<number> {
   return stmts.length;
 }
 
+/**
+ * A NAV-számlából felvett terv már kifizetett tény, ha: van hozzá azonos összegű tény (→ összekötés), vagy egy várakozó /
+ * kihagyott banki tétel (→ jóváhagyás a tervhez), különben ha kártyával / készpénzzel fizették, a terv lezárul (a vásárláskor
+ * fizetve) – így nem marad „lejárt tervezett kiadás” (pl. SimplePay, Szilvási Trader kártyás vásárlás).
+ */
+export async function settleNavPlans(env: Env): Promise<number> {
+  const [pR, aR, tR] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT p.id, p.leaf_id, p.amount, p.date, n.issue_date, n.payment_date, n.payment_method, n.partner_name FROM entries p
+       JOIN nav_invoices n ON n.id = p.ext_ref OR n.plan_id = p.id
+       WHERE p.kind = 'plan' AND p.done = 0 AND COALESCE(p.tentative, 0) = 0 AND p.date < date('now') AND p.date >= date('now', '-400 days')`,
+    ),
+    env.DB.prepare(
+      `SELECT a.id, a.date, a.amount FROM entries a WHERE a.kind = 'actual' AND a.amount < 0 AND a.date >= date('now', '-420 days')
+       AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)`,
+    ),
+    env.DB.prepare(
+      "SELECT id, date, amount, status, partner FROM bank_tx WHERE amount < 0 AND actual_id IS NULL AND status IN ('new', 'ignored') AND date >= date('now', '-420 days')",
+    ),
+  ]);
+  const acts = aR.results as any[];
+  const txs = tR.results as any[];
+  const usedA = new Set<string>(),
+    usedT = new Set<string>();
+  const t0 = now();
+  const stmts: D1PreparedStatement[] = [];
+  const items: ApproveItem[] = [];
+  const seen = new Set<string>();
+  for (const p of pR.results as any[]) {
+    if (seen.has(p.id)) continue;
+    seen.add(p.id);
+    const from = p.issue_date || p.date;
+    const inWin = (d: string) => d >= addDaysIso(from, -5) && d <= addDaysIso(p.payment_date || p.date, 60);
+    const a = acts.find((x) => !usedA.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    if (a) {
+      usedA.add(a.id);
+      stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(a.id, t0, p.id));
+      continue;
+    }
+    const tx = txs.find((x) => !usedT.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    if (tx) {
+      usedT.add(tx.id);
+      if (tx.status === 'ignored') stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'new' WHERE id = ? AND status = 'ignored'").bind(tx.id));
+      items.push({ id: tx.id, leaf_id: p.leaf_id, plan_id: p.id });
+      continue;
+    }
+    // kártyás / készpénzes számla: a vásárláskor kifizetve (a bankban más összeggel / devizában jelenhet meg)
+    if (/^(CARD|CASH)$/i.test(p.payment_method || ''))
+      stmts.push(
+        env.DB.prepare(
+          "UPDATE entries SET done = 1, note = COALESCE(note, 'NAV: kártyával / készpénzzel fizetve'), updated_at = ? WHERE id = ? AND done = 0",
+        ).bind(t0, p.id),
+      );
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  if (items.length) await approve(env, null, items);
+  return stmts.length + items.length;
+}
+
+const addDaysIso = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400_000).toISOString().slice(0, 10);
+
 export async function syncAll(env: Env) {
   const res: Record<string, unknown> = {};
   // partnertörzs adószámai a már meglévő NAV/Billingo adatokból (a szinkron párosítása így már adószám alapján megy)
@@ -327,6 +388,11 @@ export async function syncAll(env: Env) {
     res.namesMerged2 = await mergePartnerNames(env);
   } catch (e: any) {
     res.invoicePlansError = e.message;
+  }
+  try {
+    res.navSettled = await settleNavPlans(env);
+  } catch (e: any) {
+    res.navSettledError = e.message;
   }
   try {
     res.linkedSameMonth = await linkSameMonthActuals(env);

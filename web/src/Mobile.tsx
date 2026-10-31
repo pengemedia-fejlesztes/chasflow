@@ -22,7 +22,7 @@ import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, NetBox, ToastView, relTime } from './ui';
+import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted } from './ui';
 
 type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more' | 'sched';
 type Sheet =
@@ -223,7 +223,10 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   };
   const openDetail = (r: MonthRow) => setSheet({ kind: 'detail', planId: r.plan?.id ?? null, actualId: r.actual?.id ?? null });
   const gSign = G?.section === 'in' ? 1 : -1;
-  const catDeleted = (data.deleted || []).filter((d) => inM(d) && gIds.has(d.leaf_id));
+  const [showDeleted] = useShowDeleted();
+  const catDeletedAll = (data.deleted || []).filter((d) => inM(d) && gIds.has(d.leaf_id));
+  // törölt tételek csak bekapcsolt „Töröltek mutatása” mellett
+  const catDeleted = showDeleted ? catDeletedAll : [];
   const selIds = Object.keys(sel).filter((k) => sel[k]);
 
   const openNew = () =>
@@ -721,6 +724,11 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 onToggleDone={(e) => commit(markDone(data, [e.id], !e.done), e.done ? 'Újra nyitott' : 'Kész ✓')}
                 onPartner={openPartner}
               />
+              {catDeletedAll.length > 0 && (
+                <div style={{ padding: '4px 4px 0' }}>
+                  <ShowDeletedToggle count={catDeletedAll.length} />
+                </div>
+              )}
               {catDeleted.map((d) => (
                 <div
                   key={'del' + d.rid}

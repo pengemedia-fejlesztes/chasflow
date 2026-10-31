@@ -193,59 +193,77 @@ export function Modal(props: { onClose: () => void; children: ReactNode; width?:
   const titleId = useId();
   const close = useRef(props.onClose);
   close.current = props.onClose;
+  // a felugró ablak a dokumentumban van (nem a böngésző „felső rétegében”), így az oldal görgetése görgeti –
+  // a görgetős képernyőkép / felvétel így az előtérben lévő ablakot rögzíti
+  const [top] = useState(() => (typeof window !== 'undefined' ? window.scrollY : 0));
   useEffect(() => {
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
-    dialog.showModal();
-    return () => {
-      dialog.close();
-      if (previous?.isConnected) previous.focus();
-    };
-  }, []);
-  return createPortal(
-    <dialog
-      ref={ref}
-      aria-modal="true"
-      aria-labelledby={props.title ? titleId : undefined}
-      aria-label={props.title ? undefined : props.label || 'Szerkesztőablak'}
-      onCancel={(e) => {
+    dialog.show();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
         e.preventDefault();
         close.current();
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close.current();
-      }}
-      style={{
-        border: 0,
-        padding: 0,
-        background: 'transparent',
-        color: 'inherit',
-        width: '100%',
-        maxWidth: '100%',
-        height: '100%',
-        maxHeight: '100%',
-        margin: 0,
-      }}
-    >
-      <div
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      dialog.close();
+      window.scrollTo({ top });
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [top]);
+  return createPortal(
+    <>
+      <div aria-hidden style={{ position: 'fixed', inset: 0, background: 'rgba(0,32,64,.38)', zIndex: 900 }} onClick={() => close.current()} />
+      <dialog
+        ref={ref}
+        aria-modal="true"
+        aria-labelledby={props.title ? titleId : undefined}
+        aria-label={props.title ? undefined : props.label || 'Szerkesztőablak'}
+        onCancel={(e) => {
+          e.preventDefault();
+          close.current();
+        }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) close.current();
+        }}
         style={{
-          width: props.width || 640,
-          maxWidth: 'calc(100% - 32px)',
-          margin: '7vh auto',
-          background: '#fff',
-          borderRadius: 20,
-          boxShadow: '0 2px 4px rgba(0,32,64,.06),0 24px 48px rgba(0,32,64,.2)',
-          overflow: 'hidden',
+          position: 'absolute',
+          top,
+          left: 0,
+          zIndex: 901,
+          border: 0,
+          padding: '1px 0 7vh',
+          background: 'transparent',
+          color: 'inherit',
+          width: '100%',
+          maxWidth: '100%',
+          minHeight: '100vh',
+          margin: 0,
         }}
       >
-        {props.title && (
-          <div id={titleId} style={{ padding: '20px 24px 0', font: `700 18px ${FONT_H}`, color: C.navy }}>
-            {props.title}
-          </div>
-        )}
-        {props.children}
-      </div>
-    </dialog>,
+        <div
+          style={{
+            width: props.width || 640,
+            maxWidth: 'calc(100% - 32px)',
+            margin: '7vh auto',
+            background: '#fff',
+            borderRadius: 20,
+            boxShadow: '0 2px 4px rgba(0,32,64,.06),0 24px 48px rgba(0,32,64,.2)',
+            overflow: 'hidden',
+          }}
+        >
+          {props.title && (
+            <div id={titleId} style={{ padding: '20px 24px 0', font: `700 18px ${FONT_H}`, color: C.navy }}>
+              {props.title}
+            </div>
+          )}
+          {props.children}
+        </div>
+      </dialog>
+    </>,
     document.body,
   );
 }
@@ -394,6 +412,44 @@ export function NetBox({ value, onChange, small }: { value: string | number; onC
         style={{ width: small ? 14 : 16, height: small ? 14 : 16, cursor: 'inherit' }}
       />
       {on ? `nettó ${fmt(st!.net)} + ÁFA` : 'nettó'}
+    </label>
+  );
+}
+
+/** Törölt (kukába tett) tételek mutatása – közös, megjegyzett beállítás minden nézetben (alapból ki). */
+export function useShowDeleted(): [boolean, (v: boolean) => void] {
+  const read = () => {
+    try {
+      return localStorage.getItem('cf_show_deleted') === '1';
+    } catch {
+      return false;
+    }
+  };
+  const [v, setV] = useState(read);
+  useEffect(() => {
+    const on = () => setV(read());
+    window.addEventListener('cf-show-deleted', on);
+    return () => window.removeEventListener('cf-show-deleted', on);
+  }, []);
+  const set = (n: boolean) => {
+    try {
+      localStorage.setItem('cf_show_deleted', n ? '1' : '0');
+    } catch {}
+    setV(n);
+    window.dispatchEvent(new Event('cf-show-deleted'));
+  };
+  return [v, set];
+}
+
+/** „Töröltek mutatása” jelölőnégyzet */
+export function ShowDeletedToggle({ count }: { count?: number }) {
+  const [v, set] = useShowDeleted();
+  return (
+    <label
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, font: `600 12.5px ${FONT}`, color: C.muted, cursor: 'pointer', whiteSpace: 'nowrap' }}
+    >
+      <input type="checkbox" checked={v} onChange={(e) => set(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.blue }} />
+      Töröltek mutatása{count ? ` (${count})` : ''}
     </label>
   );
 }

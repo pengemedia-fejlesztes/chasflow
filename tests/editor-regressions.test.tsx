@@ -41,6 +41,11 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () {
     this.open = true;
   };
+  // a Modal a dokumentumban nyílik (show), hogy az oldal görgetése görgesse
+  HTMLDialogElement.prototype.show = function () {
+    this.open = true;
+  };
+  window.scrollTo = vi.fn() as any;
   HTMLDialogElement.prototype.close = function () {
     this.open = false;
   };

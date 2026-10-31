@@ -1,4 +1,4 @@
-import { MONTHLY_RX, baseName } from '../../shared/monthname';
+import { baseName } from '../../shared/monthname';
 import { parseWholeForint } from '../../shared/amount';
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
@@ -28,6 +28,51 @@ const REP_OPTS: [Mode, string][] = [
 ];
 /** „2026-10” → „2026. október” */
 const monthName = (ym: string) => monthLong(ym);
+const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
+/** „2026. okt.” */
+const ymShort = (ym: string) => `${ym.slice(0, 4)}. ${SM[Number(ym.slice(5, 7)) - 1]}`;
+/** „nov. 17.” vagy évvel: „2026. nov. 4.” */
+const dateShort = (d: string, year: boolean) => `${year ? d.slice(0, 4) + '. ' : ''}${SM[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}.`;
+/** „17-én”, „1-jén”, „2-án”, „20-án” */
+const dayOn = (n: number) => {
+  const last = n % 10;
+  const suf = n === 10 ? 'én' : n === 20 || n === 30 ? 'án' : last === 1 ? 'jén' : [2, 3, 6, 8].includes(last) ? 'án' : 'én';
+  return `${n}-${suf}`;
+};
+
+/** Hónaponként egy pötty: teli = fizetve / teljesült, halvány = tervezett, szaggatott = kihagyott / üres hónap; kattintásra az a hónap nyílik. */
+function MonthDots({ all, today, onPick }: { all: Entry[]; today: string; onPick: (ym: string) => void }) {
+  const ms = [...new Set(all.map(periodOf))].sort();
+  if (!ms.length) return null;
+  const range: string[] = [];
+  for (let m = ms[0]; m <= ms[ms.length - 1] && range.length < 24; m = addMonths(m, 1)) range.push(m);
+  return (
+    <span style={{ display: 'flex', gap: 4, flex: 'none' }} onClick={(ev) => ev.stopPropagation()}>
+      {range.map((m) => {
+        const es = all.filter((e) => periodOf(e) === m);
+        const done = es.length > 0 && es.every((e) => e.done);
+        const st = !es.length ? 'gap' : done ? 'done' : 'plan';
+        const late = st === 'plan' && es.some((e) => e.date < today);
+        return (
+          <span
+            key={m}
+            role="button"
+            title={`${monthLong(m)}: ${st === 'done' ? 'fizetve' : st === 'plan' ? (late ? 'lejárt, még nincs fizetve' : 'tervezett') : 'kihagyva / üres'}`}
+            onClick={() => onPick(m)}
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: 4,
+              cursor: 'pointer',
+              background: st === 'done' ? C.blue : st === 'plan' ? (late ? '#F6C9C1' : '#D6E4EF') : 'transparent',
+              border: st === 'gap' ? `1.5px dashed ${C.line2}` : 0,
+            }}
+          />
+        );
+      })}
+    </span>
+  );
+}
 /** a tétel hónapja: amelyikhez tartozik (period), különben a fizetés hónapja */
 const periodOf = (e: Entry) => e.period || ymOf(e.date);
 const monthRangeOf = (a: string, b: string) => {
@@ -111,42 +156,73 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
       .sort((a, b) => (a.next?.date || '').localeCompare(b.next?.date || ''));
   }, [partner, data.entries, data.series, data.today, data.billingo, data.navInvoices, keyOf, L]);
 
+  // a következő 12 hónap biztos tervei (ajánlat nélkül), a partner minden tételéből
+  const next12 = useMemo(() => {
+    if (!L) return 0;
+    const to = addMonths(ix.cur, 11);
+    return data.entries
+      .filter((e) => e.kind === 'plan' && e.leaf_id === L.id && !e.done && !e.tentative && periodOf(e) >= ix.cur && periodOf(e) <= to)
+      .reduce((a, e) => a + Math.abs(e.amount), 0);
+  }, [L, data.entries, ix.cur]);
+
   return (
-    <Modal onClose={onClose} width={760}>
-      <div style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+    <Modal onClose={onClose} width={860}>
+      <div
+        style={{
+          padding: '24px 28px 4px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          background: C.bg,
+        }}
+      >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <span style={eyebrow}>{section === 'in' ? 'Vevő · bevétel' : 'Szállító · kiadás'}</span>
-          {L && !picking ? (
-            <span style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <b style={{ font: `800 26px/1.1 ${FONT_H}`, color: C.navy }}>{L.label}</b>
-              <button
-                title={`Új tétel${focusYm ? ` – ${monthName(focusYm)}` : ''}`}
-                onClick={() => setOpen('new')}
-                style={{
-                  border: `1.5px solid ${C.blue}`,
-                  background: C.bg2,
-                  color: C.blueDark,
-                  borderRadius: 999,
-                  height: 30,
-                  padding: '0 12px',
-                  font: `700 13px ${FONT}`,
-                  cursor: 'pointer',
-                  alignSelf: 'center',
-                }}
-              >
-                + {focusYm ? `${monthName(focusYm)}` : 'Új tétel'}
-              </button>
+          <span style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+            <span style={{ ...eyebrow, color: C.blue }}>
+              {section === 'in' ? 'Vevő' : 'Szállító'}
+              {L && !picking ? ` · ${displayGroup(ix.groupById[L.group_id]?.label || '')}` : ''}
+            </span>
+            {L && !picking && (
               <button
                 onClick={() => setPicking(true)}
-                style={{ border: 0, background: 'transparent', color: C.blueDark, font: `600 12.5px ${FONT}`, cursor: 'pointer', padding: 0 }}
+                style={{ border: 0, background: 'transparent', color: C.muted, font: `600 12px ${FONT}`, cursor: 'pointer', padding: 0 }}
               >
                 másik partner
               </button>
-            </span>
+            )}
+          </span>
+          {L && !picking ? (
+            <b style={{ font: `800 34px/1.1 ${FONT_H}`, color: C.navy }}>{L.label}</b>
           ) : (
             <b style={{ font: `700 20px ${FONT_H}`, color: C.navy }}>Válassz partnert</b>
           )}
         </div>
+        {L && !picking && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+              <span style={{ ...eyebrow, color: C.muted }}>Következő 12 hó</span>
+              <b style={{ font: `800 24px/1.1 ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(next12)} Ft</b>
+            </span>
+            <button
+              title={`Új tétel${focusYm ? ` – ${monthName(focusYm)}` : ''}`}
+              onClick={() => setOpen('new')}
+              style={{
+                border: 0,
+                background: C.blue,
+                color: '#fff',
+                borderRadius: 999,
+                height: 44,
+                padding: '0 22px',
+                font: `700 15px ${FONT}`,
+                cursor: 'pointer',
+              }}
+            >
+              + {focusYm ? monthName(focusYm) : 'Új tétel'}
+            </button>
+          </span>
+        )}
         {(picking || !L) && (
           <Seg
             small
@@ -163,7 +239,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         )}
       </div>
 
-      <div style={{ padding: '14px 24px 8px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ padding: '14px 28px 8px', display: 'flex', flexDirection: 'column', gap: 14, background: C.bg }}>
         {(picking || !L) && (
           <div style={{ maxHeight: 280, overflow: 'auto' }}>
             <LeafPicker
@@ -181,8 +257,10 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
 
         {L && !picking && (
           <>
-            <div style={{ display: 'flex', flexDirection: 'column', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
-              {items.length === 0 && <div style={{ padding: '14px 16px', color: C.muted, font: `500 13.5px ${FONT}` }}>Még nincs nyitott tétele.</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {items.length === 0 && open !== 'new' && (
+                <div style={{ padding: '14px 16px', color: C.muted, font: `500 13.5px ${FONT}` }}>Még nincs nyitott tétele.</div>
+              )}
               {items.map((it, i) => (
                 <ItemRow
                   key={it.key}
@@ -205,7 +283,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                   onApply={(b, msg) => commit(b, msg)}
                 />
               ))}
-              <div style={{ borderTop: items.length ? `1px solid ${C.line}` : 0 }}>
+              <div style={{ border: open === 'new' ? `1px solid ${C.line}` : 0, borderRadius: 16, overflow: 'hidden', background: '#fff' }}>
                 {open === 'new' ? (
                   <NewItem
                     key={focusYm || 'cur'}
@@ -225,24 +303,26 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                       })
                     }
                   />
-                ) : (
-                  <button
-                    onClick={() => setOpen('new')}
-                    style={{
-                      width: '100%',
-                      border: 0,
-                      background: '#fff',
-                      padding: '13px 16px',
-                      textAlign: 'left',
-                      font: `700 14px ${FONT}`,
-                      color: C.blueDark,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    + Új tétel ehhez a partnerhez
-                  </button>
-                )}
+                ) : null}
               </div>
+              {/* jelmagyarázat a hónap-pöttyökhöz */}
+              {items.some((it) => it.rep !== 'once') && (
+                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', padding: '2px 6px', font: `500 13px ${FONT}`, color: C.muted }}>
+                  {(
+                    [
+                      ['fizetve', { background: C.blue }],
+                      ['tervezett', { background: '#D6E4EF' }],
+                      ['lejárt', { background: '#F6C9C1' }],
+                      ['kihagyva / üres', { border: `1.5px dashed ${C.line2}` }],
+                    ] as [string, React.CSSProperties][]
+                  ).map(([l, st]) => (
+                    <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <i style={{ width: 14, height: 14, borderRadius: 4, ...st }} />
+                      {l}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <ClosedItems leaf={L.id} focusKey={edit?.key && !items.some((it) => it.key === edit.key) ? edit.key : null} keyOf={keyOf} />
             <div style={{ padding: '0 4px' }}>
@@ -528,54 +608,44 @@ function ItemRow({
   };
 
   return (
-    <div style={{ borderTop: first ? 0 : `1px solid ${C.line3}`, background: expanded ? C.bg3 : '#fff' }}>
+    <div style={{ border: `1px solid ${C.line}`, borderRadius: 16, background: expanded ? C.bg3 : '#fff', boxShadow: '0 1px 2px rgba(0,32,64,.04)' }}>
       <button
         onClick={onToggle}
         style={{
           width: '100%',
           border: 0,
           background: 'transparent',
-          padding: '12px 16px',
+          padding: '16px 20px',
           display: 'flex',
           alignItems: 'center',
-          gap: 12,
+          gap: 16,
           textAlign: 'left',
           cursor: 'pointer',
         }}
       >
-        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {(() => {
-              // a következő számlázandó hónap a névben („Havi díj – 2026. november”), mellette az összes nyitott hónap
-              const ms = [...new Set(it.open.map(periodOf))].sort();
-              const recurring = it.rep !== 'once' || MONTHLY_RX.test(it.name);
-              if (!recurring || !ms.length) return it.name;
-              const nx = it.next ? periodOf(it.next) : ms[0];
-              return (
-                <>
-                  {it.name} – {monthLong(nx)}
-                  {ms.length > 1 && (
-                    <span style={{ color: C.muted, fontWeight: 500 }}>
-                      {' '}
-                      · nyitott: {monthLong(ms[0])} – {monthLong(ms[ms.length - 1])}
-                    </span>
-                  )}
-                </>
-              );
-            })()}
-          </span>
-          <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', font: `500 12px ${FONT}`, color: C.muted }}>
-            <span>{REP[it.rep]}</span>
-            {next && (
-              <span>
-                · következő: {dot(next.date)}
-                {it.rep !== 'once' ? ` (${monthName(periodOf(next))})` : ''}
+        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <span style={{ font: `700 16px ${FONT_H}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+            {it.tentative && (
+              <span
+                style={{ flex: 'none', padding: '2px 10px', borderRadius: 999, border: `1.5px dashed ${C.line2}`, font: `600 12px ${FONT}`, color: C.muted }}
+              >
+                ajánlat
               </span>
             )}
-            {it.open.length > 1 && <span>· {it.open.length} nyitott</span>}
-            {it.tentative && <span style={{ color: '#8A6D1C', fontWeight: 700 }}>· ajánlat</span>}
-            {it.inv ? (
-              it.invDoc ? (
+          </span>
+          <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+            {(() => {
+              // „Havonta · 17-én · 2026. okt. – 2027. dec. · következő: nov. 17.” / „Egyszeri · 2026. nov. 4.”
+              const ms = [...new Set(it.all.map(periodOf))].sort();
+              if (it.rep === 'once' || !ms.length) return `${REP.once} · ${next ? dateShort(next.date, true) : ''}`;
+              const day = Number((next || it.open[0] || it.all[it.all.length - 1]).date.slice(8));
+              return [REP[it.rep], dayOn(day), `${ymShort(ms[0])} – ${ymShort(ms[ms.length - 1])}`, next ? `következő: ${dateShort(next.date, false)}` : '']
+                .filter(Boolean)
+                .join(' · ');
+            })()}
+            {it.inv &&
+              (it.invDoc ? (
                 <span
                   role="link"
                   tabIndex={0}
@@ -587,24 +657,24 @@ function ItemRow({
                   onKeyDown={(ev) => ev.key === 'Enter' && (ev.stopPropagation(), openBillingoDoc(it.invDoc!))}
                   style={{ color: C.blueDark, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}
                 >
+                  {' '}
                   · {it.inv} ↗
                 </span>
               ) : (
-                <span style={{ color: C.blueDark, fontWeight: 700 }}>· {it.inv}</span>
-              )
-            ) : (
-              <span style={{ color: '#8A6D1C' }}>· terv (még nincs számla)</span>
-            )}
+                <span style={{ color: C.blueDark, fontWeight: 700 }}> · {it.inv}</span>
+              ))}
           </span>
-          {it.rep !== 'once' && <MonthStatus all={it.all} name={it.name} onPick={onPickMonth} />}
         </span>
-        <b style={{ font: `700 15px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        {it.rep !== 'once' && <MonthDots all={it.all} today={data.today} onPick={(m) => onPickMonth?.(m)} />}
+        <b style={{ font: `700 18px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 110, textAlign: 'right' }}>
           {fmt(Math.abs(next?.amount || 0))} Ft
         </b>
-        <span style={{ color: C.muted, font: `700 14px ${FONT}` }}>{expanded ? '▾' : '▸'}</span>
+        <span style={{ color: C.muted2, font: `700 12px ${FONT}`, transform: expanded ? 'rotate(180deg)' : undefined }}>▼</span>
       </button>
       {expanded && (
         <fieldset disabled={!canEdit} style={{ border: 0, margin: 0, padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* hónaponként: számla, fizetve / nincs kiszámlázva / terv */}
+          {it.rep !== 'once' && <MonthStatus all={it.all} name={it.name} onPick={onPickMonth} />}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <input
               value={name}
@@ -1231,7 +1301,29 @@ function MonthList({
             >
               {title(periodOf(e))}
               <span style={{ color: C.muted, minWidth: 150 }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</span>
+              {/* terv · tény · eltérés (bevételnél a több, kiadásnál a kevesebb a jó) */}
+              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>
+                {e.kind === 'plan' && act ? (
+                  (() => {
+                    const pl = Math.abs(e.plan_amount ?? e.amount),
+                      ac = Math.abs(act.amount),
+                      d = ac - pl;
+                    const good = ix.sectionOf(e.leaf_id) === 'in' ? d > 0 : d < 0;
+                    return (
+                      <>
+                        terv {fmt(pl)} · tény <b>{fmt(ac)}</b>
+                        {d !== 0 && (
+                          <b style={{ marginLeft: 6, color: good ? '#1A7340' : C.neg }}>
+                            {d > 0 ? '▲' : '▼'} {fmt(Math.abs(d))}
+                          </b>
+                        )}
+                      </>
+                    );
+                  })()
+                ) : (
+                  <>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</>
+                )}
+              </span>
               <span style={{ flex: 1, minWidth: 140, color: '#2E7D4F', fontWeight: 700 }}>
                 ✓ {e.kind === 'actual' ? 'befizetve (terv nélkül)' : act ? 'fizetve' : 'kész'}
                 {doc && (

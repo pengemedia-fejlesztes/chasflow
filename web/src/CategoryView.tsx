@@ -30,7 +30,7 @@ import { CalendarSheet } from './DatePicker';
 import { budgetMonth } from '../../shared/budget';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, FONT, FONT_H, LeafSelect, NetBox, Seg, card, eyebrow, inputStyle } from './ui';
+import { C, FONT, FONT_H, LeafSelect, NetBox, Seg, ShowDeletedToggle, card, eyebrow, inputStyle, useShowDeleted } from './ui';
 
 const GOOD = '#1A7340';
 const GOOD_BG = '#E8F5EE';
@@ -69,6 +69,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     for (const e of data.entries) if (e.kind === 'plan' && e.link_id) m.set(e.link_id, e);
     return m;
   }, [data.entries]);
+  const [showDeleted] = useShowDeleted();
   if (!G) return null;
   const NEW = '__new';
   const qaLeaf = qa.leaf === NEW || !firstLeaf ? NEW : leafIds.has(qa.leaf) ? qa.leaf : firstLeaf;
@@ -98,7 +99,8 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
   }
   // törölt tervek (kuka): áthúzva látszanak a havi rácsban, egy kattintással visszaállíthatók
   const delMap = new Map<string, DeletedEntry[]>();
-  for (const d of data.deleted || []) {
+  // csak ha fent be van jelölve a „Töröltek mutatása”
+  for (const d of showDeleted ? data.deleted || [] : []) {
     if (!leafIds.has(d.leaf_id) || !visibleSet.has(ymOf(d.date))) continue;
     const k = rowKey(d);
     // újraütemezett tétel régi változata: ha ugyanazzal a névvel él egy sor ennél a partnernél, a régi nem kell áthúzva
@@ -808,6 +810,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
             <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
               Partnerre kattintva lenyílnak a feladatai · a múlt hónapokban a tény látszik, alatta a terv
             </span>
+            <ShowDeletedToggle count={(data.deleted || []).filter((d) => leafIds.has(d.leaf_id) && visibleSet.has(ymOf(d.date))).length} />
           </div>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', font: `400 12.5px ${FONT}`, color: C.muted, alignItems: 'center' }}>
             <Legend bg={C.bg2} border={`1px solid ${C.line2}`} text="tervezett — ○ pipálás: kész · összegre kattintás: kijelölés" />

@@ -26,6 +26,10 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, setFilters, toast, canEdit } = st;
   const [view, setView] = useState<View>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'overview'));
+  // nézetváltáskor az oldal tetejére (a dokumentum görget)
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [view, filters.groupId]);
   const [modal, setModal] = useState<{ leaf?: string | null; edit?: EditTarget | null } | null>(null);
   // az Áttekintés nem a kiválasztott kategóriára szűr (az csak a kategória nézeté) – különben pl. csak az Ajánlatok látszanának
   const matrix = useMemo(() => buildMatrix(ix, view === 'cat' ? filters : { ...filters, groupId: null }), [ix, filters, view]);
@@ -70,8 +74,11 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '256px minmax(0,1fr)', height: '100vh', overflow: 'hidden' }}>
-      <aside style={{ background: C.navy, color: '#fff', display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '256px minmax(0,1fr)', minHeight: '100vh', alignItems: 'start' }}>
+      {/* az oldal (dokumentum) görget, nem egy belső doboz – a görgetős képernyőkép így az egész oldalt rögzíti; az oldalsáv rögzített */}
+      <aside
+        style={{ background: C.navy, color: '#fff', display: 'flex', flexDirection: 'column', overflow: 'auto', position: 'sticky', top: 0, height: '100vh' }}
+      >
         <div style={{ padding: '22px 22px 18px', display: 'flex', alignItems: 'center', gap: 11 }}>
           <div style={{ width: 34, height: 34, borderRadius: 999, background: C.blue, display: 'grid', placeItems: 'center', font: `800 11px ${FONT_H}` }}>
             CF
@@ -237,7 +244,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         </div>
       </aside>
 
-      <main style={{ overflow: 'auto', position: 'relative' }}>
+      <main style={{ position: 'relative', minWidth: 0 }}>
         {view === 'overview' && (
           <Overview
             matrix={matrix}
@@ -828,7 +835,7 @@ function Overview({
         </div>
       </div>
 
-      <div style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
+      <div style={{ ...card, overflowX: 'auto' }}>
         <div
           style={{
             display: 'grid',
