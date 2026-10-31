@@ -1,5 +1,5 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
-import { withMonth } from '../shared/monthname';
+import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
@@ -100,7 +100,10 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     groups: groups.results as any,
     leaves: leaves.results as any,
     series: series.results as any,
-    entries: entries.results as any,
+    // a terv-tételek neve a hónappal megy ki (tárolva alapnév van)
+    entries: (entries.results as any[]).map((e) =>
+      e.kind === 'plan' ? { ...e, name: withMonth(e.name, e.period || String(e.date).slice(0, 7), true) } : e,
+    ) as any,
     accounts: accounts.results as any,
     bankTx: bankTx.results as any,
     billingo: billingo.results as any,
@@ -125,9 +128,10 @@ function cleanEntry(e: Entry): Entry {
   // ismétlődő tétel (havidíj, munkabér, bérleti díj…): a név a hónappal („Munkabér – 2026. október”); a hónap (period) rögzül,
   // így a fizetés napja szabadon mozgatható, a név (melyik hónapé) marad
   const ym = ent.period || ent.date.slice(0, 7);
-  // minden tervtétel (egyszeri, ütemezett, havi…) a hónapjával – egy adat, egyformán kezelve
-  const name = withMonth(ent.name, ym, true);
-  return name !== ent.name || !ent.period ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
+  // A név EGY helyen él: alapnévként tároljuk, a hónapot a megjelenítéskor tesszük hozzá
+  // (így a szolgáltatás átnevezése minden hónapnál egyszerre látszik).
+  const name = baseName(ent.name).slice(0, 200) || ent.name;
+  return name !== ent.name || !ent.period ? { ...ent, name, period: ym } : ent;
 }
 
 function cleanEntryRaw(e: Entry): Entry {
@@ -187,8 +191,12 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
       ).bind(String(s.id).slice(0, 80), s.leaf_id, String(s.name || '').slice(0, 200), rep, Math.min(31, Math.max(1, Number(s.day) || 1))),
     );
   }
+  // A sorozathoz tartozo tetel atnevezese EGY helyen hat: a sorozat neve es az osszes
+  // (meg nem lezart) honapja egyszerre kapja az uj nevet.
+  const atnevezesek = new Map<string, string>();
   for (const raw of b.upsert || []) {
     const e = cleanEntry(raw);
+    if (e.kind === 'plan' && e.series_id && e.name) atnevezesek.set(String(e.series_id), e.name);
     stmts.push(
       env.DB.prepare(
         `INSERT INTO entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, was_offer, offer_at, ${P ? 'period, ' : ''}source, ext_ref, link_id, note, updated_at, updated_by)
@@ -223,6 +231,11 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
       ),
     );
   }
+  for (const [sid, nev] of atnevezesek) {
+    stmts.push(env.DB.prepare('UPDATE series SET name = ? WHERE id = ?').bind(nev, sid));
+    stmts.push(env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0").bind(nev, t, sid));
+  }
+
   // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek).
   // A számlák partnereit EGY lekérdezéssel kérjük le (korábban soronként ment egy-egy kérés).
   const billingoRows = (b.upsert || []).filter((r) => r.ext_ref && String(r.ext_ref).startsWith('billingo:'));
