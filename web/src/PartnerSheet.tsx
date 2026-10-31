@@ -11,10 +11,9 @@ import { CalendarSheet } from './DatePicker';
 import { usePlanOfActual } from './LinkChain';
 import { itemLabel } from './MonthList';
 import { shiftDate } from './logic';
-import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks } from './PartnerCard';
-import { PartnerDetail } from './PartnersView';
+import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card } from './ui';
+import { C, FONT, FONT_H, Pill, card, relTime } from './ui';
 
 const KIND: Record<string, string> = { vevo: 'Vevő', szallito: 'Szállító', mindketto: 'Vevő és szállító' };
 const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
@@ -355,18 +354,28 @@ export function PartnerSheet({
       )}
 
       {tab === 'set' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(360px,1fr))', gap: 18, alignItems: 'start' }}>
-          <div style={{ ...card, padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <b style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>Ki ő?</b>
-            <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="company" onSaved={onRenamed} />
-            <PartnerDetail p={p} embedded part="names" onBack={onClose} />
-          </div>
-          <div style={{ ...card, padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <b style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>Mikor fizet?</b>
-            <PaymentTerms p={p} />
-          </div>
-          <div style={{ gridColumn: '1 / -1' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <SecHead>Azonosítás</SecHead>
+          <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="settings" onSaved={onRenamed} />
+          <PaymentTerms p={p} rows />
+          <SecHead>Kapcsolódó</SecHead>
+          <SettingRow title="Tervezett feladatok" sub={sec === 'in' ? 'Mit számlázunk' : 'Mit fizetünk'}>
             <PlannedTasks p={p} onEdit={onEditItem} />
+          </SettingRow>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 16,
+              padding: '12px 0 0',
+              borderTop: `1px solid ${C.line}`,
+              font: `400 13px ${FONT}`,
+              color: C.muted,
+            }}
+          >
+            <i style={{ width: 8, height: 8, borderRadius: 999, background: C.blue, display: 'inline-block' }} />
+            Minden változás azonnal mentődik{p.info?.updated_at ? ` · utoljára ${relTime(p.info.updated_at)}` : ''}
           </div>
         </div>
       )}

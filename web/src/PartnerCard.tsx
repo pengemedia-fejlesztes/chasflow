@@ -49,9 +49,10 @@ export function PartnerEditor({
   onSaved?: (key: string) => void;
   compact?: boolean;
   /** basic = név + típus (adatlap 1. fül), company = cégadatok + mappák (2. fül), all = minden (partnertörzs) */
-  part?: 'basic' | 'company' | 'all';
+  part?: 'basic' | 'company' | 'all' | 'settings';
 }) {
   const { ix, data, run, canEdit } = useStore();
+  const [browse, setBrowse] = useState(false);
   const [name, setName] = useState(p.name);
   // a típus mindig egyértelmű: ha a partnertörzsben nincs megadva, a mappák szerint (bevétel / projekt = vevő, kiadás = szállító)
   const [kind, setKind] = useState<Kind>(p.info?.kind || kindOf(p, ix.sectionOf));
@@ -125,6 +126,182 @@ export function PartnerEditor({
   };
   const moveLeaf = (leafId: string, group_id: string) => run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id } }), 'Projekt módosítva');
   const addRole = (group_id: string) => run(() => api('/api/leaves', { body: { group_id, label: p.name } }), 'Hozzáadva');
+
+  if (part === 'settings') {
+    // adatlap › Beállítások (látványterv): soronként felirat + mező
+    const k = kind === 'auto' ? kindOf(p, ix.sectionOf) : kind;
+    const mainLeaf = p.leaves[0];
+    const groups = ix.groups.filter((g) => k === 'mindketto' || g.section === (k === 'vevo' ? 'in' : 'out'));
+    const cnt = (gid: string) => ix.leaves.filter((l) => l.group_id === gid && !l.archived).length;
+    const srcOf = (a: string) => p.billingNames.find((b) => normalizeText(b.name) === normalizeText(a));
+    return (
+      <>
+        <SettingRow title="Típus" sub="Vevő = bevétel, szállító = kiadás">
+          <Seg
+            value={kind}
+            onChange={(v) => {
+              if (!canEdit) return;
+              setKind(v);
+              persist({ kind: v });
+            }}
+            options={[
+              ['vevo', 'Vevő'],
+              ['szallito', 'Szállító'],
+              ['mindketto', 'Mindkettő'],
+            ]}
+          />
+        </SettingRow>
+        <SettingRow title="Kategória" sub="Ide kerülnek a tételei">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            {mainLeaf && (
+              <select
+                value={mainLeaf.group_id}
+                disabled={!canEdit}
+                onChange={(e) => moveLeaf(mainLeaf.id, e.target.value)}
+                style={{ ...inputStyle, height: 44, minWidth: 300, font: `600 15px ${FONT}`, color: C.navy }}
+              >
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.section === 'in' ? 'Bevétel' : 'Kiadás'} › {displayGroup(g.label)} · {cnt(g.id)} partner
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              onClick={() => setBrowse(!browse)}
+              style={{ border: 0, background: 'transparent', color: C.blueDark, font: `600 14px ${FONT}`, cursor: 'pointer', padding: 0 }}
+            >
+              {browse ? 'Mappák elrejtése ‹' : 'Mappák böngészése ›'}
+            </button>
+          </div>
+          <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+            {p.leaves.length > 1 ? `${p.leaves.length} helyen szerepel – a többit a mappafában látod. ` : ''}A teljes mappafa a „Mappák böngészése” alatt nyílik
+            meg.
+          </span>
+          {browse && <FolderTree p={p} kind={k} canEdit={canEdit} onMove={moveLeaf} onAdd={addRole} />}
+        </SettingRow>
+        <SettingRow title="Nevek" sub="Ezek alapján párosít és összevon: cégnév, Billingo-, NAV-, banki név, üzlet neve">
+          <div style={{ border: `1px solid ${C.line2}`, borderRadius: 12, overflow: 'hidden' }}>
+            {aliases.map((a) => {
+              const b = srcOf(a);
+              return (
+                <div key={a} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderBottom: `1px solid ${C.line3}` }}>
+                  <b style={{ flex: 1, minWidth: 0, font: `600 15px ${FONT}`, color: C.navy }}>{a}</b>
+                  {b && (
+                    <span style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, color: C.blueDark, font: `600 12px ${FONT}` }}>
+                      {b.source} · {b.n}×
+                    </span>
+                  )}
+                  <span style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, color: C.blueDark, font: `600 12px ${FONT}` }}>✓ párosít</span>
+                  {canEdit && (
+                    <button
+                      onClick={() => {
+                        const next = aliases.filter((x) => x !== a);
+                        setAliases(next);
+                        persist({ aliases: next });
+                      }}
+                      title="Eltávolítás"
+                      style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 15px ${FONT}`, padding: '0 4px' }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {canEdit && (
+              <input
+                value={alias}
+                list={listId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (known.includes(v)) addAlias(v);
+                  else setAlias(v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    addAlias(alias);
+                  }
+                }}
+                onBlur={() => alias.trim() && addAlias(alias)}
+                placeholder="+ Név hozzáadása – keresés a Billingo-, NAV- és banki nevek között…"
+                style={{ width: '100%', border: 0, outline: 'none', padding: '12px 14px', font: `500 14px ${FONT}`, color: C.ink, boxSizing: 'border-box' }}
+              />
+            )}
+            <datalist id={listId}>
+              {known.slice(0, 400).map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </div>
+          {canEdit && suggest.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>Lehet, hogy ez is ő:</span>
+              {suggest.slice(0, 6).map((b) => (
+                <button
+                  key={b.source + b.name}
+                  onClick={() => addAlias(b.name)}
+                  style={{
+                    border: `1.5px dashed ${C.blue}`,
+                    background: '#fff',
+                    borderRadius: 999,
+                    padding: '5px 12px',
+                    font: `600 13px ${FONT}`,
+                    color: C.blueDark,
+                    cursor: 'pointer',
+                  }}
+                >
+                  + {b.name} · {b.source}
+                </button>
+              ))}
+            </div>
+          )}
+        </SettingRow>
+        <SettingRow title="Adószám és megjegyzés">
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,2fr)', gap: 12 }}>
+            <input
+              value={tax}
+              onChange={(e) => setTax(e.target.value)}
+              onBlur={() => persist()}
+              disabled={!canEdit}
+              placeholder="12345678-2-13"
+              style={{ ...inputStyle, height: 44 }}
+            />
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              onBlur={() => persist()}
+              disabled={!canEdit}
+              placeholder="kapcsolattartó, szerződés, egyéb"
+              style={{ ...inputStyle, height: 44 }}
+            />
+          </div>
+          {canEdit && navTax && navTax !== tax && (
+            <button
+              type="button"
+              onClick={() => {
+                setTax(navTax);
+                persist({ tax: navTax });
+              }}
+              style={{
+                alignSelf: 'flex-start',
+                border: 0,
+                background: 'transparent',
+                padding: 0,
+                color: C.blueDark,
+                font: `600 12.5px ${FONT}`,
+                cursor: 'pointer',
+              }}
+            >
+              NAV-számla szerint: {navTax} – beírom
+            </button>
+          )}
+        </SettingRow>
+      </>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -629,6 +806,39 @@ function FolderTree({
   );
 }
 
+/** Beállítás-sor: balra felirat + magyarázat, jobbra a mező (adatlap › Beállítások). */
+export function SettingRow({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+  return (
+    <div
+      style={{ display: 'grid', gridTemplateColumns: 'minmax(180px,280px) minmax(0,1fr)', gap: 24, padding: '18px 0', borderBottom: `1px solid ${C.line3}` }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{title}</b>
+        {sub && <span style={{ font: `400 13px/1.4 ${FONT}`, color: C.muted }}>{sub}</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>{children}</div>
+    </div>
+  );
+}
+
+/** Szakaszcím: kis kék nagybetűs felirat vonallal. */
+export function SecHead({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        font: `700 12px ${FONT}`,
+        letterSpacing: '.18em',
+        textTransform: 'uppercase',
+        color: C.blue,
+        padding: '22px 0 10px',
+        borderBottom: `1px solid ${C.line3}`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 const TERM_MODES: [string, string][] = [
   ['inv', 'Számla a hónap 1. munkanapján + N nap'],
   ['day', 'Minden hónap adott napján'],
@@ -637,8 +847,16 @@ const TERM_MODES: [string, string][] = [
 ];
 
 /** Fizetési feltételek partnerenként (alkategóriánként): mikor esedékes a rendszeres tétel – a tervek ehhez igazodnak. */
-export function PaymentTerms({ p }: { p: PartnerStat }) {
+export function PaymentTerms({ p, rows }: { p: PartnerStat; rows?: boolean }) {
   const { ix } = useStore();
+  if (rows)
+    return (
+      <>
+        {p.leaves.map((l) => (
+          <TermRow key={l.id} leafId={l.id} sec={ix.sectionOf(l.id)} avgLate={p.avgLate} rows />
+        ))}
+      </>
+    );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <span style={{ font: `500 13px/1.5 ${FONT}`, color: C.muted }}>
@@ -652,7 +870,7 @@ export function PaymentTerms({ p }: { p: PartnerStat }) {
   );
 }
 
-function TermRow({ leafId, sec, avgLate }: { leafId: string; sec: Section; avgLate?: number | null }) {
+function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section; avgLate?: number | null; rows?: boolean }) {
   const { ix, data, run, commit, canEdit } = useStore();
   const L = ix.leafById[leafId];
   const rule = L?.pay_rule || '';
@@ -689,6 +907,113 @@ function TermRow({ leafId, sec, avgLate }: { leafId: string; sec: Section; avgLa
   };
   const ym = data.today.slice(0, 7);
   const next = [0, 1, 2].map((i) => payDate(addMonths(ym, i), newRule, clamp(mode, n) || 1));
+  const suggestDays = avgLate != null ? Math.max(10, Math.round(((mode === 'inv' ? clamp('inv', n) : 8) + avgLate) / 10) * 10) : 0;
+  if (rows)
+    return (
+      <>
+        <SecHead>
+          Fizetés · {sec === 'in' ? 'vevőként (bevétel)' : 'szállítóként (kiadás)'} · {displayGroup(ix.groupById[L?.group_id || '']?.label || '')}
+        </SecHead>
+        <SettingRow title={sec === 'in' ? 'Mikor számlázunk?' : 'Mikor fizetünk?'} sub="Minden hónapban így ismétlődik; az új rendszeres tervek ide kerülnek">
+          <div style={{ alignSelf: 'flex-start', maxWidth: '100%', overflowX: 'auto' }}>
+            <Seg
+              value={mode}
+              onChange={(v: string) => {
+                if (!canEdit) return;
+                setMode(v);
+                save(v);
+              }}
+              options={TERM_MODES.map(([v, l]) => [v, l.replace(' + N nap', '')]) as any}
+            />
+          </div>
+        </SettingRow>
+        {(mode === 'inv' || mode === 'day') && (
+          <SettingRow
+            title={mode === 'inv' ? 'Fizetési határidő' : 'A hónap napja'}
+            sub={`Jelenleg: ${
+              payRuleLabel(rule || null) === 'nincs szabály'
+                ? `számla + ${L?.pay_days ?? payDefaults(data.settings, sec).payDays} nap (alapértelmezett)`
+                : payRuleLabel(rule)
+            }`}
+          >
+            <label style={{ display: 'flex', gap: 12, alignItems: 'center', font: `500 15px ${FONT}`, color: C.ink }}>
+              <input
+                value={n}
+                onChange={(e) => setN(e.target.value.replace(/\D/g, ''))}
+                onBlur={() => save()}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                disabled={!canEdit}
+                style={{
+                  ...inputStyle,
+                  width: 72,
+                  height: 44,
+                  textAlign: 'center',
+                  font: `700 16px ${FONT}`,
+                  border: `1.5px solid ${C.blue}`,
+                  background: C.bg2,
+                }}
+              />
+              {mode === 'inv' ? 'nap a számlától' : '. nap (hétvégén az előző munkanap)'}
+            </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>Következő esedékességek:</span>
+              {next.map((d) => (
+                <span key={d} style={{ padding: '6px 14px', borderRadius: 999, background: C.bg, font: `600 14px ${FONT}`, color: C.navy }}>
+                  {d.replace(/-/g, '.')}.
+                </span>
+              ))}
+            </div>
+          </SettingRow>
+        )}
+        {sec === 'in' && avgLate != null && avgLate > 5 && (
+          <SettingRow title="Ahogy valójában fizet" sub="Billingo-számlák és banki tények alapján">
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 18,
+                padding: '14px 18px',
+                borderRadius: 12,
+                background: '#FDF5F3',
+                border: `1px solid #F3D9D3`,
+                flexWrap: 'wrap',
+              }}
+            >
+              <b style={{ font: `800 26px ${FONT_H}`, color: C.neg, whiteSpace: 'nowrap' }}>+{Math.round(avgLate)} nap</b>
+              <span style={{ flex: '1 1 240px', font: `400 14px/1.45 ${FONT}`, color: C.ink }}>
+                átlagos késés a határidőhöz képest. Javaslat: a cashflow-tervben számolj <b>{suggestDays} nappal</b>.
+              </span>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('inv');
+                    setN(String(suggestDays));
+                    save('inv', String(suggestDays));
+                  }}
+                  style={{ border: 0, borderRadius: 999, background: C.navy, color: '#fff', padding: '10px 18px', font: `600 14px ${FONT}`, cursor: 'pointer' }}
+                >
+                  Tervezés tényleges késéssel
+                </button>
+              )}
+            </div>
+          </SettingRow>
+        )}
+        {canEdit && (
+          <SettingRow title="Meglévő tervek">
+            <label style={{ display: 'flex', gap: 10, alignItems: 'center', font: `500 14.5px ${FONT}`, color: C.ink, cursor: 'pointer' }}>
+              <input type="checkbox" checked={resched} onChange={(e) => setResched(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.blue }} />A
+              nyitott rendszeres tervek átütemezése is <span style={{ color: C.muted }}>({moved.length} változik)</span>
+            </label>
+          </SettingRow>
+        )}
+        {sec === 'out' && normalizeText(ix.groupById[L?.group_id || '']?.label || '').includes('alvallalkoz') && (
+          <SettingRow title="Elszámoló tábla">
+            <SheetLink leafId={leafId} />
+          </SettingRow>
+        )}
+      </>
+    );
   return (
     <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <b style={{ font: `700 14px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy }}>
