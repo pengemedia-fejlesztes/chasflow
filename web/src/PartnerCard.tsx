@@ -13,6 +13,7 @@ import { sheetIdOf } from '../../shared/worktime';
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
+import { MobilePartnerScreen } from './MobileFlows';
 import { PartnerModal } from './PartnerModal';
 import { PartnerDetail } from './PartnersView';
 import { useStore } from './store';
@@ -989,6 +990,8 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const p = all.find((x) => x.key === key);
   const close = () => openPartner(null);
   if (task) return <PartnerModal leaf={task.leaf} edit={task.key ? { key: task.key } : null} onClose={() => setTask(null)} />;
+  // mobilon teljes képernyős adatlap: lejárt · átl. késés · 12 hó, következő tétel, előzmények, „hogyan fizet?” naptár
+  if (mobile && p) return <MobilePartnerScreen p={p} onClose={close} onNewItem={(leaf) => setTask({ leaf })} onEditItem={(leaf) => setTask({ leaf })} />;
   return (
     <Modal onClose={close} width={1000}>
       <div style={{ padding: mobile ? 16 : 24, display: 'flex', flexDirection: 'column', gap: 14 }}>

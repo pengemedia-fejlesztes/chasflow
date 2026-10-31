@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { AlertsView, useFlags } from './AlertsView';
 import { useBack } from './back';
 import { StatsHub } from './StatsHub';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
@@ -12,11 +12,11 @@ import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type Mon
 import { api } from './api';
 import { BankView } from './BankView';
 import { FilterBar } from './Filters';
-import { IncomeView } from './IncomeView';
 import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useMergeCounts } from './MergeTabs';
+import { DueList, PlanQuick, TodoCard, useTodos } from './MobileFlows';
 import { MONTHLY_RX, withMonth } from '../../shared/monthname';
 import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
@@ -24,7 +24,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted } from './ui';
 
-type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'bank' | 'more' | 'sched';
+type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
 type Sheet =
   | {
       kind: 'new';
@@ -48,6 +48,8 @@ type Sheet =
       p2d?: string;
     }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
+  /** tétel-lap: összeg, esedékesség, beépített naptár (+1 hó), szerkesztés */
+  | { kind: 'plan'; planId: string }
   /** nyitott terv összevonása egy banki tétellel (keresés a bankszámla tételei között) */
   | { kind: 'bankpick'; planId: string; q: string; back?: Sheet }
   | {
@@ -192,7 +194,18 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
 
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const mc = useMergeCounts();
-  const mergeN = flags.length + mc.billingo + mc.bank + mc.names;
+  const [dueSeg, setDueSeg] = useState<'late' | 'cur' | 'later' | undefined>(undefined);
+  const todos = useTodos({
+    flagsUninvoiced: flags.filter((f) => f.kind === 'uninvoiced' || f.kind === 'underbilled').length,
+    merge: mc.billingo + mc.bank + mc.names + flags.filter((f) => f.kind === 'invoice').length,
+    newTx,
+    go: (to) => {
+      if (to === 'lateIn' || to === 'lateOut') {
+        setDueSeg('late');
+        setTab(to === 'lateIn' ? 'income' : 'out');
+      } else setTab(to === 'bank' ? 'bank' : 'alerts');
+    },
+  });
   const maxNet = Math.max(...chartMonths.map((ym) => Math.abs(balances.net.get(ym) || 0)), 1);
   const maxBal = Math.max(...chartMonths.map((ym) => Math.abs(balances.bal.get(ym) || 0)), 1);
   const balNeg = chartMonths.some((ym) => (balances.bal.get(ym) || 0) < 0);
@@ -241,10 +254,28 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <div style={{ background: C.navy, color: '#fff', padding: '10px 20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                <span style={{ font: `700 17px ${FONT_H}` }}>
-                  Cashflow <b style={{ color: C.blue2 }}>tervező</b>{' '}
-                  <small style={{ font: `600 11px ${FONT}`, color: C.muted2, letterSpacing: '.02em' }}>{APP_VERSION}</small>
+                <span style={{ font: `700 20px ${FONT_H}` }} title={APP_VERSION}>
+                  {monthLong(m)
+                    .replace(/^\d{4}\.\s*/, '')
+                    .replace(/^./, (c) => c.toUpperCase())}
+                  {m.slice(0, 4) !== ix.cur.slice(0, 4) ? ` ${m.slice(0, 4)}` : ''}
                 </span>
+                <button
+                  onClick={() => setTab('more')}
+                  aria-label="Beállítások"
+                  style={{
+                    height: 36,
+                    width: 36,
+                    border: 0,
+                    borderRadius: 999,
+                    background: C.navy3,
+                    color: '#fff',
+                    font: `600 16px ${FONT}`,
+                    marginLeft: 'auto',
+                  }}
+                >
+                  ⚙
+                </button>
                 <button
                   onClick={() => setTab('bank')}
                   style={{
@@ -267,9 +298,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>
-                  {m === ix.cur
-                    ? `Mai egyenleg: ${fmt(ix.anchor)} Ft · ${monthLabel(m)} várható záró`
-                    : `${monthLong(m)} végén${m > ix.cur ? ' (előrejelzés)' : ''}`}
+                  {m < ix.cur ? 'Hónap végén' : 'Hónap végén várhatóan'}
                 </span>
                 <span
                   style={{
@@ -282,7 +311,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   {fmt(balances.bal.get(m) || 0)} <small style={{ font: `600 16px ${FONT}`, color: C.muted2 }}>Ft</small>
                 </span>
                 <span style={{ font: `500 13px ${FONT}`, color: C.muted2 }}>
-                  Havi eredmény:{' '}
+                  {m === ix.cur ? `Ma ${fmt(ix.anchor)} Ft · ` : ''}eredmény:{' '}
                   <b style={{ color: (balances.net.get(m) || 0) < 0 ? '#FF8A7A' : '#4CC38A' }}>
                     {(balances.net.get(m) || 0) > 0 ? '+' : ''}
                     {fmt(balances.net.get(m) || 0)} Ft
@@ -440,44 +469,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 {filters.includeOffers ? ' · ajánlatok' : ''} ▾
               </button>
             </div>
-            {flags.length > 0 && <FlagBanner mobile n={flags.length} kinds={flags.map((f) => f.kind)} onClick={() => setTab('alerts')} />}
-            {newTx > 0 && (
-              <button
-                onClick={() => setTab('bank')}
-                style={{
-                  margin: '14px 16px 0',
-                  width: 'calc(100% - 32px)',
-                  border: `1px solid ${C.line2}`,
-                  background: C.bg2,
-                  borderRadius: 14,
-                  padding: '14px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  textAlign: 'left',
-                }}
-              >
-                <span
-                  style={{
-                    minWidth: 30,
-                    height: 30,
-                    borderRadius: 999,
-                    background: C.blue,
-                    color: '#fff',
-                    font: `700 13px ${FONT}`,
-                    display: 'grid',
-                    placeItems: 'center',
-                  }}
-                >
-                  {newTx}
-                </span>
-                <span style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <b style={{ font: `600 14px ${FONT}`, color: C.navy }}>Új banki tétel vár jóváhagyásra</b>
-                  <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>Kategória és párosítás kész</span>
-                </span>
-                <span style={{ font: `600 18px ${FONT}`, color: C.blueDark }}>›</span>
-              </button>
-            )}
+            <div style={{ padding: '18px 16px 0' }}>
+              <TodoCard items={todos} />
+            </div>
             <div style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', gap: 18 }}>
               {sections.length === 0 && (
                 <div
@@ -494,26 +488,6 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   Ebben a hónapban nincs tétel.
                 </div>
               )}
-              {/* Összevonás: terv – számla – tény teendők (nincs kiszámlázva, terv nélküli számla, elmaradás, NAV, bank, nevek) */}
-              <button
-                onClick={() => setTab('alerts')}
-                style={{
-                  border: `1px solid ${C.line}`,
-                  background: '#fff',
-                  borderRadius: 14,
-                  padding: '12px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  textAlign: 'left',
-                }}
-              >
-                <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>🔗 Összevonás{mergeN ? ` (${mergeN})` : ''}</b>
-                  <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>terv – számla – tény: ami még nem állt össze</span>
-                </span>
-                <span style={{ font: `600 18px ${FONT}`, color: C.blueDark }}>›</span>
-              </button>
               {/* a hónap ütemezése külön képernyőn: minden bevétel és kiadás napokra bontva */}
               <button
                 onClick={() => (setSchedSec(null), setTab('sched'))}
@@ -820,14 +794,14 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
             <AlertsView mobile />
           </>
         )}
-        {tab === 'income' && (
-          <>
-            <MobileHeader title="Tervezett bevételek, kiadások" sub="mikor fizetnek, mikor fizetünk" onBack={() => setTab('home')} />
-            <IncomeView
-              mobile
-              onOpen={(e) => setSheet({ kind: 'detail', planId: e.kind === 'plan' ? e.id : null, actualId: e.kind === 'actual' ? e.id : null })}
-            />
-          </>
+        {(tab === 'income' || tab === 'out') && (
+          <DueList
+            key={tab + (dueSeg || '')}
+            section={tab === 'income' ? 'in' : 'out'}
+            initialSeg={dueSeg}
+            onOpen={(e) => setSheet({ kind: 'plan', planId: e.id })}
+            onBankPick={(e) => setSheet({ kind: 'bankpick', planId: e.id, q: '' })}
+          />
         )}
         {tab === 'bank' && (
           <>
@@ -908,7 +882,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
       >
         <div style={{ height: 76, display: 'grid', gridTemplateColumns: '1fr 1fr 80px 1fr 1fr', alignItems: 'start', paddingTop: 8 }}>
           <TabBtn active={tab === 'home' || tab === 'cat'} label="Áttekintés" onClick={() => setTab('home')} />
-          <TabBtn active={tab === 'income'} label="Bevétel" onClick={() => setTab('income')} />
+          <TabBtn active={tab === 'income'} label="Bevétel" onClick={() => (setDueSeg(undefined), setTab('income'))} />
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             {canEdit && (
               <button
@@ -930,8 +904,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
               </button>
             )}
           </div>
-          <TabBtn active={tab === 'bank'} label={'Bank' + (newTx ? ` (${newTx})` : '')} onClick={() => setTab('bank')} />
-          <TabBtn active={tab === 'more'} label="Beállítás" onClick={() => setTab('more')} />
+          <TabBtn active={tab === 'out'} label="Kiadás" onClick={() => (setDueSeg(undefined), setTab('out'))} />
+          <TabBtn active={tab === 'bank'} label={'Bank' + (newTx ? ` ${newTx}` : '')} onClick={() => setTab('bank')} />
         </div>
       </div>
 
@@ -1684,6 +1658,15 @@ function SheetView({
         </>
       );
     }
+  }
+
+  if (sheet.kind === 'plan') {
+    const plan = data.entries.find((e) => e.id === sheet.planId);
+    body = plan ? (
+      <PlanQuick plan={plan} onEdit={() => setSheet({ kind: 'detail', planId: plan.id, actualId: null })} onPartner={(l) => (setSheet(null), onPartner(l))} />
+    ) : (
+      <span>A tétel már nem létezik.</span>
+    );
   }
 
   if (sheet.kind === 'detail') {
