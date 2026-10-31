@@ -236,7 +236,7 @@ export function TxCard({
         </div>
 
         {open && canEdit && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.25fr) minmax(0,1fr)', gap: 24, padding: '0 18px 18px 230px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(380px,1fr))', gap: 24, padding: '0 18px 18px clamp(18px, 12vw, 230px)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
               <span style={sub}>Megnevezés</span>
               <input
@@ -376,7 +376,7 @@ export function TxCard({
                       style={{
                         width: '100%',
                         display: 'grid',
-                        gridTemplateColumns: e ? '18px minmax(0,1fr) 64px 84px 76px' : '18px 1fr',
+                        gridTemplateColumns: e ? '18px minmax(110px,1fr) 58px 78px 70px' : '18px 1fr',
                         gap: 10,
                         alignItems: 'center',
                         border: 0,
