@@ -129,7 +129,7 @@ export function PartnerEditor({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {part !== 'company' && (
         <div style={{ display: 'grid', gridTemplateColumns: compact || part === 'basic' ? '1fr' : '1fr 1fr', gap: 10 }}>
-          <Field label="Partner neve (ez jelenik meg mindenhol)">
+          <Field label="Név">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -314,8 +314,6 @@ export function PartnerEditor({
           </div>
         </>
       )}
-
-      {canEdit && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Minden változás automatikusan mentődik.</span>}
 
       {part !== 'basic' && (
         <Field label="Hova tartozik – mappák (a típus szerint: vevő = bevétel, szállító = kiadás)">
@@ -997,7 +995,11 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <span style={eyebrow}>Partner adatlap{p ? ` · ${KIND_LABEL[kindOf(p, ix.sectionOf)]}` : ''}</span>
-            <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 26}px/1.15 ${FONT_H}`, color: C.navy }}>{p?.name || 'Ismeretlen partner'}</h2>
+            {p ? (
+              <PartnerTitle p={p} mobile={mobile} onSaved={(k) => openPartner(k)} />
+            ) : (
+              <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 26}px/1.15 ${FONT_H}`, color: C.navy }}>Ismeretlen partner</h2>
+            )}
             {p && !!p.info?.aliases?.length && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>más néven: {p.info.aliases.join(' · ')}</span>}
           </div>
           <Pill small onClick={close}>
@@ -1034,9 +1036,6 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
             </div>
             {tab === 'main' && (
               <>
-                <div style={{ ...card, padding: 14 }}>
-                  <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="basic" compact={mobile} onSaved={(k) => openPartner(k)} />
-                </div>
                 <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
                 <PartnerDetail p={p} mobile={mobile} embedded part="stats" onBack={close} onEditItem={(leaf, key) => setTask({ leaf, key })} />
               </>
@@ -1056,6 +1055,58 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
         )}
       </div>
     </Modal>
+  );
+}
+
+/** A partner neve a fejlécben; a ceruzára kattintva helyben átírható (Enter / kilépés = mentés, Esc = mégse). */
+function PartnerTitle({ p, mobile, onSaved }: { p: PartnerStat; mobile?: boolean; onSaved: (key: string) => void }) {
+  const { canEdit, run } = useStore();
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(p.name);
+  const font = `700 ${mobile ? 22 : 26}px/1.15 ${FONT_H}`;
+  const save = () => {
+    setEdit(false);
+    const n = v.replace(/\s+/g, ' ').trim();
+    if (!n || n === p.name) return setV(p.name);
+    run(async () => {
+      const r = await api<{ key: string }>(`/api/partners/${encodeURIComponent(p.key)}`, { method: 'PUT', body: { name: n } });
+      onSaved(r.key);
+    }, `Partner átnevezve: ${n}`);
+  };
+  if (edit)
+    return (
+      <input
+        autoFocus
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            setV(p.name);
+            setEdit(false);
+          }
+        }}
+        style={{ ...inputStyle, margin: '2px 0 0', height: mobile ? 40 : 46, font, color: C.navy, width: '100%', maxWidth: 560 }}
+      />
+    );
+  return (
+    <h2 style={{ margin: '2px 0 0', font, color: C.navy, display: 'flex', alignItems: 'center', gap: 8 }}>
+      {p.name}
+      {canEdit && (
+        <button
+          type="button"
+          title="Név átírása"
+          onClick={() => {
+            setV(p.name);
+            setEdit(true);
+          }}
+          style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `500 18px ${FONT}`, padding: 4 }}
+        >
+          ✎
+        </button>
+      )}
+    </h2>
   );
 }
 
