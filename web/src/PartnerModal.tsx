@@ -18,15 +18,8 @@ import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, card, eyebrow, inputStyle } from './ui';
 
-/** Ütemezés: a „két részletben” egyszeri tétel két külön fizetéssel (saját összeg és dátum), sorozat nélkül */
+/** Ütemezés: a „Részletekben” (twice) egyszeri tétel 2–4 külön fizetéssel (saját összeg és dátum), sorozat nélkül */
 type Mode = Rep | 'twice';
-const REP_OPTS: [Mode, string][] = [
-  ['once', 'Egyszeri'],
-  ['twice', 'Egyszeri, 2 részletben'],
-  ['monthly', 'Havonta'],
-  ['quarterly', '3 havonta'],
-  ['yearly', 'Évente'],
-];
 /** „2026-10” → „2026. október” */
 const monthName = (ym: string) => monthLong(ym);
 const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
@@ -82,6 +75,10 @@ const monthRangeOf = (a: string, b: string) => {
   return out;
 };
 const dot = (d: string) => d.replace(/-/g, '. ') + '.';
+/** részletben fizetett tétel neve: „Weboldal – 2. részlet” */
+const PART_RE = /\s*[–-]\s*(\d+)\. részlet$/;
+/** a részlet sorszáma a névből (0 = nem részlet) */
+const partNo = (name: string) => Number(baseName(name || '').match(PART_RE)?.[1] || 0);
 const num = (s: string) => parseWholeForint(s) || 0;
 
 interface Item {
@@ -98,6 +95,10 @@ interface Item {
   inv?: string;
   /** a számla Billingo-azonosítója (kattintásra új ablakban nyílik) */
   invDoc?: number;
+  /** részletekben fizetett egyszeri tétel („<név> – N. részlet” tervek egy tételként) */
+  parts?: boolean;
+  /** minden terve kifizetett (lezárt tétel) */
+  closed?: boolean;
 }
 
 export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; edit?: EditTarget | null; onClose: () => void }) {
@@ -106,7 +107,11 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   const keyOf = useMemo(() => {
     const sk = new Map<string, string>();
     data.entries.forEach((e) => e.kind === 'plan' && e.series_id && sk.set(`${e.leaf_id}|${baseName(e.name)}`, e.series_id));
-    return (e: Entry) => e.series_id || sk.get(`${e.leaf_id}|${baseName(e.name)}`) || rowKey(e);
+    // a „<név> – N. részlet” tervek egy tétel (a név a részlet-sorszám nélkül)
+    return (e: Entry) =>
+      !e.series_id && partNo(e.name)
+        ? `p:${e.leaf_id}|${normalizeText(baseName(e.name).replace(PART_RE, ''))}`
+        : e.series_id || sk.get(`${e.leaf_id}|${baseName(e.name)}`) || rowKey(e);
   }, [data.entries]);
   const editEntries = edit ? data.entries.filter((e) => e.kind === 'plan' && (keyOf(e) === edit.key || rowKey(e) === edit.key)) : [];
   const initLeaf = editEntries[0]?.leaf_id || leaf || null;
@@ -139,10 +144,13 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         // lezárt (már kifizetett) tételnél a szerkesztő a teljes előzményt mutatja
         const es = all.some((e) => !e.done) ? all.filter((e) => !e.done) : all;
         const s = data.series.find((x) => x.id === es.find((e) => e.series_id)?.series_id);
+        const parts = key.startsWith('p:');
         return {
           key,
-          name: baseName(es[0].name) || L?.label || '',
-          rep: (s?.rep || (new Set(all.map(periodOf)).size > 1 ? 'monthly' : 'once')) as Rep,
+          name: (parts ? baseName(es[0].name).replace(PART_RE, '') : baseName(es[0].name)) || L?.label || '',
+          rep: (parts ? 'once' : s?.rep || (new Set(all.map(periodOf)).size > 1 ? 'monthly' : 'once')) as Rep,
+          parts,
+          closed: !all.some((e) => !e.done),
           open: es,
           all,
           next: es.find((e) => e.date >= data.today) || es[0],
@@ -506,11 +514,38 @@ function ItemRow({
     return `day:${series?.day || Number((firstOpen?.date || '').slice(8)) || 1}`;
   })();
   const initMonths = Math.max(1, regular.length * repStep(it.rep));
+
+  // részletekben fizetett tétel: a részletek sorszám szerint; a kifizetett / kiszámlázott részlet nem módosul
+  const pe = it.parts ? [...it.all].sort((a, b) => partNo(a.name) - partNo(b.name) || a.date.localeCompare(b.date)) : [];
+  const isLocked = (e: Entry) =>
+    !!e.done || e.source === 'billingo' || data.billingo.some((d) => d.plan_id === e.id) || (data.navInvoices || []).some((n) => n.plan_id === e.id);
+  const lockedN = pe.reduce((m, e, i) => (isLocked(e) ? i + 1 : m), 0);
+  const partSig = pe.map((e) => `${e.id}:${e.amount}:${e.date}`).join(',');
+  const grossTotal = it.parts ? pe.reduce((a, e) => a + Math.abs(e.amount), 0) : Math.abs(next?.amount || 0);
+
+  /** az összegek nettóban vagy bruttóban látszanak / íródnak be (a terv mindig bruttó) */
+  const [vat, setVat] = useState<'net' | 'gross'>('gross');
+  const toBasis = (g: number, v = vat) => (v === 'net' ? Math.round(g / (1 + VAT_RATE)) : g);
+  const fromBasis = (x: number) => (vat === 'net' ? Math.round(x * (1 + VAT_RATE)) : x);
   const [name, setName] = useState(it.name);
-  const [amount, setAmount] = useState(String(Math.abs(next?.amount || 0)));
+  const [amount, setAmount] = useState(String(grossTotal));
+  const [split, setSplit] = useState<Split>(() => detectSplit(pe.map((e) => Math.abs(e.amount))));
+  const [drafts, setDrafts] = useState<string[]>(() => pe.map((e) => String(Math.abs(e.amount))));
   const [day, setDay] = useState(initDay);
   const [months, setMonths] = useState(initMonths);
   const [pickLeaf, setPickLeaf] = useState(false);
+  // mentés után a részletek a tárolt értékeket mutatják
+  useEffect(() => {
+    if (!it.parts) return;
+    setDrafts(pe.map((e) => String(toBasis(Math.abs(e.amount)))));
+    setAmount(String(toBasis(grossTotal)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partSig]);
+  const changeVat = (v: 'net' | 'gross') => {
+    setVat(v);
+    setAmount(String(toBasis(grossTotal, v)));
+    setDrafts(pe.map((e) => String(toBasis(Math.abs(e.amount), v))));
+  };
 
   /** a nyitott, nem kiszámlázott tervek újragenerálása (ismétlődés, fizetés napja, tervezés hossza változásakor) */
   const regen = (o: { rep: Rep; day: string; months: number; tentative?: boolean; startDate?: string }) => {
@@ -522,7 +557,7 @@ function ItemRow({
       leaf: curLeaf,
       section,
       name: name.trim() || it.name,
-      amount: num(amount),
+      amount: grossTotal,
       startYm: ymOf(start),
       count: o.rep === 'once' ? 1 : o.months,
       rep: o.rep,
@@ -553,26 +588,97 @@ function ItemRow({
   const scheduleMsg = (r: Rep, d: string, m: number) =>
     r === 'once' ? 'egyszeri' : `${REP[r].toLowerCase()}, fizetés: ${DAY_OPTS.find(([v]) => v === d)?.[1] || d}, ${m} hónapra`;
 
+  /**
+   * A részletek újratervezése (teljes díj, részletszám vagy felosztás változásakor): a nyitott részletek azonosítója marad,
+   * az új részletek hozzáadódnak, a fölöslegessé váltak törlődnek; a kifizetett / kiszámlázott részlet érintetlen.
+   */
+  const replan = (n: number, sp: Split, total: number, msg: string) => {
+    if (!total) return;
+    const base = name.trim() || it.name;
+    const locked = pe.slice(0, n).filter(isLocked);
+    const lockedSum = locked.reduce((a, e) => a + Math.abs(e.amount), 0);
+    const openIdx = Array.from({ length: n }, (_, i) => i).filter((i) => !(pe[i] && isLocked(pe[i])));
+    if (!openIdx.length) return;
+    const rem = total - lockedSum;
+    if (rem <= 0) return void alert('A teljes díj nem lehet kevesebb a már kifizetett / kiszámlázott részleteknél.');
+    // egyedi felosztásnál a mostani összegek aránya marad
+    const fr = sp === 'custom' ? pe.map((e) => Math.abs(e.amount)) : fractions(sp, n);
+    let w = openIdx.map((i) => fr[i] || 0);
+    if (!w.some(Boolean)) w = openIdx.map(() => 1);
+    const ws = w.reduce((a, x) => a + x, 0);
+    const amts = splitAmounts(
+      rem,
+      w.map((x) => x / ws),
+    );
+    const lastDate = pe[pe.length - 1]?.date || firstOpen?.date || data.today;
+    const upsert = openIdx.map((i, k) =>
+      pe[i]
+        ? { ...pe[i], name: `${base} – ${i + 1}. részlet`, amount: signed(section, amts[k]) }
+        : mkPart(curLeaf, section, base, i + 1, amts[k], addDays(lastDate, 30 * (i - pe.length + 1)), it.tentative),
+    );
+    const del = pe
+      .slice(n)
+      .filter((e) => !isLocked(e))
+      .map((e) => e.id);
+    onApply({ upsert, delete: del }, `${base}: ${msg}`);
+  };
+
   // ── azonnali mentések ──
   const saveName = () => {
     const n = name.trim();
     if (!n || n === it.name) return;
-    // a lezárt (kifizetett) hónapok is átneveződnek, így a tétel egyben marad; a szerkesztő nyitva marad az új néven
-    onSave({ upsert: it.all.map((e) => ({ ...e, name: n })) }, `${it.name} → ${n}: átnevezve (${it.all.length} hónap)`);
+    // a lezárt (kifizetett) hónapok is átneveződnek, így a tétel egyben marad; a részletek a sorszámukat megtartják
+    const upsert = it.all.map((e) => ({ ...e, name: it.parts ? `${n} – ${partNo(e.name)}. részlet` : n }));
+    onSave({ upsert }, `${it.name} → ${n}: átnevezve (${it.all.length} ${it.parts ? 'részlet' : 'hónap'})`);
   };
-  const saveAmount = (v?: string) => {
-    const a = num(v ?? amount);
+  const saveAmount = (a: number) => {
     if (!a || a === Math.abs(next?.amount || 0)) return;
     // a már kiszámlázott (Billingo) tétel összege a számláé
     onApply({ upsert: editable.map((e) => ({ ...e, amount: signed(section, a) })) }, `${it.name}: ${fmt(a)} Ft (${editable.length} nyitott tétel)`);
   };
+  const commitTotal = () => {
+    const g = fromBasis(num(amount));
+    if (!g || g === grossTotal) return;
+    if (it.parts) replan(pe.length, split, g, `teljes díj ${fmt(g)} Ft`);
+    else saveAmount(g);
+  };
   const saveDate = (d: string) => next && onApply({ upsert: [{ ...next, date: d }] }, `${it.name}: fizetés ${dot(d)}`);
+  const minN = Math.max(2, lockedN);
+  const changeN = (k: number) => {
+    if (k < minN || k === pe.length) return;
+    const sp: Split = k === 2 ? (split === '30/70' || split === '40/60' ? split : '50/50') : 'eq';
+    setSplit(sp);
+    replan(k, sp, grossTotal, `${k} részletre osztva`);
+  };
+  const changeSplit = (sp: Split) => {
+    setSplit(sp);
+    if (sp !== 'custom') replan(pe.length, sp, grossTotal, `felosztás ${sp === 'eq' ? 'egyenlő' : sp}`);
+  };
+  const savePart = (i: number) => {
+    const e = pe[i];
+    const g = fromBasis(num(drafts[i] || ''));
+    if (!e || isLocked(e) || !g || g === Math.abs(e.amount)) return;
+    setSplit('custom');
+    onApply({ upsert: [{ ...e, amount: signed(section, g) }] }, `${it.name}: ${i + 1}. részlet ${fmt(g)} Ft`);
+  };
+  const savePartDate = (i: number, d: string) => {
+    const e = pe[i];
+    if (!e || isLocked(e) || d === e.date) return;
+    onApply({ upsert: [{ ...e, date: d }] }, `${it.name}: ${i + 1}. részlet ${dot(d)}`);
+  };
+  // a lezárt tétel (minden terve kifizetett) ütemezése nem váltható – különben új, nyitott tervek születnének a kifizetett mellé
+  const modeLock = it.closed
+    ? 'Lezárt tétel – új ütemezéshez: + Új tétel'
+    : it.parts && lockedN > 0
+      ? 'Részben fizetett / kiszámlázott – a részleteket lent állítsd'
+      : null;
+  const mode: Mode = it.parts ? 'twice' : it.rep;
   const saveRep = (r: Mode) => {
-    if (r === it.rep || !num(amount)) return;
+    if (r === mode || modeLock || !editable.length || !grossTotal) return;
     if (r === 'twice') {
       // két részlet: fele-fele (a 2. egy hónappal később) – utána részletenként szerkeszthető
-      const base = (name.trim() || it.name).replace(/\s*[–-]\s*\d\. részlet$/, '');
-      const b = partsBatch(curLeaf, section, base, halves(num(amount), firstOpen?.date || data.today), it.tentative);
+      const base = (name.trim() || it.name).replace(PART_RE, '');
+      const b = partsBatch(curLeaf, section, base, halves(grossTotal, firstOpen?.date || data.today), it.tentative);
       if (!b) return;
       b.delete = editable.map((e) => e.id);
       onSave(b, `${base}: 2 részletre bontva – a részletek összege és dátuma külön állítható`);
@@ -621,8 +727,19 @@ function ItemRow({
     onApply({ upsert }, `${it.name}: ${t ? 'ajánlat (még nem biztos)' : 'biztos terv'}`);
   };
 
+  // így kerül a cashflow-ba: részletenként, egyszerinél egy pont, ismétlődőnél az első néhány nyitott fizetés
+  const tlSrc = it.parts ? pe : it.rep === 'once' ? (next ? [next] : []) : it.open.slice(0, 4);
+  const timeline: TimelinePoint[] = tlSrc.map((e, i) => ({
+    amount: Math.abs(e.amount),
+    date: e.date,
+    label: it.parts ? instLabel(i, pe.length) : it.rep === 'once' ? 'egyszeri' : monthLabel(periodOf(e)),
+    done: !!e.done,
+  }));
+  const more = it.parts || it.rep === 'once' ? 0 : it.open.length - timeline.length;
+  const pctOf = (e: Entry) => (grossTotal ? `${Math.round((Math.abs(e.amount) / grossTotal) * 100)}%` : '–');
+
   return (
-    <div style={{ border: `1px solid ${C.line}`, borderRadius: 16, background: expanded ? C.bg3 : '#fff', boxShadow: '0 1px 2px rgba(0,32,64,.04)' }}>
+    <div style={{ ...card, borderRadius: 16, background: '#fff', overflow: 'hidden' }}>
       <button
         onClick={onToggle}
         style={{
@@ -635,6 +752,7 @@ function ItemRow({
           gap: 16,
           textAlign: 'left',
           cursor: 'pointer',
+          borderBottom: expanded ? `1px solid ${C.line3}` : 0,
         }}
       >
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -647,10 +765,19 @@ function ItemRow({
                 ajánlat
               </span>
             )}
+            {it.closed && (
+              <span style={{ flex: 'none', padding: '2px 10px', borderRadius: 999, background: C.bg2, font: `600 12px ${FONT}`, color: C.blueDark }}>
+                lezárt
+              </span>
+            )}
           </span>
           <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
             {(() => {
-              // „Havonta · 17-én · 2026. okt. – 2027. dec. · következő: nov. 17.” / „Egyszeri · 2026. nov. 4.”
+              // „Havonta · 17-én · 2026. okt. – 2027. dec. · következő: nov. 17.” / „Egyszeri · 2026. nov. 4.” / „Részletekben · 2 részlet · …”
+              if (it.parts)
+                return [`Részletekben · ${pe.length} részlet`, next && !it.closed ? `következő: ${dateShort(next.date, true)}` : '']
+                  .filter(Boolean)
+                  .join(' · ');
               const ms = [...new Set(it.all.map(periodOf))].sort();
               if (it.rep === 'once' || !ms.length) return `${REP.once} · ${next ? dateShort(next.date, true) : ''}`;
               const day = Number((next || it.open[0] || it.all[it.all.length - 1]).date.slice(8));
@@ -681,57 +808,126 @@ function ItemRow({
         </span>
         {it.rep !== 'once' && <MonthDots all={it.all} today={data.today} onPick={(m) => onPickMonth?.(m)} />}
         <b style={{ font: `700 18px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 110, textAlign: 'right' }}>
-          {fmt(Math.abs(next?.amount || 0))} Ft
+          {fmt(it.parts ? grossTotal : Math.abs(next?.amount || 0))} Ft
         </b>
         <span style={{ color: C.muted2, font: `700 12px ${FONT}`, transform: expanded ? 'rotate(180deg)' : undefined }}>▼</span>
       </button>
       {expanded && (
-        <fieldset disabled={!canEdit} style={{ border: 0, margin: 0, padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <fieldset
+          disabled={!canEdit}
+          style={{ border: 0, margin: 0, padding: '18px 22px 20px', display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}
+        >
           {/* hónaponként: számla, fizetve / nincs kiszámlázva / terv */}
           {it.rep !== 'once' && <MonthStatus all={it.all} name={it.name} onPick={onPickMonth} />}
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+
+          {/* Mit számlázunk? */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={labelStrong}>{section === 'in' ? 'Mit számlázunk?' : 'Mit fizetünk?'}</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               onBlur={saveName}
               onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
               placeholder="Tétel neve"
-              style={{ ...inputStyle, flex: '1 1 220px' }}
+              style={nameInputStyle}
             />
-            <span onBlur={() => saveAmount()} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} style={{ display: 'flex' }}>
-              <AmountInput value={amount} onChange={setAmount} onNet={(g) => saveAmount(g)} />
-            </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={eyebrow}>Ismétlődés</span>
-            <Seg small value={it.rep as Mode} onChange={saveRep} options={REP_OPTS} />
-          </div>
-          {it.rep === 'once' && next && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={eyebrow}>Fizetés napja</span>
-              <DateField value={next.date} onChange={saveDate} style={{ width: 240 }} />
-            </div>
-          )}
-          {it.rep !== 'once' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={eyebrow}>Fizetés napja</span>
-              <DaySelect value={day} onChange={saveDay} />
-              <span style={eyebrow}>Tervezés</span>
-              <Seg small value={months} onChange={saveMonths} options={MONTH_OPTS} />
-            </div>
-          )}
-          {it.rep !== 'once' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={eyebrow}>Kezdés</span>
-              <MonthSelect value={startYm} from={addMonths(data.today.slice(0, 7), -2)} n={26} onChange={saveStart} />
-              <span style={eyebrow}>Utolsó hónap</span>
-              <MonthSelect value={endYm} from={startYm} n={36} onChange={(m) => saveMonths(monthDiff(m, startYm) + 1)} />
-              <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
-                {Math.ceil(months / repStep(it.rep))} alkalom · {monthLong(startYm)} – {monthLong(endYm)}
+
+          {/* Mennyi? / Hogyan fizet? */}
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <AmountBox value={amount} onChange={setAmount} onCommit={commitTotal} vat={vat} onVat={changeVat} gross={fromBasis(num(amount))} />
+            <div style={{ flex: '2 1 340px', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+              <span style={labelStrong}>Hogyan fizet?</span>
+              <span
+                title={modeLock || undefined}
+                style={{
+                  alignSelf: 'flex-start',
+                  maxWidth: '100%',
+                  overflowX: 'auto',
+                  opacity: modeLock ? 0.55 : 1,
+                  pointerEvents: modeLock ? 'none' : undefined,
+                }}
+              >
+                <Seg value={mode} onChange={saveRep} options={NEW_REP_OPTS} />
               </span>
+              {modeLock && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{modeLock}</span>}
+              {it.parts && <PartsPicker n={pe.length} split={split} minN={minN} onN={changeN} onSplit={changeSplit} />}
             </div>
-          )}
-          {it.rep !== 'once' && <MonthList it={it} editable={editable} onApply={onApply} focusYm={focusYm} />}
+          </div>
+
+          {/* Mikor? */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span>
+              <span style={labelStrong}>Mikor?</span>{' '}
+              <span style={labelSoft}>
+                {it.parts
+                  ? 'a várható fizetés napja (pl. előleg, majd átadáskor a végteljesítés)'
+                  : it.rep === 'once'
+                    ? 'a várható fizetés napja'
+                    : 'a fizetés napja és a tervezés hossza'}
+              </span>
+            </span>
+            <div style={formBox}>
+              {it.parts ? (
+                <PartsTable
+                  rows={pe.map((e, i) => ({
+                    shown: drafts[i] ?? '',
+                    pct: pctOf(e),
+                    date: e.date,
+                    lock: isLocked(e) ? (e.done ? 'fizetve' : 'kiszámlázva') : undefined,
+                  }))}
+                  onAmt={(i, v) => setDrafts(drafts.map((d, j) => (j === i ? v : d)))}
+                  onAmtCommit={savePart}
+                  onDate={savePartDate}
+                  footLeft={
+                    lockedN > 0 ? 'A kifizetett / kiszámlázott részlet nem módosul' : 'A részletek összege és dátuma külön is állítható – azonnal mentődik'
+                  }
+                  footRight={`Összesen ${fmt(toBasis(grossTotal))} Ft${vat === 'net' ? ' + ÁFA' : ''}`}
+                />
+              ) : it.rep === 'once' ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '10px 16px' }}>
+                    <b style={{ ...labelStrong, width: 90 }}>Fizetés</b>
+                    {next && <DateField value={next.date} onChange={saveDate} style={{ flex: '1 1 220px', maxWidth: 290, height: 44 }} />}
+                  </div>
+                  <div style={boxFoot}>
+                    <span>Egy összegben, a megadott napon</span>
+                    <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>Összesen {fmt(grossTotal)} Ft</b>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end', padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span style={eyebrow}>Fizetés napja</span>
+                      <DaySelect value={day} onChange={saveDay} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span style={eyebrow}>Tervezés</span>
+                      <Seg small value={months} onChange={saveMonths} options={MONTH_OPTS} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span style={eyebrow}>Kezdés</span>
+                      <MonthSelect value={startYm} from={addMonths(data.today.slice(0, 7), -2)} n={26} onChange={saveStart} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <span style={eyebrow}>Utolsó hónap</span>
+                      <MonthSelect value={endYm} from={startYm} n={36} onChange={(m) => saveMonths(monthDiff(m, startYm) + 1)} />
+                    </div>
+                  </div>
+                  <div style={boxFoot}>
+                    <span>
+                      {Math.ceil(months / repStep(it.rep))} alkalom · {monthLong(startYm)} – {monthLong(endYm)}
+                    </span>
+                    <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>{fmt(grossTotal)} Ft / alkalom</b>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {timeline.length > 0 && <CashflowTimeline points={timeline} more={more} />}
+          {it.rep !== 'once' && !it.parts && <MonthList it={it} editable={editable} onApply={onApply} focusYm={focusYm} />}
           <ItemChains it={it} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={eyebrow}>Projekt / partner</span>
@@ -755,7 +951,7 @@ function ItemRow({
           )}
           <OfferToggle value={it.tentative} onChange={saveTentative} />
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ flex: 1, font: `500 12px ${FONT}`, color: C.muted }}>Minden változás azonnal mentődik.</span>
+            <span style={{ flex: 1, minWidth: 180, font: `500 13px ${FONT}`, color: C.muted }}>Minden változás azonnal mentődik.</span>
             {(it.tentative || inOffers) && (
               <Pill
                 small
@@ -803,7 +999,8 @@ function ItemRow({
   );
 }
 
-/** Az új tétel ütemezései – a „Részletekben” egyszeri tétel 2–4 külön fizetéssel (saját összeg és dátum), sorozat nélkül */
+// ───────── Közös űrlap-elemek (új tétel és tétel szerkesztése) ─────────
+/** Az ütemezések – a „Részletekben” egyszeri tétel 2–4 külön fizetéssel (saját összeg és dátum), sorozat nélkül */
 const NEW_REP_OPTS: [Mode, string][] = [
   ['once', 'Egyszeri'],
   ['twice', 'Részletekben'],
@@ -833,11 +1030,264 @@ const splitAmounts = (total: number, fr: number[]) => {
   out[out.length - 1] = total - out.slice(0, -1).reduce((a, x) => a + x, 0);
   return out;
 };
+/** a meglévő részletek felosztása: előre megadott arány, ha pontosan kiadja, különben egyedi */
+const detectSplit = (amts: number[]): Split => {
+  const n = amts.length;
+  const total = amts.reduce((a, x) => a + x, 0);
+  const cands: Split[] = n === 2 ? ['50/50', '30/70', '40/60'] : n > 2 ? ['eq'] : [];
+  return cands.find((s) => splitAmounts(total, fractions(s, n)).every((x, i) => x === amts[i])) || (n ? 'custom' : '50/50');
+};
 /** „2026-11-14” → „11. 14.” */
 const md = (d: string) => `${d.slice(5, 7)}. ${d.slice(8, 10)}.`;
 const instLabel = (i: number, n: number) => (i === 0 ? 'előleg' : i === n - 1 ? 'végteljesítés' : `${i + 1}. részlet`);
 const labelStrong: React.CSSProperties = { font: `700 14px ${FONT}`, color: C.navy };
 const labelSoft: React.CSSProperties = { font: `500 14px ${FONT}`, color: C.muted };
+const nameInputStyle: React.CSSProperties = { ...inputStyle, height: 50, borderRadius: 12, font: `500 16px ${FONT}`, padding: '0 16px' };
+const formBox: React.CSSProperties = { border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden', background: '#fff' };
+const boxFoot: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 10,
+  flexWrap: 'wrap',
+  padding: '10px 16px',
+  background: C.bg3,
+  borderTop: `1px solid ${C.line3}`,
+  font: `500 13px ${FONT}`,
+  color: C.muted,
+};
+const chipStyle = (active: boolean, disabled = false): React.CSSProperties => ({
+  border: `1px solid ${active ? C.navy : C.line2}`,
+  borderRadius: 8,
+  minWidth: 36,
+  height: 34,
+  padding: '0 12px',
+  font: `600 13.5px ${FONT}`,
+  background: active ? C.navy : '#fff',
+  color: active ? '#fff' : C.navy,
+  cursor: disabled ? 'default' : 'pointer',
+  opacity: disabled ? 0.4 : 1,
+});
+
+/** „Mennyi? teljes díj”: nagy összegmező + Nettó / Bruttó */
+function AmountBox({
+  value,
+  onChange,
+  onCommit,
+  vat,
+  onVat,
+  gross,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  /** szerkesztéskor: mentés a mező elhagyásakor / Enterre */
+  onCommit?: () => void;
+  vat: 'net' | 'gross';
+  onVat: (v: 'net' | 'gross') => void;
+  /** a bruttó összeg (nettó beírásnál a tippben látszik) */
+  gross: number;
+}) {
+  return (
+    <div style={{ flex: '1 1 260px', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span>
+        <span style={labelStrong}>Mennyi?</span> <span style={labelSoft}>teljes díj</span>
+      </span>
+      <span
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          height: 62,
+          border: `1.5px solid ${C.blue}`,
+          borderRadius: 12,
+          padding: '0 18px',
+          background: C.bg2,
+        }}
+      >
+        <input
+          inputMode="numeric"
+          value={value}
+          aria-invalid={!!value && parseWholeForint(value) === null}
+          aria-label="Teljes díj egész forintban"
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onCommit}
+          onKeyDown={onCommit ? (e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur() : undefined}
+          placeholder="0"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            border: 0,
+            outline: 0,
+            background: 'transparent',
+            font: `800 26px ${FONT_H}`,
+            color: C.navy,
+            textAlign: 'right',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        />
+        <span style={{ font: `700 15px ${FONT}`, color: C.blueDark, marginLeft: 10 }}>Ft</span>
+      </span>
+      <span style={{ alignSelf: 'flex-start' }}>
+        <Seg
+          small
+          value={vat}
+          onChange={onVat}
+          options={[
+            ['net', 'Nettó'],
+            ['gross', 'Bruttó'],
+          ]}
+        />
+      </span>
+      <span style={{ font: `500 12.5px/1.4 ${FONT}`, color: C.muted }}>
+        {vat === 'net' && gross ? `+ 27% ÁFA = bruttó ${fmt(gross)} Ft kerül a cashflow-ba` : 'ÁFA nélkül vagy ÁFA-val — egyszer kell megadni'}
+      </span>
+    </div>
+  );
+}
+
+/** Részletek: 2 / 3 / 4 és a felosztás */
+function PartsPicker({ n, split, minN = 2, onN, onSplit }: { n: number; split: Split; minN?: number; onN: (k: number) => void; onSplit: (s: Split) => void }) {
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ ...labelSoft, minWidth: 74 }}>Részletek:</span>
+        {[2, 3, 4].map((k) => (
+          <button key={k} type="button" disabled={k < minN} onClick={() => onN(k)} style={chipStyle(n === k, k < minN)}>
+            {k}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ ...labelSoft, minWidth: 74 }}>Felosztás:</span>
+        {splitOpts(n).map(([v, l]) => (
+          <button key={v} type="button" onClick={() => onSplit(v)} style={chipStyle(split === v)}>
+            {l}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** „Mikor?” részlet-táblázat: részletenként összeg, arány és a várható fizetés napja; alul összesen */
+function PartsTable({
+  rows,
+  onAmt,
+  onAmtCommit,
+  onDate,
+  footLeft,
+  footWarn,
+  footRight,
+}: {
+  rows: { shown: string; pct: string; date: string; lock?: string }[];
+  onAmt: (i: number, v: string) => void;
+  onAmtCommit?: (i: number) => void;
+  onDate: (i: number, v: string) => void;
+  footLeft: string;
+  footWarn?: boolean;
+  footRight: string;
+}) {
+  return (
+    <>
+      {rows.map((r, i) => (
+        <div
+          key={i}
+          style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '10px 16px', borderTop: i ? `1px solid ${C.line3}` : 0 }}
+        >
+          <b style={{ ...labelStrong, width: 90 }}>{i + 1}. részlet</b>
+          <span
+            style={{
+              flex: '1 1 150px',
+              maxWidth: 240,
+              display: 'flex',
+              alignItems: 'center',
+              height: 44,
+              border: `1px solid ${C.line2}`,
+              borderRadius: 10,
+              padding: '0 12px',
+              background: r.lock ? C.bg3 : '#fff',
+            }}
+          >
+            <input
+              inputMode="numeric"
+              value={r.shown}
+              disabled={!!r.lock}
+              aria-label={`${i + 1}. részlet összege`}
+              aria-invalid={!!r.shown && parseWholeForint(r.shown) === null}
+              onChange={(e) => onAmt(i, e.target.value)}
+              onBlur={onAmtCommit ? () => onAmtCommit(i) : undefined}
+              onKeyDown={onAmtCommit ? (e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur() : undefined}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 0,
+                outline: 0,
+                background: 'transparent',
+                font: `700 15px ${FONT_H}`,
+                color: C.navy,
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            />
+            <span style={{ font: `600 12.5px ${FONT}`, color: C.muted, marginLeft: 8 }}>Ft</span>
+          </span>
+          <span style={{ width: 44, textAlign: 'right', font: `500 14px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>{r.pct}</span>
+          {r.lock ? (
+            <span style={{ flex: '1 1 220px', maxWidth: 290, display: 'flex', alignItems: 'center', gap: 10, font: `600 13.5px ${FONT}`, color: C.navy }}>
+              {dot(r.date)}
+              <span style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, font: `600 12px ${FONT}`, color: C.blueDark }}>{r.lock}</span>
+            </span>
+          ) : (
+            <DateField value={r.date} onChange={(v) => onDate(i, v)} style={{ flex: '1 1 220px', maxWidth: 290, height: 44 }} />
+          )}
+        </div>
+      ))}
+      <div style={boxFoot}>
+        <span style={{ color: footWarn ? C.neg : C.muted }}>{footLeft}</span>
+        <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>{footRight}</b>
+      </div>
+    </>
+  );
+}
+
+interface TimelinePoint {
+  amount: number;
+  date: string;
+  label: string;
+  done?: boolean;
+}
+/** „Így kerül a cashflow-ba”: pontonként összeg, dátum és címke */
+function CashflowTimeline({ points, more, note }: { points: TimelinePoint[]; more?: number; note?: string }) {
+  return (
+    <div style={{ background: C.bg, borderRadius: 12, padding: '14px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <span style={eyebrow}>Így kerül a cashflow-ba</span>
+      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))` }}>
+          {points.map((p, i) => (
+            <div key={i} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, paddingRight: 8 }}>
+              {i < points.length - 1 && <i style={{ position: 'absolute', top: 6, left: 7, right: 0, height: 2, background: '#BFD6E6' }} />}
+              <i
+                style={{
+                  position: 'relative',
+                  width: 13,
+                  height: 13,
+                  borderRadius: 999,
+                  background: p.done ? C.navy : C.blue,
+                  marginBottom: 6,
+                }}
+              />
+              <b style={{ font: `700 14px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(p.amount)} Ft</b>
+              <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {md(p.date)} · {p.label}
+                {p.done ? ' · fizetve' : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+        {!!more && more > 0 && <span style={{ font: `600 12.5px ${FONT}`, color: C.muted, paddingTop: 20, whiteSpace: 'nowrap' }}>+ még {more}</span>}
+      </div>
+      {note && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{note}</span>}
+    </div>
+  );
+}
 
 function NewItem({
   initYm,
@@ -915,6 +1365,10 @@ function NewItem({
     else setSplit(k === 2 ? '50/50' : 'eq');
     setNParts(k);
   };
+  const changeSplit = (v: Split) => {
+    if (v === 'custom' && split !== 'custom') setCustomAmts(Array.from({ length: 4 }, (_, j) => (j < nParts ? partShown(j) : '')));
+    setSplit(v);
+  };
 
   const save = () => {
     if (!name.trim()) return alert('Add meg a tétel nevét (pl. SEO, PPC, Marketing tanácsadás).');
@@ -952,7 +1406,7 @@ function NewItem({
   const sugg = useMemo(() => {
     const m = new Map<string, { name: string; amount: number; inMonth: boolean; date: string }>();
     for (const e of [...(leafEntries || [])].sort((a, b) => b.date.localeCompare(a.date))) {
-      const nm = planNameOf(e.name).trim();
+      const nm = planNameOf(e.name).trim().replace(PART_RE, '');
       if (!nm) continue;
       const inMonth = periodOf(e) === selYm;
       const k = normalizeText(nm);
@@ -963,7 +1417,7 @@ function NewItem({
   }, [leafEntries, selYm]);
 
   // így kerül a cashflow-ba: részletenként, egyszerinél egy pont, ismétlődőnél az első néhány fizetés
-  const timeline: { amount: number; date: string; label: string }[] =
+  const timeline: TimelinePoint[] =
     rep === 'twice'
       ? grossParts().map((a, i) => ({ amount: a, date: dates[i], label: instLabel(i, nParts) }))
       : rep === 'once'
@@ -973,29 +1427,6 @@ function NewItem({
             return { amount: gross(amt), date: payDate(ym, day, Number(day.replace(/\D/g, '')) || 1), label: monthLabel(ym) };
           });
   const more = rep === 'once' || rep === 'twice' ? 0 : n - timeline.length;
-  const box: React.CSSProperties = { border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden', background: '#fff' };
-  const boxFoot: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: 10,
-    flexWrap: 'wrap',
-    padding: '10px 16px',
-    background: C.bg3,
-    borderTop: `1px solid ${C.line3}`,
-    font: `500 13px ${FONT}`,
-    color: C.muted,
-  };
-  const chipStyle = (active: boolean): React.CSSProperties => ({
-    border: `1px solid ${active ? C.navy : C.line2}`,
-    borderRadius: 8,
-    minWidth: 36,
-    height: 34,
-    padding: '0 12px',
-    font: `600 13.5px ${FONT}`,
-    background: active ? C.navy : '#fff',
-    color: active ? '#fff' : C.navy,
-    cursor: 'pointer',
-  });
 
   return (
     <div
@@ -1012,7 +1443,7 @@ function NewItem({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={section === 'in' ? 'pl. Marketing tanácsadás, SEO, PPC, riport' : 'pl. Könyvelés, tárhely, licenc'}
-          style={{ ...inputStyle, height: 50, borderRadius: 12, font: `500 16px ${FONT}`, padding: '0 16px' }}
+          style={nameInputStyle}
         />
         {sugg.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1048,57 +1479,7 @@ function NewItem({
 
       {/* Mennyi? / Hogyan fizet? */}
       <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 260px', maxWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span>
-            <span style={labelStrong}>Mennyi?</span> <span style={labelSoft}>teljes díj</span>
-          </span>
-          <span
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              height: 62,
-              border: `1.5px solid ${C.blue}`,
-              borderRadius: 12,
-              padding: '0 18px',
-              background: C.bg2,
-            }}
-          >
-            <input
-              inputMode="numeric"
-              value={amount}
-              aria-invalid={!!amount && parseWholeForint(amount) === null}
-              aria-label="Teljes díj egész forintban"
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: 0,
-                outline: 0,
-                background: 'transparent',
-                font: `800 26px ${FONT_H}`,
-                color: C.navy,
-                textAlign: 'right',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            />
-            <span style={{ font: `700 15px ${FONT}`, color: C.blueDark, marginLeft: 10 }}>Ft</span>
-          </span>
-          <span style={{ alignSelf: 'flex-start' }}>
-            <Seg
-              small
-              value={vat}
-              onChange={setVat}
-              options={[
-                ['net', 'Nettó'],
-                ['gross', 'Bruttó'],
-              ]}
-            />
-          </span>
-          <span style={{ font: `500 12.5px/1.4 ${FONT}`, color: C.muted }}>
-            {vat === 'net' && amt ? `+ 27% ÁFA = bruttó ${fmt(gross(amt))} Ft kerül a cashflow-ba` : 'ÁFA nélkül vagy ÁFA-val — egyszer kell megadni'}
-          </span>
-        </div>
+        <AmountBox value={amount} onChange={setAmount} vat={vat} onVat={setVat} gross={gross(amt)} />
         <div style={{ flex: '2 1 340px', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
           <span style={labelStrong}>Hogyan fizet?</span>
           <span style={{ alignSelf: 'flex-start', maxWidth: '100%', overflowX: 'auto' }}>
@@ -1112,34 +1493,7 @@ function NewItem({
               options={NEW_REP_OPTS}
             />
           </span>
-          {rep === 'twice' && (
-            <>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ ...labelSoft, minWidth: 74 }}>Részletek:</span>
-                {[2, 3, 4].map((k) => (
-                  <button key={k} type="button" onClick={() => changeN(k)} style={chipStyle(nParts === k)}>
-                    {k}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ ...labelSoft, minWidth: 74 }}>Felosztás:</span>
-                {splitOpts(nParts).map(([v, l]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => {
-                      if (v === 'custom' && split !== 'custom') setCustomAmts(Array.from({ length: 4 }, (_, j) => (j < nParts ? partShown(j) : '')));
-                      setSplit(v);
-                    }}
-                    style={chipStyle(split === v)}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+          {rep === 'twice' && <PartsPicker n={nParts} split={split} onN={changeN} onSplit={changeSplit} />}
         </div>
       </div>
 
@@ -1155,78 +1509,22 @@ function NewItem({
                 : 'a fizetés napja és a tervezés hossza'}
           </span>
         </span>
-        <div style={box}>
+        <div style={formBox}>
           {rep === 'twice' ? (
-            <>
-              {Array.from({ length: nParts }, (_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 14,
-                    flexWrap: 'wrap',
-                    padding: '10px 16px',
-                    borderTop: i ? `1px solid ${C.line3}` : 0,
-                  }}
-                >
-                  <b style={{ ...labelStrong, width: 90 }}>{i + 1}. részlet</b>
-                  <span
-                    style={{
-                      flex: '1 1 150px',
-                      maxWidth: 240,
-                      display: 'flex',
-                      alignItems: 'center',
-                      height: 44,
-                      border: `1px solid ${C.line2}`,
-                      borderRadius: 10,
-                      padding: '0 12px',
-                      background: '#fff',
-                    }}
-                  >
-                    <input
-                      inputMode="numeric"
-                      value={partShown(i)}
-                      aria-label={`${i + 1}. részlet összege`}
-                      aria-invalid={split === 'custom' && !!customAmts[i] && parseWholeForint(customAmts[i]) === null}
-                      onChange={(e) => setPartAmt(i, e.target.value)}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        border: 0,
-                        outline: 0,
-                        background: 'transparent',
-                        font: `700 15px ${FONT_H}`,
-                        color: C.navy,
-                        textAlign: 'right',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    />
-                    <span style={{ font: `600 12.5px ${FONT}`, color: C.muted, marginLeft: 8 }}>Ft</span>
-                  </span>
-                  <span style={{ width: 44, textAlign: 'right', font: `500 14px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>
-                    {partPct(i)}
-                  </span>
-                  <DateField
-                    value={dates[i]}
-                    onChange={(v) => setDates(dates.map((d, j) => (j === i ? v : d)))}
-                    style={{ flex: '1 1 220px', maxWidth: 290, height: 44 }}
-                  />
-                </div>
-              ))}
-              <div style={boxFoot}>
-                <span style={{ color: split === 'custom' && amt && partSum !== amt ? C.neg : C.muted }}>
-                  {!amt && !partSum
-                    ? 'Írd be a teljes díjat — a részletek kitöltődnek'
-                    : split === 'custom' && amt && partSum !== amt
-                      ? `A részletek összege eltér a teljes díjtól (${fmt(partSum - amt)} Ft)`
-                      : 'A részletek összege és dátuma külön is állítható'}
-                </span>
-                <b style={{ font: `700 13.5px ${FONT}`, color: C.navy }}>
-                  Összesen {fmt(partSum)} Ft{vat === 'net' && partSum ? ` + ÁFA` : ''}
-                </b>
-              </div>
-            </>
+            <PartsTable
+              rows={Array.from({ length: nParts }, (_, i) => ({ shown: partShown(i), pct: partPct(i), date: dates[i] }))}
+              onAmt={setPartAmt}
+              onDate={(i, v) => setDates(dates.map((d, j) => (j === i ? v : d)))}
+              footWarn={split === 'custom' && !!amt && partSum !== amt}
+              footLeft={
+                !amt && !partSum
+                  ? 'Írd be a teljes díjat — a részletek kitöltődnek'
+                  : split === 'custom' && amt && partSum !== amt
+                    ? `A részletek összege eltér a teljes díjtól (${fmt(partSum - amt)} Ft)`
+                    : 'A részletek összege és dátuma külön is állítható'
+              }
+              footRight={`Összesen ${fmt(partSum)} Ft${vat === 'net' && partSum ? ' + ÁFA' : ''}`}
+            />
           ) : rep === 'once' ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', padding: '10px 16px' }}>
@@ -1280,26 +1578,7 @@ function NewItem({
 
       <OfferToggle value={tentative} onChange={setTentative} />
 
-      {/* Így kerül a cashflow-ba */}
-      <div style={{ background: C.bg, borderRadius: 12, padding: '14px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={eyebrow}>Így kerül a cashflow-ba</span>
-        <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${timeline.length}, minmax(0, 1fr))` }}>
-            {timeline.map((p, i) => (
-              <div key={i} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, paddingRight: 8 }}>
-                {i < timeline.length - 1 && <i style={{ position: 'absolute', top: 6, left: 7, right: 0, height: 2, background: '#BFD6E6' }} />}
-                <i style={{ position: 'relative', width: 13, height: 13, borderRadius: 999, background: C.blue, marginBottom: 6 }} />
-                <b style={{ font: `700 14px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(p.amount)} Ft</b>
-                <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {md(p.date)} · {p.label}
-                </span>
-              </div>
-            ))}
-          </div>
-          {more > 0 && <span style={{ font: `600 12.5px ${FONT}`, color: C.muted, paddingTop: 20, whiteSpace: 'nowrap' }}>+ még {more}</span>}
-        </div>
-        {tentative && <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>Ajánlatként: az Ajánlatok között, nem biztos tervként.</span>}
-      </div>
+      <CashflowTimeline points={timeline} more={more} note={tentative ? 'Ajánlatként: az Ajánlatok között, nem biztos tervként.' : undefined} />
 
       {/* lábléc */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1341,17 +1620,15 @@ function halves(total: number, date: string): Part[] {
     { a: total ? String(total - h) : '', d: addDays(date, 30) },
   ];
 }
-/** a részletek egyszeri tervként, „<név> – 1. részlet”, „<név> – 2. részlet” … néven */
-function partsBatch(leaf: string, section: Section, base: string, parts: Part[], tentative: boolean) {
-  if (parts.some((p) => !num(p.a))) return void alert('Add meg minden részlet összegét.');
-  if (parts.some((p) => !p.d)) return void alert('Add meg minden részlet dátumát.');
-  const mk = (i: number, p: Part): Entry => ({
+/** egy részlet terve „<név> – <i>. részlet” néven, sorozat nélkül */
+function mkPart(leaf: string, section: Section, base: string, i: number, amount: number, date: string, tentative: boolean): Entry {
+  return {
     id: uid('e'),
     kind: 'plan',
-    date: p.d,
+    date,
     leaf_id: leaf,
     name: `${base} – ${i}. részlet`,
-    amount: signed(section, num(p.a)),
+    amount: signed(section, amount),
     series_id: null,
     done: 0,
     tentative: tentative ? 1 : 0,
@@ -1359,8 +1636,17 @@ function partsBatch(leaf: string, section: Section, base: string, parts: Part[],
     ext_ref: null,
     link_id: null,
     note: null,
-  });
-  return { upsert: parts.map((p, i) => mk(i + 1, p)), series: [] as any[], delete: [] as string[] };
+  };
+}
+/** a részletek egyszeri tervként, „<név> – 1. részlet”, „<név> – 2. részlet” … néven */
+function partsBatch(leaf: string, section: Section, base: string, parts: Part[], tentative: boolean) {
+  if (parts.some((p) => !num(p.a))) return void alert('Add meg minden részlet összegét.');
+  if (parts.some((p) => !p.d)) return void alert('Add meg minden részlet dátumát.');
+  return {
+    upsert: parts.map((p, i) => mkPart(leaf, section, base, i + 1, num(p.a), p.d, tentative)),
+    series: [] as any[],
+    delete: [] as string[],
+  };
 }
 
 // ───────── Rendszeres tétel hónaponként: melyik hónaphoz tartozik, kiszámlázva-e, később számlázzuk / kihagyjuk ─────────
@@ -1821,48 +2107,6 @@ function MonthAmount({ e, onSave }: { e: Entry; onSave: (v: number) => void }) {
       Ft
       <NetBox value={v} onChange={(g) => (setV(fmt(Number(g))), onSave(Number(g)))} small />
     </label>
-  );
-}
-
-function AmountInput({ value, onChange, onNet }: { value: string; onChange: (v: string) => void; onNet?: (gross: string) => void }) {
-  return (
-    <span
-      style={{
-        flex: '0 0 190px',
-        position: 'relative',
-        marginBottom: 18,
-        display: 'flex',
-        alignItems: 'center',
-        border: `1.5px solid ${C.blue}`,
-        borderRadius: 12,
-        padding: '0 12px',
-        background: C.bg2,
-      }}
-    >
-      <input
-        inputMode="numeric"
-        value={value}
-        aria-invalid={!!value && parseWholeForint(value) === null}
-        aria-label="Összeg egész forintban"
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="0"
-        style={{
-          flex: 1,
-          minWidth: 0,
-          border: 0,
-          outline: 0,
-          background: 'transparent',
-          font: `800 19px ${FONT_H}`,
-          color: C.navy,
-          textAlign: 'right',
-          height: 42,
-        }}
-      />
-      <span style={{ font: `600 13px ${FONT}`, color: C.blueDark, marginLeft: 6 }}>Ft</span>
-      <span style={{ position: 'absolute', right: 4, bottom: -20 }}>
-        <NetBox value={value} onChange={(g) => (onChange(g), onNet?.(g))} small />
-      </span>
-    </span>
   );
 }
 
