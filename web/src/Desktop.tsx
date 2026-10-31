@@ -375,6 +375,8 @@ type ChartBar = {
   /** a hónap terve és ténye (profitnál: bevétel − kiadás) – a súgóban terv · tény · eltérés */
   plan?: number;
   act?: number | null;
+  /** súgó-sor (pl. a folyó hónapnál: mai banki egyenleg − nyitott tételek = várható záró) */
+  note?: string;
 };
 
 /** Havi oszlopdiagram nulla-vonallal (a negatív érték lefelé, pirosan). */
@@ -390,7 +392,8 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
   const hb = hov != null ? bars[hov] : null;
   const sg = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + ' Ft';
   const val = (b: ChartBar) => (signed && b.v > 0 ? '+' : '') + fmtM(b.v);
-  const colorOf = (b: ChartBar, i: number) => (b.v < 0 ? C.neg : markMin && i === minIdx ? C.navy : b.kind === 'actual' ? C.blue : '#BFD8E8');
+  // szín: tény = kék, előrejelzés = világoskék; a legalacsonyabb egyenleg csak keretet kap (nem tény-színt)
+  const colorOf = (b: ChartBar) => (b.v < 0 ? C.neg : b.kind === 'actual' ? C.blue : '#BFD8E8');
   return (
     <div style={{ ...card, padding: '18px 20px 14px', minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
@@ -413,7 +416,9 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
             }}
           >
             <b style={{ color: C.navy }}>{hb.label}</b>
-            {hb.plan != null ? (
+            {hb.note ? (
+              <span>{hb.note}</span>
+            ) : hb.plan != null ? (
               <>
                 <span>terv {signed ? sg(hb.plan) : fmt(hb.plan) + ' Ft'}</span>
                 <span>tény {hb.act == null ? '–' : signed ? sg(hb.act) : fmt(hb.act) + ' Ft'}</span>
@@ -478,7 +483,8 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
                       width: '100%',
                       maxWidth: 48,
                       height: Math.max(2, Math.round((b.v / span) * H)),
-                      background: colorOf(b, i),
+                      background: colorOf(b),
+                      outline: markMin && i === minIdx ? `2px solid ${C.navy}` : undefined,
                       borderRadius: '6px 6px 2px 2px',
                       transition: 'height .4s',
                     }}
@@ -496,7 +502,8 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
                         width: '100%',
                         maxWidth: 48,
                         height: Math.max(2, Math.round((-b.v / span) * H)),
-                        background: colorOf(b, i),
+                        background: colorOf(b),
+                        outline: markMin && i === minIdx ? `2px solid ${C.navy}` : undefined,
                         opacity: 0.85,
                         borderRadius: '2px 2px 6px 6px',
                         transition: 'height .4s',
@@ -674,7 +681,17 @@ function Overview({
     cols.forEach((c, i) => {
       if (c.current && c.kind === 'actual' && cols[i + 1]?.current) return;
       const label = filters.granularity === 'year' ? c.label : monthLabel(c.last);
-      bal.push({ label, v: matrix.balance[i], kind: matrix.balanceKind[i], cur: c.current });
+      // folyó hónap: a záró egyenleg előrejelzés (mai banki egyenleg ± a hónap még nyitott tételei) – nem tény
+      const curOpen = c.current && matrix.balanceKind[i] === 'proj';
+      bal.push({
+        label,
+        v: matrix.balance[i],
+        kind: matrix.balanceKind[i],
+        cur: c.current,
+        note: curOpen
+          ? `ma a bankban ${fmt(ix.anchor)} Ft · még nyitott tételek ${matrix.balance[i] - ix.anchor > 0 ? '+' : '−'}${fmt(Math.abs(matrix.balance[i] - ix.anchor))} Ft · várható záró ${fmt(matrix.balance[i])} Ft`
+          : `${matrix.balanceKind[i] === 'actual' ? 'tény' : 'előrejelzés'}: ${fmt(matrix.balance[i])} Ft`,
+      });
       // a hónap(ok) terve (minden biztos terv, a teljesültek is) és ténye: bevétel − kiadás
       const sumIx = (m: Map<string, Map<string, number>>) => c.months.reduce((a, ym) => a + [...m.values()].reduce((x, mm) => x + (mm.get(ym) || 0), 0), 0);
       const past = c.months[0] <= ix.cur;
@@ -740,7 +757,7 @@ function Overview({
           <BarChart title={`Havi profit${filters.includeOffers ? ' – ajánlatokkal' : ''}`} sub="bevétel − kiadás" bars={profitBars} signed />
           <BarChart
             title={`Céges számlák egyenlege${bars.some((b) => b.kind === 'proj') ? ' – tény és előrejelzés' : ''}`}
-            sub="hónap végi záró"
+            sub="hónap végi záró · keretes = legalacsonyabb"
             bars={bars}
             markMin
           />
