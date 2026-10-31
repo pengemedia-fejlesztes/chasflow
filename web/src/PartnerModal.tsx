@@ -1475,6 +1475,16 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
   );
 }
 
+/** a hónaplista sorai egységes oszlopokkal: hónap · fizetés · összeg · állapot · műveletek */
+const ROW: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(170px,1.1fr) minmax(150px,.9fr) minmax(190px,1fr) minmax(130px,.9fr) auto',
+  alignItems: 'center',
+  gap: '6px 14px',
+  padding: '9px 14px',
+};
+const ACTS: React.CSSProperties = { display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' };
+
 function MonthList({
   it,
   editable,
@@ -1498,7 +1508,7 @@ function MonthList({
   const base = planNameOf(it.name);
   /** havidíjas tételnél a sor neve a hónappal: „Havi díj – 2026. szeptember” */
   const title = (ym: string) => (
-    <b style={{ minWidth: 210, color: C.navy }}>
+    <b style={{ color: C.navy }}>
       {base} – {monthName(ym)}
     </b>
   );
@@ -1593,11 +1603,7 @@ function MonthList({
               key={'gap' + e.gap}
               data-ym={e.gap}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                flexWrap: 'wrap',
-                padding: '8px 12px',
+                ...ROW,
                 borderTop: `1px solid ${C.line3}`,
                 font: `500 13px ${FONT}`,
                 background: '#FFF7F6',
@@ -1605,12 +1611,14 @@ function MonthList({
               }}
             >
               {title(e.gap)}
-              <span style={{ flex: 1, minWidth: 150, color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
-              {tpl && editable.length + closed.length > 0 && (
-                <Pill small onClick={() => addMonth(e.gap)}>
-                  + Felvétel ({fmt(Math.abs(tpl.amount))} Ft)
-                </Pill>
-              )}
+              <span style={{ gridColumn: '2 / span 3', color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
+              <span style={ACTS}>
+                {tpl && editable.length + closed.length > 0 && (
+                  <Pill small onClick={() => addMonth(e.gap)}>
+                    + Felvétel ({fmt(Math.abs(tpl.amount))} Ft)
+                  </Pill>
+                )}
+              </span>
             </div>
           );
         if (e.done || e.kind === 'actual') {
@@ -1621,11 +1629,7 @@ function MonthList({
               key={e.id}
               data-ym={periodOf(e)}
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                flexWrap: 'wrap',
-                padding: '8px 12px',
+                ...ROW,
                 borderTop: `1px solid ${C.line3}`,
                 font: `500 13px ${FONT}`,
                 background: '#F6FBF8',
@@ -1633,9 +1637,9 @@ function MonthList({
               }}
             >
               {title(periodOf(e))}
-              <span style={{ color: C.muted, minWidth: 150 }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
+              <span style={{ color: C.muted }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
               {/* terv · tény · eltérés (bevételnél a több, kiadásnál a kevesebb a jó) */}
-              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {e.kind === 'plan' && act ? (
                   (() => {
                     const pl = Math.abs(e.plan_amount ?? e.amount),
@@ -1657,7 +1661,7 @@ function MonthList({
                   <>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</>
                 )}
               </span>
-              <span style={{ flex: 1, minWidth: 140, color: '#2E7D4F', fontWeight: 700 }}>
+              <span style={{ color: '#2E7D4F', fontWeight: 700 }}>
                 ✓ {e.kind === 'actual' ? 'befizetve (terv nélkül)' : act ? 'fizetve' : 'kész'}
                 {doc && (
                   <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, marginLeft: 8 }}>
@@ -1665,6 +1669,7 @@ function MonthList({
                   </a>
                 )}
               </span>
+              <span />
             </div>
           );
         }
@@ -1680,18 +1685,14 @@ function MonthList({
             key={e.id}
             data-ym={p}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              flexWrap: 'wrap',
-              padding: '8px 12px',
+              ...ROW,
               borderTop: `1px solid ${C.line3}`,
               font: `500 13px ${FONT}`,
               ...hl(p),
             }}
           >
             {title(p)}
-            <span style={{ color: C.muted, minWidth: 150 }}>
+            <span style={{ color: C.muted }}>
               {canEdit && !doc ? (
                 <button
                   type="button"
@@ -1720,9 +1721,9 @@ function MonthList({
                 onSave={(v) => onApply({ upsert: [{ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }] }, `${it.name} – ${monthName(p)}: ${fmt(v)} Ft`)}
               />
             ) : (
-              <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>{fmt(Math.abs(e.amount))} Ft</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(e.amount))} Ft</span>
             )}
-            <span style={{ flex: 1, minWidth: 140 }}>
+            <span>
               {doc ? (
                 <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, fontWeight: 700 }}>
                   számla {doc.number || ''} {doc.payment_status === 'paid' ? '· fizetve' : '· nyitott'} ↗
@@ -1733,8 +1734,8 @@ function MonthList({
                 <span style={{ color: late ? '#B3261E' : '#8A6D1C', fontWeight: late ? 700 : 500 }}>{late ? 'még nincs kiszámlázva' : 'terv'}</span>
               )}
             </span>
-            {canEdit && !doc && (
-              <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {canEdit && !doc ? (
+              <span style={moving === e.id ? { ...ACTS, gridColumn: '1 / -1', justifyContent: 'flex-start', flexWrap: 'wrap' } : ACTS}>
                 {moving === e.id ? (
                   <>
                     <span style={{ color: C.muted }}>Számlázás hónapja:</span>
@@ -1765,6 +1766,8 @@ function MonthList({
                   </>
                 )}
               </span>
+            ) : (
+              <span />
             )}
           </div>
         );
