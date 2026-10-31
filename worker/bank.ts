@@ -586,18 +586,37 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
   const mergedSeen = new Set<string>();
+  // Elokeszites: a tetelek, a kategoriak es a szamlak EGY-EGY lekerdezessel (korabban tetelenkent haromszor kerdeztunk)
+  const itemIds = [...new Set(items.map((i) => String(i.id)))];
+  const txById = new Map<string, any>();
+  if (itemIds.length) {
+    const txR = await env.DB.prepare(
+      `SELECT * FROM bank_tx WHERE status = 'new' AND id IN (${itemIds.map(() => '?').join(',')})`,
+    )
+      .bind(...itemIds)
+      .all<any>();
+    for (const r of txR.results) txById.set(String(r.id), r);
+  }
+  const [leafR, accR] = await env.DB.batch<any>([
+    env.DB.prepare('SELECT id, label FROM leaves'),
+    env.DB.prepare('SELECT id, bank_name FROM bank_accounts'),
+  ]);
+  const leafById = new Map<string, { id: string; label: string }>();
+  for (const l of leafR.results as any[]) leafById.set(String(l.id), l);
+  const accById = new Map<string, { bank_name: string }>();
+  for (const a of accR.results as any[]) accById.set(String(a.id), a);
   for (const it of items) {
-    const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'new'").bind(String(it.id)).first<any>();
+    const tx = txById.get(String(it.id));
     if (!tx) continue;
     const leafId = it.leaf_id || tx.leaf_id || (tx.amount < 0 ? unforeseen : null);
     if (!leafId) throw new HttpError(400, `Válassz kategóriát: ${tx.partner || tx.memo}`);
-    const leafRow = await env.DB.prepare('SELECT id, label FROM leaves WHERE id = ?').bind(leafId).first<{ id: string; label: string }>();
+    const leafRow = leafById.get(String(leafId));
     if (!leafRow) throw new HttpError(400, 'Ismeretlen kategória.');
     if (it.merge) {
       // Összevonás: dátum (hónap) + bank + kategória → egyetlen tény, a hónap legutolsó tételének dátumával
       const ym = String(tx.date).slice(0, 7);
       const mid = `m_${leafId}_${tx.account_id}_${ym}`.replace(/[^\w-]/g, '_');
-      const acc = await env.DB.prepare('SELECT bank_name FROM bank_accounts WHERE id = ?').bind(tx.account_id).first<{ bank_name: string }>();
+      const acc = accById.get(String(tx.account_id)) || null;
       let planId: string | null = null;
       if (!mergedSeen.has(mid)) {
         mergedSeen.add(mid);
@@ -721,8 +740,18 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
 }
 
 async function unapprove(env: Env, u: User, ids: string[]) {
+  // a tetelek EGY lekerdezessel (korabban azonositonkent ment egy-egy SELECT)
+  const txById = new Map<string, any>();
+  if (ids.length) {
+    const r = await env.DB.prepare(
+      `SELECT * FROM bank_tx WHERE status = 'approved' AND id IN (${ids.map(() => '?').join(',')})`,
+    )
+      .bind(...ids)
+      .all<any>();
+    for (const row of r.results) txById.set(String(row.id), row);
+  }
   for (const id of ids) {
-    const tx = await env.DB.prepare("SELECT * FROM bank_tx WHERE id = ? AND status = 'approved'").bind(id).first<any>();
+    const tx = txById.get(String(id));
     if (!tx) continue;
     if (String(tx.actual_id || '').startsWith('m_')) {
       // összevont tényből kivonjuk; ha kiürül, törlődik és a terv újra nyitott lesz
@@ -934,9 +963,11 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (path === '/api/bank/ignore' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ ids: string[]; undo?: boolean }>(req);
-    for (const id of (b.ids || []).slice(0, 500))
-      await env.DB.prepare('UPDATE bank_tx SET status = ? WHERE id = ? AND status = ?')
-        .bind(b.undo ? 'new' : 'ignored', id, b.undo ? 'ignored' : 'new')
+    // egy lekerdezes az osszes tetelre (korabban tetelenkent ment egy-egy UPDATE)
+    const ids = (b.ids || []).slice(0, 500);
+    if (ids.length)
+      await env.DB.prepare(`UPDATE bank_tx SET status = ? WHERE status = ? AND id IN (${ids.map(() => '?').join(',')})`)
+        .bind(b.undo ? 'new' : 'ignored', b.undo ? 'ignored' : 'new', ...ids)
         .run();
     return json({ ok: true });
   }
@@ -944,8 +975,11 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (tm && req.method === 'PATCH') {
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
-    if (b.leaf_id !== undefined) await env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE id = ?').bind(b.leaf_id, tm[1]).run();
-    if (b.plan_id !== undefined) await env.DB.prepare('UPDATE bank_tx SET plan_id = ? WHERE id = ?').bind(b.plan_id, tm[1]).run();
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (b.leaf_id !== undefined) (sets.push('leaf_id = ?'), vals.push(b.leaf_id));
+    if (b.plan_id !== undefined) (sets.push('plan_id = ?'), vals.push(b.plan_id));
+    if (sets.length) await env.DB.prepare(`UPDATE bank_tx SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, tm[1]).run();
     return json({ ok: true });
   }
 

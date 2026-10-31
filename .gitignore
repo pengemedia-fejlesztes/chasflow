@@ -7,3 +7,9 @@ dist/
 *.csv
 *.pem
 .DS_Store
+d1-dump.sql
+mysql-dump.sql
+mysql-schema.sql
+dist-worker/
+*.log
+secrets*

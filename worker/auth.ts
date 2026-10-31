@@ -160,7 +160,13 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
   if (path === '/api/auth/status' && req.method === 'GET') {
     const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>();
     const u = await currentUser(env, req);
-    return json({ hasUsers: (c?.n || 0) > 0, setupAvailable: !c?.n && !!env.SETUP_TOKEN, mailEnabled: mailEnabled(env), me: u ? publicUser(u) : null });
+    return json({
+      hasUsers: (c?.n || 0) > 0,
+      setupAvailable: !c?.n && !!env.SETUP_TOKEN,
+      mailEnabled: mailEnabled(env),
+      require2fa: (env as any).REQUIRE_ADMIN_2FA === '1',
+      me: u ? publicUser(u) : null,
+    });
   }
 
   if (path === '/api/auth/setup' && req.method === 'POST') {

@@ -46,11 +46,11 @@ export function App() {
         history.replaceState(null, '', location.pathname);
         return setPhase({ k: 'reset', token: resetToken });
       }
-      const s = await api<{ hasUsers: boolean; setupAvailable: boolean; mailEnabled: boolean; me: Me | null }>('/api/auth/status');
+      const s = await api<{ hasUsers: boolean; setupAvailable: boolean; mailEnabled: boolean; require2fa?: boolean; me: Me | null }>('/api/auth/status');
       mailOn = s.mailEnabled;
       if (!s.me) return setPhase({ k: 'login', setup: !s.hasUsers && s.setupAvailable });
       if (s.me.must_change_pw) return setPhase({ k: 'changePw', me: s.me });
-      if (s.me.role === 'admin' && !s.me.totp_enabled) return setPhase({ k: 'setup2fa', me: s.me });
+      if (s.require2fa && s.me.role === 'admin' && !s.me.totp_enabled) return setPhase({ k: 'setup2fa', me: s.me });
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
     } catch (e: any) {
       setPhase({ k: 'error', msg: e.message });

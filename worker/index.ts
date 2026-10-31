@@ -82,7 +82,8 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
   // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
-  if (u.role === 'admin' && !u.totp_enabled) throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
+  if ((env as any).REQUIRE_ADMIN_2FA === '1' && u.role === 'admin' && !u.totp_enabled)
+    throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
 
   for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleChangelog]) {
     const r = await h(env, req, path, u);

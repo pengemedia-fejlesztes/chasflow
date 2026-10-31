@@ -223,13 +223,21 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
       ),
     );
   }
-  // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek)
-  for (const raw of b.upsert || []) {
-    if (raw.ext_ref && raw.ext_ref.startsWith('billingo:')) {
-      const doc = await env.DB.prepare('SELECT partner FROM billingo_docs WHERE id = ?')
-        .bind(Number(raw.ext_ref.slice(9)))
-        .first<{ partner: string }>();
-      const key = doc?.partner ? partnerKey(doc.partner) : '';
+  // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek).
+  // A számlák partnereit EGY lekérdezéssel kérjük le (korábban soronként ment egy-egy kérés).
+  const billingoRows = (b.upsert || []).filter((r) => r.ext_ref && String(r.ext_ref).startsWith('billingo:'));
+  if (billingoRows.length) {
+    const docIds = [...new Set(billingoRows.map((r) => Number(String(r.ext_ref).slice(9))).filter((n) => Number.isFinite(n)))];
+    const partnerById = new Map<number, string>();
+    if (docIds.length) {
+      const docs = await env.DB.prepare(`SELECT id, partner FROM billingo_docs WHERE id IN (${docIds.map(() => '?').join(',')})`)
+        .bind(...docIds)
+        .all<{ id: number; partner: string }>();
+      for (const d of docs.results) partnerById.set(Number(d.id), d.partner);
+    }
+    for (const raw of billingoRows) {
+      const doc = partnerById.get(Number(String(raw.ext_ref).slice(9)));
+      const key = doc ? partnerKey(doc) : '';
       if (key)
         stmts.push(
           env.DB.prepare(
@@ -408,17 +416,19 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       .bind(lm[1])
       .first<Record<string, unknown>>();
     if (!prev) throw new HttpError(404, 'Ismeretlen partner.');
-    if (b.label !== undefined) await env.DB.prepare('UPDATE leaves SET label = ? WHERE id = ?').bind(String(b.label).trim().slice(0, 80), lm[1]).run();
-    if (b.archived !== undefined)
-      await env.DB.prepare('UPDATE leaves SET archived = ? WHERE id = ?')
-        .bind(b.archived ? 1 : 0, lm[1])
-        .run();
-    if (b.group_id !== undefined) await env.DB.prepare('UPDATE leaves SET group_id = ? WHERE id = ?').bind(String(b.group_id), lm[1]).run();
-    if (b.pay_rule !== undefined) await env.DB.prepare('UPDATE leaves SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), lm[1]).run();
+    // egyetlen UPDATE a modositott mezokre (korabban mezonkent ment egy-egy kerdes)
+    const setParts: string[] = [];
+    const setVals: unknown[] = [];
+    if (b.label !== undefined) (setParts.push('label = ?'), setVals.push(String(b.label).trim().slice(0, 80)));
+    if (b.archived !== undefined) (setParts.push('archived = ?'), setVals.push(b.archived ? 1 : 0));
+    if (b.group_id !== undefined) (setParts.push('group_id = ?'), setVals.push(String(b.group_id)));
+    if (b.pay_rule !== undefined) (setParts.push('pay_rule = ?'), setVals.push(cleanPayRule(b.pay_rule)));
     if (b.pay_days !== undefined) {
       const n = b.pay_days === null || b.pay_days === '' ? null : Math.min(180, Math.max(0, Math.round(Number(b.pay_days)) || 0));
-      await env.DB.prepare('UPDATE leaves SET pay_days = ? WHERE id = ?').bind(n, lm[1]).run();
+      setParts.push('pay_days = ?');
+      setVals.push(n);
     }
+    if (setParts.length) await env.DB.prepare(`UPDATE leaves SET ${setParts.join(', ')} WHERE id = ?`).bind(...setVals, lm[1]).run();
     if (b.group_id !== undefined || b.pay_rule !== undefined || b.pay_days !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
     const keys = ['label', 'archived', 'group_id', 'pay_rule', 'pay_days'].filter((k) => b[k] !== undefined);
     if (keys.length) {
