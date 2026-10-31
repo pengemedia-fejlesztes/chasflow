@@ -15,7 +15,7 @@ import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
 import { MobilePartnerScreen } from './MobileFlows';
 import { PartnerModal } from './PartnerModal';
-import { PartnerDetail } from './PartnersView';
+import { PartnerSheet } from './PartnerSheet';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle } from './ui';
 
@@ -637,7 +637,7 @@ const TERM_MODES: [string, string][] = [
 ];
 
 /** Fizetési feltételek partnerenként (alkategóriánként): mikor esedékes a rendszeres tétel – a tervek ehhez igazodnak. */
-function PaymentTerms({ p }: { p: PartnerStat }) {
+export function PaymentTerms({ p }: { p: PartnerStat }) {
   const { ix } = useStore();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -646,13 +646,13 @@ function PaymentTerms({ p }: { p: PartnerStat }) {
         kerülnek, és a meglévő nyitott terveket is átütemezheted.
       </span>
       {p.leaves.map((l) => (
-        <TermRow key={l.id} leafId={l.id} sec={ix.sectionOf(l.id)} />
+        <TermRow key={l.id} leafId={l.id} sec={ix.sectionOf(l.id)} avgLate={p.avgLate} />
       ))}
     </div>
   );
 }
 
-function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
+function TermRow({ leafId, sec, avgLate }: { leafId: string; sec: Section; avgLate?: number | null }) {
   const { ix, data, run, commit, canEdit } = useStore();
   const L = ix.leafById[leafId];
   const rule = L?.pay_rule || '';
@@ -726,6 +726,39 @@ function TermRow({ leafId, sec }: { leafId: string; sec: Section }) {
       )}
       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Következő esedékességek: {next.map((d) => d.replace(/-/g, '.') + '.').join(' · ')}</span>
       {sec === 'out' && normalizeText(ix.groupById[L?.group_id || '']?.label || '').includes('alvallalkoz') && <SheetLink leafId={leafId} />}
+      {sec === 'in' && avgLate != null && avgLate > 5 && (
+        // a tényleges fizetési szokás: átlagos késés a határidőhöz képest → javasolt tervezési nap (10-re kerekítve)
+        <div style={{ background: C.bg, borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>Valójában átlag {Math.round(avgLate)} nap késéssel fizet</b>
+          <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>
+            Javaslat: a cashflow-tervben számolj {Math.max(10, Math.round(((mode === 'inv' ? clamp('inv', n) : 8) + avgLate) / 10) * 10)} nappal.
+          </span>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                const v = String(Math.max(10, Math.round(((mode === 'inv' ? clamp('inv', n) : 8) + avgLate) / 10) * 10));
+                setMode('inv');
+                setN(v);
+                save('inv', v);
+              }}
+              style={{
+                alignSelf: 'flex-start',
+                marginTop: 4,
+                border: 0,
+                borderRadius: 999,
+                background: C.navy,
+                color: '#fff',
+                padding: '9px 18px',
+                font: `600 13.5px ${FONT}`,
+                cursor: 'pointer',
+              }}
+            >
+              Tervezés tényleges késéssel
+            </button>
+          )}
+        </div>
+      )}
       {canEdit && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `500 13px ${FONT}`, color: C.ink, cursor: 'pointer' }}>
@@ -808,7 +841,7 @@ function SheetLink({ leafId }: { leafId: string }) {
 }
 
 /** Tervezett feladatok: mit számlázunk a partnernek / mit fizetünk neki (havidíj, SEO, weboldal részlet…). */
-function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, key?: string) => void }) {
+export function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, key?: string) => void }) {
   const { ix, data, canEdit, run, commit } = useStore();
   const byName = new Map<
     string,
@@ -976,8 +1009,6 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const { partnerCard, openPartner, ix } = useStore();
   const all = useAllPartners();
   const [task, setTask] = useState<{ leaf: string; key?: string } | null>(null);
-  const [tab, setTab] = useState<'main' | 'company' | 'terms'>('main');
-  useEffect(() => setTab('main'), [partnerCard]);
   const taskLeaf = task?.leaf ?? null;
   useEffect(() => {
     if (!partnerCard || taskLeaf) return;
@@ -993,76 +1024,29 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   // mobilon teljes képernyős adatlap: lejárt · átl. késés · 12 hó, következő tétel, előzmények, „hogyan fizet?” naptár
   if (mobile && p) return <MobilePartnerScreen p={p} onClose={close} onNewItem={(leaf) => setTask({ leaf })} onEditItem={(leaf) => setTask({ leaf })} />;
   return (
-    <Modal onClose={close} width={1000}>
-      <div style={{ padding: mobile ? 16 : 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <span style={eyebrow}>Partner adatlap{p ? ` · ${KIND_LABEL[kindOf(p, ix.sectionOf)]}` : ''}</span>
-            {p ? (
-              <PartnerTitle p={p} mobile={mobile} onSaved={(k) => openPartner(k)} />
-            ) : (
-              <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 26}px/1.15 ${FONT_H}`, color: C.navy }}>Ismeretlen partner</h2>
-            )}
-            {p && !!p.info?.aliases?.length && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>más néven: {p.info.aliases.join(' · ')}</span>}
-          </div>
+    <Modal onClose={close} width={1180}>
+      {p ? (
+        <PartnerSheet
+          p={p}
+          onClose={close}
+          onNewItem={(leaf) => setTask({ leaf })}
+          onEditItem={(leaf, key) => setTask({ leaf, key })}
+          onRenamed={(k) => openPartner(k)}
+        />
+      ) : (
+        <div style={{ padding: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, margin: 0, font: `700 26px/1.15 ${FONT_H}`, color: C.navy }}>Ismeretlen partner</h2>
           <Pill small onClick={close}>
             Bezár
           </Pill>
         </div>
-        {p ? (
-          <>
-            <div style={{ display: 'flex', gap: 6, borderBottom: `1px solid ${C.line2}`, flexWrap: 'wrap' }}>
-              {(
-                [
-                  ['main', 'Áttekintés'],
-                  ['company', 'Cégadatok'],
-                  ['terms', 'Fizetési feltételek'],
-                ] as const
-              ).map(([k, l]) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setTab(k)}
-                  style={{
-                    border: 0,
-                    background: 'transparent',
-                    padding: '8px 14px',
-                    font: `700 14px ${FONT}`,
-                    color: tab === k ? C.navy : C.muted,
-                    borderBottom: `3px solid ${tab === k ? C.blue : 'transparent'}`,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-            {tab === 'main' && (
-              <>
-                <PlannedTasks p={p} onEdit={(leaf, key) => setTask({ leaf, key })} />
-                <PartnerDetail p={p} mobile={mobile} embedded part="stats" onBack={close} onEditItem={(leaf, key) => setTask({ leaf, key })} />
-              </>
-            )}
-            {tab === 'company' && (
-              <>
-                <div style={{ ...card, padding: 14 }}>
-                  <PartnerEditor key={p.key + (p.info?.updated_at || 0)} p={p} part="company" compact={mobile} onSaved={(k) => openPartner(k)} />
-                </div>
-                <PartnerDetail p={p} mobile={mobile} embedded part="names" onBack={close} />
-              </>
-            )}
-            {tab === 'terms' && <PaymentTerms p={p} />}
-          </>
-        ) : (
-          <span style={{ font: `500 13.5px ${FONT}`, color: C.muted }}>Ehhez a névhez nem tartozik partner.</span>
-        )}
-      </div>
+      )}
     </Modal>
   );
 }
 
 /** A partner neve a fejlécben; a ceruzára kattintva helyben átírható (Enter / kilépés = mentés, Esc = mégse). */
-function PartnerTitle({ p, mobile, onSaved }: { p: PartnerStat; mobile?: boolean; onSaved: (key: string) => void }) {
+export function PartnerTitle({ p, mobile, onSaved }: { p: PartnerStat; mobile?: boolean; onSaved: (key: string) => void }) {
   const { canEdit, run } = useStore();
   const [edit, setEdit] = useState(false);
   const [v, setV] = useState(p.name);
