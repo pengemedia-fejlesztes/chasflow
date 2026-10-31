@@ -133,7 +133,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
     );
   };
 
-  const COLS = 'minmax(64px,72px) minmax(0,1fr) 150px 120px';
+  const COLS = '56px minmax(0,1fr) 124px 104px';
   const th = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase' as const, color: C.muted };
 
   return (
@@ -165,7 +165,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'minmax(0,1fr) minmax(280px,370px)', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'minmax(0,1fr) minmax(250px,340px)', gap: 16, alignItems: 'start' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             {chip('open', `Nyitott · ${monthLabel(lastMonth).toLowerCase()} végéig`, sumAbs(firm), firm.length, 'dark')}

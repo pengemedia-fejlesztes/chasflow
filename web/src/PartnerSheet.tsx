@@ -3,10 +3,13 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { fmt, monthLong, ymOf } from '../../shared/model';
+import { hasMonth } from '../../shared/monthname';
 import type { PartnerStat } from '../../shared/partners';
 import type { Entry } from '../../shared/types';
 import { BankPickDialog } from './BankPick';
 import { CalendarSheet } from './DatePicker';
+import { usePlanOfActual } from './LinkChain';
+import { itemLabel } from './MonthList';
 import { shiftDate } from './logic';
 import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks } from './PartnerCard';
 import { PartnerDetail } from './PartnersView';
@@ -64,29 +67,54 @@ export function PartnerSheet({
   const group = p.groups[0] ? displayGroup(p.groups[0].label) : '';
   const company = p.info?.aliases?.find((a) => a !== p.name) || p.billingNames.find((b) => b.name !== p.name)?.name;
 
-  // számlák: határidő → fizetés, késéssel; számla nélkül a tények
+  // a tétel neve: rendszeres tételnél a sorozat neve + hónap („Havi díj – január”), különben a tétel saját neve
+  const seriesName = useMemo(() => new Map(data.series.map((x) => [x.id, x.name])), [data.series]);
+  const nameOf = (e?: Entry, fb = 'Számla') => {
+    if (!e) return fb;
+    const sn = e.series_id && seriesName.get(e.series_id);
+    if (sn && !hasMonth(sn)) return `${sn} – ${monthLong(e.period || ymOf(e.date)).replace(/^\d+\.\s*/, '')}`;
+    return itemLabel(e.name, p.name) || sn || fb;
+  };
+  const planOfActual = usePlanOfActual();
+
+  // számlák (határidő → fizetés, késéssel) + a számla nélküli befizetések (a terv dátumához mért késéssel)
   const hist: Hist[] = useMemo(() => {
-    if (p.invoices.length)
-      return p.invoices
-        .map((i) => {
-          const pl = i.doc.plan_id ? byId.get(i.doc.plan_id) : undefined;
-          return {
-            ym: (i.doc.invoice_date || i.doc.due_date || '').slice(0, 7),
-            name: (pl?.name || 'Számla').replace(/\s*·\s*Penge.*$/i, ''),
-            amount: i.doc.gross,
-            late: i.lateDays,
-            open: i.lateDays === null,
-            due: i.doc.due_date,
-            paid: i.doc.paid_date,
-            number: i.doc.number,
-          };
-        })
-        .filter((h) => h.ym)
-        .sort((a, b) => b.ym.localeCompare(a.ym));
-    return p.past
-      .map((e) => ({ ym: ymOf(e.date), name: e.name || 'tény', amount: Math.abs(e.amount), late: 0, open: false, due: e.date, paid: e.date, number: null }))
-      .sort((a, b) => b.ym.localeCompare(a.ym));
-  }, [p, byId]);
+    const inv: Hist[] = p.invoices
+      .map((i) => {
+        const pl = i.doc.plan_id ? byId.get(i.doc.plan_id) : undefined;
+        return {
+          ym: (pl?.period || i.doc.invoice_date || i.doc.due_date || '').slice(0, 7),
+          name: nameOf(pl),
+          amount: i.doc.gross,
+          late: i.lateDays,
+          open: i.lateDays === null,
+          due: i.doc.due_date,
+          paid: i.doc.paid_date,
+          number: i.doc.number,
+        };
+      })
+      .filter((h) => h.ym);
+    const covered = new Set(inv.map((h) => h.ym));
+    const paidIds = new Set(p.invoices.map((i) => i.doc.plan_id).filter(Boolean));
+    const acts: Hist[] = p.past
+      .filter((e) => e.kind === 'actual' && ix.sectionOf(e.leaf_id) === sec)
+      .map((e) => {
+        const pl = planOfActual.get(e.id);
+        return { e, pl, ym: pl?.period || ymOf(pl?.date || e.date) };
+      })
+      .filter((x) => !covered.has(x.ym) && !(x.pl && paidIds.has(x.pl.id)))
+      .map(({ e, pl, ym }) => ({
+        ym,
+        name: pl ? nameOf(pl) : itemLabel(e.name, p.name) || 'befizetés',
+        amount: Math.abs(e.amount),
+        late: pl ? Math.max(0, days(pl.date, e.date)) : 0,
+        open: false,
+        due: pl?.date || e.date,
+        paid: e.date,
+        number: null,
+      }));
+    return [...inv, ...acts].sort((a, b) => b.ym.localeCompare(a.ym));
+  }, [p, byId, planOfActual, seriesName]);
 
   const openItems = p.future.filter((e) => e.kind === 'plan' && !e.done).sort((a, b) => a.date.localeCompare(b.date));
   const lateNow = p.outstanding || openItems.filter((e) => e.date < data.today).reduce((a, e) => a + Math.abs(e.amount), 0);
@@ -195,7 +223,7 @@ export function PartnerSheet({
                     <b style={{ font: `700 15px ${FONT_H}`, color: late ? C.neg : C.navy, width: 52 }}>{dm(e.date)}</b>
                     <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                       <b style={{ font: `600 16px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {e.name || p.name}
+                        {nameOf(e, p.name)}
                       </b>
                       {inv && <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>{inv}</span>}
                     </span>
