@@ -1,6 +1,6 @@
 // Fedezeti pont: munkatársanként feltöltött havi munkaidő (Clockify-szerű XLS) + a cashflow tényei →
 // munkaköltség projektenként, projektfedezet, a cég havi fedezeti pontja; letölthető XLS.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { addMonths, fmt, monthLabel, monthLong, monthRange } from '../../shared/model';
 import { namesMatch } from '../../shared/billingopay';
 import { partnerIdOf } from '../../shared/partners';
@@ -62,6 +62,22 @@ export function BreakevenView() {
   const { ix, data, run, isAdmin, showToast, openPartner } = useStore();
   const employees = data.employees || [];
   const worktime = data.worktime || [];
+  // régi import (euró-oszlop és összesítő-szűrés előtt): a táblát egyszer magától újratölti a Drive-linkről
+  useEffect(() => {
+    if (!isAdmin) return;
+    for (const emp of employees) {
+      const rows = worktime.filter((w) => w.employee === emp.key);
+      const stale = rows.length > 0 && rows.every((w) => !w.eur);
+      const mark = 'cf_wt_refresh_' + emp.key;
+      if (!emp.sheet_url || !stale) continue;
+      try {
+        if (sessionStorage.getItem(mark)) continue;
+        sessionStorage.setItem(mark, '1');
+      } catch {}
+      refreshFromDrive(emp, run, showToast);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 12 hónapos ablak, évenként lapozható vissza
   const [endYm, setEndYm] = useState(ix.cur);
   const months = useMemo(() => monthRange(addMonths(endYm, -11), endYm), [endYm]);
