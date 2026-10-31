@@ -139,7 +139,11 @@ export function parseAggreg8Json(body: unknown): A8JsonResult {
     const partner = (isObj(cp) ? str(pick(cp, ['name'], 0)) : str(cp)).slice(0, 200);
     const name = str(pick(t, ['transactionName', 'listTransactionName', 'description', 'title'], 0));
     const detail = str(pick(t, ['sourceDetailText', 'remittanceInformation', 'memo', 'narrative', 'comment'], 0));
-    const memo = [name, detail && detail !== partner && detail !== name ? detail : ''].filter(Boolean).join(' · ').slice(0, 480);
+    // a bank a díjtételt a típusában jelöli (pl. type / transactionType / category: „FEE”, „Díj”, „Jutalék”) – ez a közleménybe kerül
+    const fee = Object.entries(t).some(
+      ([k, v]) => /type|category|kind|code/i.test(k) && typeof v === 'string' && /\b(fee|fees|charge|commission)\b|d[ií]j|jutal[eé]k|illet[eé]k/i.test(v),
+    );
+    const memo = [fee ? 'Banki díj' : '', name, detail && detail !== partner && detail !== name ? detail : ''].filter(Boolean).join(' · ').slice(0, 480);
     const id = str(pick(t, ['_id', 'id', 'localId', 'transactionId'], 0));
     if (!byAcc.has(account)) byAcc.set(account, { account, rows: [] });
     byAcc.get(account)!.rows.push({ date, amount, partner, memo, ...(id ? { ext: 'a8:' + id.slice(0, 120) } : {}) });

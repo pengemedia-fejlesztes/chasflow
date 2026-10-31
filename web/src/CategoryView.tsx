@@ -1,3 +1,4 @@
+import { baseName } from '../../shared/monthname';
 import { parseWholeForint } from '../../shared/amount';
 // Kategória (csoport) nézet: tervezett sorozatok havi rácsban + a szűrt időszak tényei.
 import { useMemo, useState } from 'react';
@@ -91,7 +92,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
     if (!leafIds.has(d.leaf_id) || !visibleSet.has(ymOf(d.date))) continue;
     const k = rowKey(d);
     // újraütemezett tétel régi változata: ha ugyanazzal a névvel él egy sor ennél a partnernél, a régi nem kell áthúzva
-    if (!rowsMap.has(k) && planEntries.some((e) => e.leaf_id === d.leaf_id && e.name === d.name)) continue;
+    if (!rowsMap.has(k) && planEntries.some((e) => e.leaf_id === d.leaf_id && baseName(e.name) === baseName(d.name))) continue;
     if (!delMap.has(k)) delMap.set(k, []);
     delMap.get(k)!.push(d);
     if (!rowsMap.has(k)) rowsMap.set(k, []);

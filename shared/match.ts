@@ -23,7 +23,17 @@ export interface TxLike {
 /** Beépített párosítások (szövegrészlet → alkategória név). Az adatbázisba „beépített” szabályként kerülnek, ott szerkeszthetők. */
 export const SEED_RULES: { patterns: string[]; leaves: string[]; auto: boolean; note: string }[] = [
   {
-    patterns: ['tranzakcios dij', 'bankkartya dij', 'kartyadij', 'koltsegelszamolas', 'szamlavezetesi dij', 'banki dij'],
+    patterns: [
+      'tranzakcios dij',
+      'bankkartya dij',
+      'kartyadij',
+      'koltsegelszamolas',
+      'szamlavezetesi dij',
+      'banki dij',
+      'tranzakcios illetek',
+      'atutalasi dij',
+      'jutalek',
+    ],
     leaves: ['bank koltseg', 'bankkoltseg'],
     auto: true,
     note: 'Banki díjak – automatikusan a hónap költsége',

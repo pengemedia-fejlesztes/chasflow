@@ -128,7 +128,7 @@ export function PartnerEditor({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {part !== 'company' && (
-        <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '1fr 1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: compact || part === 'basic' ? '1fr' : '1fr 1fr', gap: 10 }}>
           <Field label="Partner neve (ez jelenik meg mindenhol)">
             <input
               value={name}
@@ -139,6 +139,29 @@ export function PartnerEditor({
               style={{ ...inputStyle, height: 42 }}
             />
           </Field>
+          {!part && (
+            <Field label="Típus">
+              <Seg
+                small
+                value={kind}
+                onChange={(v) => {
+                  if (!canEdit) return;
+                  setKind(v);
+                  persist({ kind: v });
+                }}
+                options={[
+                  ['vevo', 'Vevő'],
+                  ['szallito', 'Szállító'],
+                  ['mindketto', 'Mindkettő'],
+                ]}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      {part === 'company' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
           <Field label="Típus">
             <Seg
               small
@@ -339,21 +362,47 @@ function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: {
     run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { label: v } }), `Átnevezve: ${L.label} → ${v}`);
   };
   const merge = (into: { id: string; label: string }) => {
-    if (!confirm(`„${L.label}” (${gl(leafId)}) összevonása ide: „${into.label}” (${gl(into.id)})?\n\nMinden tétele (${es.length}: ${openN} nyitott terv, ${actN} tény), banki tétele és párosítási szabálya átkerül, a régi név a jövőben is ide párosul. A „${L.label}” sor megszűnik.`)) return;
-    run(() => api(`/api/leaves/${leafId}/merge`, { body: { into: into.id } }), `${L.label} → ${into.label} összevonva · visszavonható: Beállítások › Napló`).then(onDone);
+    if (
+      !confirm(
+        `„${L.label}” (${gl(leafId)}) összevonása ide: „${into.label}” (${gl(into.id)})?\n\nMinden tétele (${es.length}: ${openN} nyitott terv, ${actN} tény), banki tétele és párosítási szabálya átkerül, a régi név a jövőben is ide párosul. A „${L.label}” sor megszűnik.`,
+      )
+    )
+      return;
+    run(
+      () => api(`/api/leaves/${leafId}/merge`, { body: { into: into.id } }),
+      `${L.label} → ${into.label} összevonva · visszavonható: Beállítások › Napló`,
+    ).then(onDone);
   };
   const archive = () => {
     if (openN) {
-      alert(`„${L.label}” sorban még ${openN} nyitott terv van. Előbb vond össze egy másik sorral, vagy töröld / helyezd át a tételeit („Tételek szerkesztése”).`);
+      alert(
+        `„${L.label}” sorban még ${openN} nyitott terv van. Előbb vond össze egy másik sorral, vagy töröld / helyezd át a tételeit („Tételek szerkesztése”).`,
+      );
       return;
     }
-    if (!confirm(`„${L.label}” megszüntetése? A múltbeli tételei megmaradnak (a statisztikában látszanak), csak a választólistákban nem jelenik meg többé. Visszaállítani a Beállítások → Kategóriák alatt lehet.`)) return;
+    if (
+      !confirm(
+        `„${L.label}” megszüntetése? A múltbeli tételei megmaradnak (a statisztikában látszanak), csak a választólistákban nem jelenik meg többé. Visszaállítani a Beállítások → Kategóriák alatt lehet.`,
+      )
+    )
+      return;
     run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { archived: 1 } }), `${L.label} megszüntetve (archiválva)`).then(onDone);
   };
   const row: CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
   const lab: CSSProperties = { font: `600 10.5px ${FONT}`, letterSpacing: '.08em', textTransform: 'uppercase', color: C.muted, minWidth: 92 };
   return (
-    <div style={{ margin: '2px 0 8px 8px', padding: 10, borderRadius: 10, background: C.bg, display: 'flex', flexDirection: 'column', gap: 8, font: `500 12.5px ${FONT}` }}>
+    <div
+      style={{
+        margin: '2px 0 8px 8px',
+        padding: 10,
+        borderRadius: 10,
+        background: C.bg,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        font: `500 12.5px ${FONT}`,
+      }}
+    >
       <span style={{ color: C.muted }}>
         {es.length} tétel · {openN} nyitott terv · {actN} tény
       </span>
@@ -390,7 +439,10 @@ function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: {
               key={g.id}
               small
               kind={g.id === L.group_id ? 'dark' : undefined}
-              onClick={() => g.id !== L.group_id && run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id: g.id } }), `${L.label} → ${displayGroup(g.label)}`)}
+              onClick={() =>
+                g.id !== L.group_id &&
+                run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id: g.id } }), `${L.label} → ${displayGroup(g.label)}`)
+              }
             >
               {displayGroup(g.label)}
             </Pill>
@@ -494,26 +546,26 @@ function FolderTree({
                       const self = here.some((h) => h.id === l.id);
                       return (
                         <Fragment key={l.id}>
-                        <button
-                          type="button"
-                          onClick={() => (self ? canEdit && setAct(act === l.id ? null : l.id) : openPartner(l.id))}
-                          title={self ? (canEdit ? 'Átnevezés, összevonás, áthelyezés, megszüntetés' : 'Ez a partner') : 'Partner adatlapja'}
-                          style={{
-                            border: 0,
-                            background: self ? C.bg3 : 'transparent',
-                            textAlign: 'left',
-                            padding: '3px 8px',
-                            borderRadius: 6,
-                            font: `${self ? 700 : 500} 12.5px ${FONT}`,
-                            color: self ? C.navy : C.blueDark,
-                            cursor: self && !canEdit ? 'default' : 'pointer',
-                          }}
-                        >
-                          {self ? '● ' : '└ '}
-                          {l.label}
-                          {self && canEdit && <span style={{ font: `600 11px ${FONT}`, color: C.blueDark }}> {act === l.id ? '▾' : '· szerkesztés ›'}</span>}
-                        </button>
-                        {self && act === l.id && <LeafActions leafId={l.id} siblings={mine.filter((x) => x.id !== l.id)} onDone={() => setAct(null)} />}
+                          <button
+                            type="button"
+                            onClick={() => (self ? canEdit && setAct(act === l.id ? null : l.id) : openPartner(l.id))}
+                            title={self ? (canEdit ? 'Átnevezés, összevonás, áthelyezés, megszüntetés' : 'Ez a partner') : 'Partner adatlapja'}
+                            style={{
+                              border: 0,
+                              background: self ? C.bg3 : 'transparent',
+                              textAlign: 'left',
+                              padding: '3px 8px',
+                              borderRadius: 6,
+                              font: `${self ? 700 : 500} 12.5px ${FONT}`,
+                              color: self ? C.navy : C.blueDark,
+                              cursor: self && !canEdit ? 'default' : 'pointer',
+                            }}
+                          >
+                            {self ? '● ' : '└ '}
+                            {l.label}
+                            {self && canEdit && <span style={{ font: `600 11px ${FONT}`, color: C.blueDark }}> {act === l.id ? '▾' : '· szerkesztés ›'}</span>}
+                          </button>
+                          {self && act === l.id && <LeafActions leafId={l.id} siblings={mine.filter((x) => x.id !== l.id)} onDone={() => setAct(null)} />}
                         </Fragment>
                       );
                     })}
@@ -728,8 +780,7 @@ function SheetLink({ leafId }: { leafId: string }) {
         {missing && <span style={{ font: `600 12px ${FONT}`, color: C.neg }}> – kötelező, még nincs megadva</span>}
       </b>
       <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
-        Ebből számolja a program havonta, melyik projekten mennyi munka volt. A táblát „Bárki, akinek megvan a link” – Megtekintő megosztásra kell
-        állítani.
+        Ebből számolja a program havonta, melyik projekten mennyi munka volt. A táblát „Bárki, akinek megvan a link” – Megtekintő megosztásra kell állítani.
       </span>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
@@ -762,7 +813,19 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
   const { ix, data, canEdit, run, commit } = useStore();
   const byName = new Map<
     string,
-    { name: string; sec: Section; next: string; n: number; sum: number; offer: boolean; ids: string[]; offer_at: number | null; leaf: string; key: string; ms: string[] }
+    {
+      name: string;
+      sec: Section;
+      next: string;
+      n: number;
+      sum: number;
+      offer: boolean;
+      ids: string[];
+      offer_at: number | null;
+      leaf: string;
+      key: string;
+      ms: string[];
+    }
   >();
   for (const e of p.future) {
     const sec = ix.sectionOf(e.leaf_id);
@@ -810,7 +873,8 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
     );
   };
   const reject = (r: (typeof rows)[number]) => {
-    if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel kikerül a tervből, lezárt ajánlatként áthúzva látszik, az elfogadási arányba beszámít)`)) return;
+    if (!confirm(`„${r.name}” ajánlat elutasítva? (${r.n} tétel kikerül a tervből, lezárt ajánlatként áthúzva látszik, az elfogadási arányba beszámít)`))
+      return;
     commit({ delete: r.ids, rejected: true }, `Ajánlat elutasítva: ${r.name} – lezárva`);
   };
   const ago = (ms: number | null) => (ms ? Math.max(0, Math.round((Date.now() - ms) / 86400000)) : null);
@@ -843,7 +907,12 @@ function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: string, ke
               </b>
               <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>
                 {r.sec === 'in' ? 'számlázunk' : 'fizetünk'} · következő {dd(r.next)} · {r.n} alkalom
-                {r.n > 1 ? ` (${[...new Set(r.ms)].sort().map((m) => monthLabel(m) + (m.slice(0, 4) !== ix.cur.slice(0, 4) ? ' ' + m.slice(0, 4) : '')).join(', ')})` : ''}
+                {r.n > 1
+                  ? ` (${[...new Set(r.ms)]
+                      .sort()
+                      .map((m) => monthLabel(m) + (m.slice(0, 4) !== ix.cur.slice(0, 4) ? ' ' + m.slice(0, 4) : ''))
+                      .join(', ')})`
+                  : ''}
                 {r.offer && ago(r.offer_at) !== null ? ` · ${ago(r.offer_at)} napja nyitott ajánlat` : ''}
               </span>
             </span>

@@ -1,4 +1,5 @@
 // Kliens oldali műveletek: minden módosítás egy EntryBatch-et állít elő (visszavonható).
+import { baseName } from '../../shared/monthname';
 import { addMonths, endOfMonth, ymOf, type Index } from '../../shared/model';
 import { partnerIdOf } from '../../shared/partners';
 import { api } from './api';
@@ -119,14 +120,14 @@ export function deleteEntries(d: DataBundle, ids: string[]): EntryBatch {
 }
 
 /** Sor-kulcs a kategória nézethez: sorozat, vagy (importált terveknél) kategória+név. */
-export const rowKey = (e: Entry) => e.series_id || `n:${e.leaf_id}|${e.name}`;
+export const rowKey = (e: Entry) => e.series_id || `n:${e.leaf_id}|${baseName(e.name)}`;
 
 /**
  * Terv neve a jövőbeli hónapokra: a számlából jött név („Pharmazone WS Kft. · Penge / 2026-000053”) nem öröklődik –
  * a számla sorszáma a hónaphoz tartozik, a feladat neve marad (pl. „Havi díj”).
  */
 export function planNameOf(name: string): string {
-  const n = (name || '').trim();
+  const n = baseName(name || '');
   return /^.+? · .+\/ ?\d{4}-\d+$/.test(n) || /^(Számla )?[A-Za-z]+ ?\/ ?\d{4}-\d+$/.test(n) ? 'Havi díj' : n;
 }
 
@@ -152,6 +153,8 @@ export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch
         source: 'manual',
         // a számlából jött terv neve („Partner · Penge / 2026-000056”) ne öröklődjön a jövőbe
         name: planNameOf(last.name),
+        // a hónap a dátumból jön (havidíjnál a névbe is)
+        period: null,
       });
   }
   return { upsert: add };

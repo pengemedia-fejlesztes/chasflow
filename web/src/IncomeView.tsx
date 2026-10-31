@@ -1,4 +1,5 @@
 // Tervezett bevételek, kiadások: melyik tételt mikor fizetik / fizetjük (Billingo- és NAV-számlák, tervek); a dátumra kattintva a határidő módosítható.
+import { hasMonth } from '../../shared/monthname';
 import { useRef, useState } from 'react';
 import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Section } from '../../shared/types';
@@ -29,7 +30,9 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   // havidíjas (ismétlődő) tételnél a hónap is a névben: „Havi díj – 2026. november”
   const repOf = new Map(data.series.map((x) => [x.id, x.rep]));
   const withMonth = (e: Entry, label: string) =>
-    e.series_id && repOf.get(e.series_id) && repOf.get(e.series_id) !== 'once' ? `${label || e.name} – ${monthLong(e.period || ymOf(e.date))}` : label;
+    e.series_id && repOf.get(e.series_id) && repOf.get(e.series_id) !== 'once' && !hasMonth(label || e.name)
+      ? `${label || e.name} – ${monthLong(e.period || ymOf(e.date))}`
+      : label;
   const planOfActual = usePlanOfActual();
   // a dátumra kattintva: a várható beérkezés módosítása
   const [pickFor, setPickFor] = useState<Entry | null>(null);

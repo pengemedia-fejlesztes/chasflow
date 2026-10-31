@@ -17,6 +17,7 @@ import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, 
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useMergeCounts } from './MergeTabs';
+import { MONTHLY_RX, withMonth } from '../../shared/monthname';
 import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
@@ -138,6 +139,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   // ütemezés: a hónap ténye (a tervhez kötött is), a nyitott és késznek jelölt tervek, az ajánlatok, és jövőbeli hónapra
   // a tényekből becsült, még nem tervezett rendszeres tételek (becslés)
   const schedEst = useMemo(() => buildEstimates(ix, addMonths(ix.cur, 12)), [ix]);
+  const monthlyLeaves = useMemo(() => new Set(data.entries.filter((e) => MONTHLY_RX.test(e.name || '')).map((e) => e.leaf_id)), [data.entries]);
   const schedEntries = (ym: string, sec: Section | null): Entry[] => {
     const inSec = (e: Entry) => !sec || ix.sectionOf(e.leaf_id) === sec;
     const out = data.entries.filter((e) => ymOf(e.date) === ym && inSec(e) && (e.kind === 'actual' || !(e.done && e.link_id)));
@@ -150,7 +152,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           kind: 'plan',
           date: ym + '-15',
           leaf_id: leaf,
-          name: 'becsült rendszeres tétel',
+          // havidíjas partnernél a becslés is havidíj néven, a hónappal („Havi díj – 2026. december”)
+          name: monthlyLeaves.has(leaf) ? withMonth('Havi díj', ym) + ' (becslés)' : 'becsült rendszeres tétel',
           amount: Math.round(v),
           series_id: null,
           done: 0,

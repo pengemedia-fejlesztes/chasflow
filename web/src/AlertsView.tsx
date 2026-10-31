@@ -1,6 +1,7 @@
 // Összevonás: a terv, a számla (Billingo / NAV) és a tény (bank) összekötésének teendői fülekre bontva –
 // nincs kiszámlázva, új számla terv nélkül (hova sorolta a rendszer), elmaradás a tervhez képest, kategóriába sorolt
 // NAV-számlák, be nem azonosított banki tételek, és az egy partnerhez tartozó nevek összevonása.
+import { baseName } from '../../shared/monthname';
 import { useEffect, useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
@@ -94,7 +95,7 @@ function futurePlans(entries: Entry[], plan: Entry | undefined, after: string): 
       !e.done &&
       e.id !== plan.id &&
       e.date > after &&
-      (plan.series_id ? e.series_id === plan.series_id : e.leaf_id === plan.leaf_id && e.name === plan.name && e.amount === plan.amount),
+      (plan.series_id ? e.series_id === plan.series_id : e.leaf_id === plan.leaf_id && baseName(e.name) === baseName(plan.name) && e.amount === plan.amount),
   );
 }
 

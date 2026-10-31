@@ -1,4 +1,5 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
+import { MONTHLY_RX, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
@@ -119,6 +120,15 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function cleanEntry(e: Entry): Entry {
+  const ent = cleanEntryRaw(e);
+  if (ent.kind !== 'plan') return ent;
+  // havidíj: a név a díj hónapjával („Havi díj – 2026. október”); a hónap (period) rögzül, így a fizetés napja szabadon mozgatható
+  const ym = ent.period || ent.date.slice(0, 7);
+  const name = withMonth(ent.name, ym);
+  return name !== ent.name || (MONTHLY_RX.test(ent.name) && !ent.period) ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
+}
+
+function cleanEntryRaw(e: Entry): Entry {
   if (!e || typeof e.id !== 'string' || !/^[\w:-]{1,80}$/.test(e.id)) throw new HttpError(400, 'Hibás tétel azonosító.');
   if (e.kind !== 'actual' && e.kind !== 'plan') throw new HttpError(400, 'Hibás tétel típus.');
   if (!DATE_RE.test(e.date)) throw new HttpError(400, 'Hibás dátum.');

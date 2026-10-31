@@ -152,6 +152,56 @@ export async function reapplyRules(env: Env): Promise<{ updated: number; auto: n
   return { updated: stmts.length, auto: await autoApprove(env, approve) };
 }
 
+/**
+ * Banki díj felismerése: a bank a díjat (tranzakciós díj / illeték) külön terhelésként küldi, sokszor a fő utalás
+ * kedvezményezettjének nevével és üres közleménnyel (pl. Rackforest 10 236 Ft + 26 Ft, NAV Áfa 399 000 + 998 Ft).
+ * Díj az a kis terhelés, amely mellett ugyanazon a számlán, ±1 napon belül ugyanannak a partnernek ment egy legalább
+ * százszor nagyobb utalás. Ezek a „Bank költség” alá kerülnek, jóváhagyás nélkül; a tévesen máshova jóváhagyottak átkerülnek.
+ */
+export async function markBankFees(env: Env): Promise<number> {
+  const [txR, leafR] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT id, account_id, date, amount, partner, memo, status, leaf_id, actual_id FROM bank_tx WHERE amount < 0 AND date >= date('now', '-120 days')",
+    ),
+    env.DB.prepare("SELECT l.id, l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = 'out' AND l.archived = 0"),
+  ]);
+  const fee = (leafR.results as any[]).find((l) => /^bank ?koltseg/.test(normalizeText(l.label)))?.id as string | undefined;
+  if (!fee) return 0;
+  const txs = txR.results as any[];
+  const day = (d: string) => Date.parse(d + 'T00:00:00Z') / 86400_000;
+  const byKey = new Map<string, any[]>();
+  for (const t of txs) {
+    const k = partnerKey(t.partner || '');
+    if (k.length < 2) continue;
+    (byKey.get(k) || byKey.set(k, []).get(k)!).push(t);
+  }
+  const isFee = (t: any) => {
+    if (t.leaf_id === fee) return false;
+    if (normalizeText(t.memo || '').startsWith('banki dij')) return true;
+    if (Math.abs(t.amount) > 10000 || (t.memo || '').trim()) return false;
+    const sib = byKey.get(partnerKey(t.partner || '')) || [];
+    return sib.some(
+      (m) => m.id !== t.id && m.account_id === t.account_id && Math.abs(day(m.date) - day(t.date)) <= 1 && Math.abs(m.amount) >= Math.abs(t.amount) * 100,
+    );
+  };
+  const pending: ApproveItem[] = [];
+  const moves: D1PreparedStatement[] = [];
+  const t0 = now();
+  for (const t of txs) {
+    if (!isFee(t)) continue;
+    if (t.status === 'new') pending.push({ id: t.id, leaf_id: fee, merge: true });
+    else if (t.status === 'approved' && t.actual_id) {
+      // tévesen máshova jóváhagyott díj: a tény átkerül a Bank költségbe, és leválik a tervről
+      moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(fee, t0, t.actual_id));
+      moves.push(env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL, updated_at = ? WHERE kind = ? AND link_id = ?').bind(t0, 'plan', t.actual_id));
+      moves.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ?, plan_id = NULL WHERE id = ?').bind(fee, t.id));
+    }
+  }
+  if (moves.length) await env.DB.batch(moves);
+  if (pending.length) await approve(env, null, pending);
+  return pending.length + moves.length / 3;
+}
+
 export async function syncAll(env: Env) {
   const res: Record<string, unknown> = {};
   // partnertörzs adószámai a már meglévő NAV/Billingo adatokból (a szinkron párosítása így már adószám alapján megy)
@@ -176,6 +226,11 @@ export async function syncAll(env: Env) {
     } catch (e: any) {
       res.navError = e.message;
     }
+  }
+  try {
+    res.bankFees = await markBankFees(env);
+  } catch (e: any) {
+    res.bankFeesError = e.message;
   }
   try {
     // kézi kivonatnál is: a várakozó tételekre az automatikus szabályok (pl. banki díjak)
@@ -246,6 +301,8 @@ export async function fixLinkedLeaves(env: Env): Promise<number> {
 
 /** Banki jóváírás → Billingo-számla fizetettre állítása; ha volt ilyen, a tervek is frissülnek (terv lezárva, tény a banki tételhez kötve). */
 export async function payBillingoFromBank(env: Env) {
+  // banki díjak (a fő utalás mellett külön terhelés) előbb a helyükre, hogy ne párosodjanak számlához / tervhez
+  await markBankFees(env).catch((e) => console.error('bank fees', e));
   const r = await autoPayBillingo(env);
   if (r.paid) {
     await syncBillingo(env).catch((e) => console.error('billingo sync after autopay', e));

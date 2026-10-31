@@ -1,6 +1,7 @@
 // Partnerstatisztika. Egy partner = azonos nevű alkategóriák (bevételi és kiadási oldalon is):
 // múltbeli tények, várható tételek (terv, ajánlat), összetevők, számlázási nevek, Billingo számlák és késések.
 import { partnerKey } from './match';
+import { baseName } from './monthname';
 import { addMonths, monthRange, ymOf } from './model';
 import type { BillingoDoc, Entry, Group, Leaf, Partner, Section } from './types';
 
@@ -62,7 +63,7 @@ function components(es: Entry[], sectionOf: (leaf: string) => Section): Componen
   const m = new Map<string, Component>();
   for (const e of es) {
     const sec = sectionOf(e.leaf_id);
-    const name = (e.name || '').replace(/\s*·\s*Penge.*$/i, '').trim() || '(név nélkül)';
+    const name = baseName((e.name || '').replace(/\s*·\s*Penge.*$/i, '')) || '(név nélkül)';
     const k = sec + '|' + name.toLowerCase();
     const c = m.get(k) || { name, section: sec, total: 0, count: 0, last: e.date };
     // előjeles: a bevételi oldalon a jóváíró számla (mínusz) csökkenti, a kiadásin a visszatérítés

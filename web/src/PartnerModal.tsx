@@ -1,3 +1,4 @@
+import { baseName } from '../../shared/monthname';
 import { parseWholeForint } from '../../shared/amount';
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
@@ -58,8 +59,8 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   // a sorozaton kívüli, azonos nevű tervek a sorozat tételéhez tartoznak (mint a táblázatban)
   const keyOf = useMemo(() => {
     const sk = new Map<string, string>();
-    data.entries.forEach((e) => e.kind === 'plan' && e.series_id && sk.set(`${e.leaf_id}|${e.name}`, e.series_id));
-    return (e: Entry) => e.series_id || sk.get(`${e.leaf_id}|${e.name}`) || rowKey(e);
+    data.entries.forEach((e) => e.kind === 'plan' && e.series_id && sk.set(`${e.leaf_id}|${baseName(e.name)}`, e.series_id));
+    return (e: Entry) => e.series_id || sk.get(`${e.leaf_id}|${baseName(e.name)}`) || rowKey(e);
   }, [data.entries]);
   const editEntries = edit ? data.entries.filter((e) => e.kind === 'plan' && (keyOf(e) === edit.key || rowKey(e) === edit.key)) : [];
   const initLeaf = editEntries[0]?.leaf_id || leaf || null;
@@ -91,7 +92,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         const s = data.series.find((x) => x.id === es.find((e) => e.series_id)?.series_id);
         return {
           key,
-          name: es[0].name || L?.label || '',
+          name: baseName(es[0].name) || L?.label || '',
           rep: (s?.rep || (new Set(all.map(periodOf)).size > 1 ? 'monthly' : 'once')) as Rep,
           open: es,
           all,
