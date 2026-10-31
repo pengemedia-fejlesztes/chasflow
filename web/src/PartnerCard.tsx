@@ -137,19 +137,21 @@ export function PartnerEditor({
     return (
       <>
         <SettingRow title="Típus" sub="Vevő = bevétel, szállító = kiadás">
-          <Seg
-            value={kind}
-            onChange={(v) => {
-              if (!canEdit) return;
-              setKind(v);
-              persist({ kind: v });
-            }}
-            options={[
-              ['vevo', 'Vevő'],
-              ['szallito', 'Szállító'],
-              ['mindketto', 'Mindkettő'],
-            ]}
-          />
+          <div style={{ alignSelf: 'flex-start' }}>
+            <Seg
+              value={kind}
+              onChange={(v) => {
+                if (!canEdit) return;
+                setKind(v);
+                persist({ kind: v });
+              }}
+              options={[
+                ['vevo', 'Vevő'],
+                ['szallito', 'Szállító'],
+                ['mindketto', 'Mindkettő'],
+              ]}
+            />
+          </div>
         </SettingRow>
         <SettingRow title="Kategória" sub="Ide kerülnek a tételei">
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
