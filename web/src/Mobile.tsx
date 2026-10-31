@@ -2,7 +2,7 @@ import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
 import { useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { actualBalanceAt, buildEstimates, fmt, fmtK, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
+import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { useBack } from './back';
@@ -57,7 +57,13 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const openPartner = (leaf: string) => st.openPartner(leaf);
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
-  const m = months.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
+  // a fejléc grafikonja: 8 hónapos ablak, nyilakkal visszafelé (múlt) és előre lapozható; havi eredmény vagy bankszámla-egyenleg
+  const [chartFrom, setChartFrom] = useState<string | null>(null);
+  const [chartKind, setChartKind] = useState<'net' | 'bal'>('net');
+  const cFrom = chartFrom ?? months[0] ?? ix.cur;
+  const chartMonths = useMemo(() => monthRange(cFrom, addMonths(cFrom, 7)), [cFrom]);
+  const allMonths = useMemo(() => [...new Set([...months, ...chartMonths])].sort(), [months, chartMonths]);
+  const m = allMonths.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
   const [catId, setCatId] = useState<string>(ix.groups[0]?.id || '');
   const [selMode, setSelMode] = useState(false);
   const [sel, setSel] = useState<Record<string, boolean>>({});
@@ -70,12 +76,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
 
   // egyenlegek hónaponként
   const balances = useMemo(() => {
-    const to = months[months.length - 1];
+    const to = allMonths[allMonths.length - 1];
     const est = filters.estimate ? buildEstimates(ix, to > ix.cur ? to : ix.cur) : new Map();
     const proj = projection(ix, filters, to > ix.cur ? to : ix.cur, est);
     const net = new Map<string, number>();
     const inc = new Map<string, number>();
-    months.forEach((ym) => {
+    allMonths.forEach((ym) => {
       let n = 0,
         i = 0;
       const add = (map: Map<string, Map<string, number>>) => {
@@ -95,8 +101,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
       net.set(ym, n);
       inc.set(ym, i);
     });
-    return { bal: new Map(months.map((ym) => [ym, ym < ix.cur ? actualBalanceAt(ix, ym) : (proj.get(ym) ?? ix.anchor)])), net, inc };
-  }, [ix, filters, months]);
+    return { bal: new Map(allMonths.map((ym) => [ym, ym < ix.cur ? actualBalanceAt(ix, ym) : (proj.get(ym) ?? ix.anchor)])), net, inc };
+  }, [ix, filters, allMonths]);
 
   const inM = (e: Entry) => ymOf(e.date) === m;
   const visibleEntry = (e: Entry) =>
@@ -122,7 +128,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
     .filter((x) => x.groups.length);
 
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
-  const maxNet = Math.max(...months.map((ym) => Math.abs(balances.net.get(ym) || 0)), 1);
+  const maxNet = Math.max(...chartMonths.map((ym) => Math.abs(balances.net.get(ym) || 0)), 1);
+  const maxBal = Math.max(...chartMonths.map((ym) => Math.abs(balances.bal.get(ym) || 0)), 1);
+  const balNeg = chartMonths.some((ym) => (balances.bal.get(ym) || 0) < 0);
+  const balAllNeg = chartMonths.every((ym) => (balances.bal.get(ym) || 0) < 0);
+  // azonos előjelű egyenlegeknél a skála a legkisebb érték 85%-ától indul, hogy a havi változás látszódjon
+  const balBase = !balNeg || balAllNeg ? Math.min(...chartMonths.map((ym) => Math.abs(balances.bal.get(ym) || 0))) * 0.85 : 0;
   /** havi eredmény a bevétel %-ában (null, ha nincs bevétel) */
   const margin = (ym: string) => {
     const i = balances.inc.get(ym) || 0;
@@ -217,19 +228,71 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   )}
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'stretch', height: 128, overflowX: 'auto', scrollbarWidth: 'none' }}>
-                {months.map((ym) => {
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {(
+                  [
+                    ['net', 'Havi eredmény'],
+                    ['bal', 'Bankszámla egyenleg'],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button
+                    key={k}
+                    onClick={() => setChartKind(k)}
+                    style={{
+                      height: 30,
+                      border: 0,
+                      borderRadius: 999,
+                      padding: '0 11px',
+                      background: chartKind === k ? '#fff' : C.navy3,
+                      color: chartKind === k ? C.navy : C.muted2,
+                      font: `600 12px ${FONT}`,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {l}
+                  </button>
+                ))}
+                <span style={{ flex: 1 }} />
+                {[-1, 1].map((n) => (
+                  <button
+                    key={n}
+                    aria-label={n < 0 ? 'Korábbi hónapok' : 'Későbbi hónapok'}
+                    onClick={() => setChartFrom(addMonths(cFrom, n * 3))}
+                    style={{ width: 32, height: 30, border: 0, borderRadius: 999, background: C.navy3, color: '#fff', font: `700 16px ${FONT}` }}
+                  >
+                    {n < 0 ? '‹' : '›'}
+                  </button>
+                ))}
+                {chartFrom !== null && chartFrom !== months[0] && (
+                  <button
+                    onClick={() => (setChartFrom(null), setM(ix.cur))}
+                    style={{ height: 30, border: 0, borderRadius: 999, padding: '0 10px', background: C.navy3, color: C.blue2, font: `600 12px ${FONT}` }}
+                  >
+                    Ma
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'stretch', height: 128 }}>
+                {chartMonths.map((ym) => {
                   // havi eredmény (bevétel − kiadás): zöld plusz, piros mínusz; alatta az eredmény a bevétel %-ában
-                  const v = balances.net.get(ym) || 0;
+                  // egyenleg: a hónap végi bankszámla-egyenleg (múlt: tény, folyó és jövő: tervezett / előrejelzés)
+                  const bal = chartKind === 'bal';
+                  const v = bal ? balances.bal.get(ym) || 0 : balances.net.get(ym) || 0;
                   const pc = margin(ym);
-                  const h = Math.max(v ? 4 : 0, Math.round((Math.abs(v) / maxNet) * 44));
-                  const col = v >= 0 ? '#4CC38A' : '#FF8A7A';
+                  // csak pozitív (vagy csak negatív) egyenlegnél a teljes magasságot használja (alulról, ill. felülről)
+                  const full = bal && (!balNeg || balAllNeg);
+                  const fromTop = bal && balAllNeg;
+                  const h = full
+                    ? Math.max(v ? 6 : 0, Math.round(6 + ((Math.abs(v) - balBase) / Math.max(1, maxBal - balBase)) * 82))
+                    : Math.max(v ? 4 : 0, Math.round((Math.abs(v) / (bal ? maxBal : maxNet)) * 44));
+                  const col = v >= 0 ? (bal ? '#7CC4F0' : '#4CC38A') : '#FF8A7A';
                   return (
                     <button
                       key={ym}
                       onClick={() => setM(ym)}
                       style={{
-                        flex: `1 0 ${months.length > 10 ? 34 : 0}px`,
+                        flex: '1 0 0px',
+                        minWidth: 0,
                         height: '100%',
                         border: 0,
                         borderRadius: 8,
@@ -242,28 +305,47 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                       }}
                     >
                       <div style={{ position: 'relative', width: '100%', flex: 1 }}>
-                        <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', borderTop: '1px solid rgba(255,255,255,.18)' }} />
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            right: 0,
+                            top: fromTop ? 0 : full ? '100%' : '50%',
+                            borderTop: '1px solid rgba(255,255,255,.18)',
+                          }}
+                        />
                         <div
                           style={{
                             position: 'absolute',
                             left: '18%',
                             right: '18%',
                             height: h,
-                            top: v >= 0 ? `calc(50% - ${h}px)` : '50%',
-                            borderRadius: v >= 0 ? '4px 4px 0 0' : '0 0 4px 4px',
+                            top: fromTop ? 0 : full ? `calc(100% - ${h}px)` : v >= 0 ? `calc(50% - ${h}px)` : '50%',
+                            borderRadius: fromTop ? '0 0 4px 4px' : full || v >= 0 ? '4px 4px 0 0' : '0 0 4px 4px',
                             background: col,
                             opacity: ym > ix.cur ? 0.55 : 1,
+                            outline: ym > ix.cur ? '1px dashed rgba(255,255,255,.35)' : undefined,
                           }}
                         />
                       </div>
-                      <span style={{ font: `700 9.5px ${FONT}`, color: pc === null ? C.muted2 : col, whiteSpace: 'nowrap' }}>
-                        {pc === null ? '–' : `${pc > 0 ? '+' : ''}${pc}%`}
+                      <span
+                        style={{ font: `700 9.5px ${FONT}`, color: bal ? (v < 0 ? '#FF8A7A' : '#fff') : pc === null ? C.muted2 : col, whiteSpace: 'nowrap' }}
+                      >
+                        {bal ? fmtM(v) : pc === null ? '–' : `${pc > 0 ? '+' : ''}${pc}%`}
                       </span>
-                      <span style={{ font: `600 10.5px ${FONT}`, color: ym === m ? '#fff' : C.muted2 }}>{monthLabel(ym).replace('.', '')}</span>
+                      <span style={{ font: `600 10.5px ${FONT}`, color: ym === m ? '#fff' : C.muted2, whiteSpace: 'nowrap' }}>
+                        {monthLabel(ym).replace('.', '')}
+                        {ym.slice(5) === '01' || ym === chartMonths[0] ? <small style={{ opacity: 0.7 }}> {ym.slice(2, 4)}</small> : null}
+                      </span>
                     </button>
                   );
                 })}
               </div>
+              <span style={{ font: `500 11px ${FONT}`, color: C.muted2, marginTop: -6 }}>
+                {chartKind === 'bal'
+                  ? 'Hónap végi egyenleg · múlt: tény · folyó hónap és jövő: terv szerinti előrejelzés (halványan)'
+                  : 'Havi eredmény (bevétel − kiadás) · múlt: tény · jövő: terv (halványan) · % a bevételhez'}
+              </span>
               <button
                 onClick={() => setSheet({ kind: 'filters' })}
                 style={{
