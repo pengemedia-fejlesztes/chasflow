@@ -261,9 +261,10 @@ export function BreakevenView() {
       ['Összes kiadás (tény)', ...report.map((r) => r.expenses)],
       ['Munkatársak költsége', ...report.map((r) => r.laborTotal)],
       ['Közvetlen munkaköltség (ügyfélprojektek)', ...report.map((r) => r.directLabor)],
-      ['Fedezet (bevétel − közvetlen munkaköltség)', ...report.map((r) => r.contribution)],
+      ['Alvállalkozók', ...report.map((r) => r.subcontract)],
+      ['Fedezet (bevétel − változó költség)', ...report.map((r) => r.contribution)],
       ['Fedezeti hányad', ...report.map((r) => (r.revenue ? Math.round(r.ratio * 1000) / 10 : null))],
-      ['Fix költség (kiadás − közvetlen munkaköltség)', ...report.map((r) => r.fixed)],
+      ['Fix költség (kiadás − változó költség)', ...report.map((r) => r.fixed)],
       ['Fedezeti pont (fix / hányad)', ...report.map((r) => r.breakeven)],
       ['Biztonsági sáv (bevétel − fedezeti pont)', ...report.map((r) => r.margin)],
       ['Ledolgozott óra', ...report.map((r) => Math.round(r.minutes / 6) / 10)],
@@ -314,8 +315,8 @@ export function BreakevenView() {
   // táblázat-cellák
   const th: CSSProperties = { ...eyebrow, fontSize: 10.5, padding: '9px 10px', textAlign: 'right', borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap' };
   const td: CSSProperties = {
-    padding: '8px 10px',
-    font: `500 13px ${FONT}`,
+    padding: '7px 7px',
+    font: `500 12.5px ${FONT}`,
     color: C.ink,
     textAlign: 'right',
     borderTop: `1px solid ${C.line3}`,
@@ -330,7 +331,12 @@ export function BreakevenView() {
       [
         { label: 'Bevétel', v: (r) => fmt(r.revenue), bold: true },
         { label: 'Összes kiadás', v: (r) => fmt(r.expenses) },
-        { label: 'Fedezet', v: (r) => fmt(r.contribution), hint: 'bevétel − közvetlen munkaköltség', color: (r) => (r.contribution < 0 ? C.neg : undefined) },
+        {
+          label: 'Fedezet',
+          v: (r) => fmt(r.contribution),
+          hint: 'bevétel − változó költség (közvetlen bér + alvállalkozók)',
+          color: (r) => (r.contribution < 0 ? C.neg : undefined),
+        },
         { label: 'Fedezeti hányad', v: (r) => (r.revenue ? pct(r.ratio) : '–'), hint: 'fedezet / bevétel' },
       ],
     ],
@@ -338,6 +344,7 @@ export function BreakevenView() {
       'Költség',
       [
         { label: 'Közvetlen munkaköltség', v: (r) => fmt(r.directLabor), hint: 'ügyfélprojektekre jutó bér (az idő arányában)' },
+        { label: 'Alvállalkozók', v: (r) => fmt(r.subcontract), hint: 'az „Alvállalkozók” mappa kiadásai – változó költség, mint a közvetlen bér' },
         { label: 'Fix költség', v: (r) => fmt(r.fixed), hint: 'minden más kiadás (iroda, szoftver, belső munkaidő …)' },
         { label: 'Fedezeti pont', v: (r) => (r.breakeven == null ? '–' : fmt(r.breakeven)), hint: 'ennyi bevétel kell, hogy ne legyen veszteség', bold: true },
       ],
@@ -600,8 +607,8 @@ export function BreakevenView() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: `minmax(200px,1.4fr) repeat(${report.length}, minmax(96px,1fr))`,
-              minWidth: 220 + report.length * 100,
+              gridTemplateColumns: `minmax(150px,1.2fr) repeat(${report.length}, minmax(70px,1fr))`,
+              minWidth: 160 + report.length * 74,
             }}
           >
             <div
@@ -701,8 +708,8 @@ export function BreakevenView() {
           >
             {showHow ? '▾' : '›'} Hogyan számolunk?
           </button>{' '}
-          — a munkatárs költsége a hozzárendelt kiadási kategória tényeiből jön, a ledolgozott idő arányában osztva a projektekre. Ügyfélprojektre jutó bér =
-          változó költség, minden más fix. Fedezeti pont = fix költség / fedezeti hányad.
+          — változó költség = ügyfélprojektre jutó bér (a munkatárs költsége a ledolgozott idő arányában) + alvállalkozók; minden más fix. Fedezet = bevétel −
+          változó költség, fedezeti hányad = fedezet / bevétel, fedezeti pont = fix költség / fedezeti hányad.
           {showHow && (
             <ul style={{ margin: '8px 0 2px', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 2 }}>
               {sections.flatMap(([, lines]) =>

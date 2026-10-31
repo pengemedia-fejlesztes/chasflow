@@ -113,7 +113,9 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
   const [section, setSection] = useState<Section>(initLeaf ? ix.sectionOf(initLeaf) : 'in');
   const [partner, setPartner] = useState<string | null>(initLeaf);
   const [picking, setPicking] = useState(!initLeaf);
-  const [open, setOpen] = useState<string | null>(edit?.key ?? (initLeaf ? null : 'new'));
+  // a szerkesztendő tétel kulcsa a tétel-lista kulcsa szerint (sorozat-azonosító vagy név) – így lezárt tétel is megnyílik
+  const editKey = editEntries[0] ? keyOf(editEntries[0]) : (edit?.key ?? null);
+  const [open, setOpen] = useState<string | null>(editKey ?? (initLeaf ? null : 'new'));
   /** a fejlécben kiválasztott hónap: a tétel hónaplistája oda ugrik, az új tétel ehhez a hónaphoz kerül */
   const [focusYm, setFocusYm] = useState<string | null>(null);
   const L = partner ? ix.leafById[partner] : null;
@@ -131,10 +133,11 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
       m.get(k)!.push(e);
     }
     return [...m.entries()]
-      .filter(([, all]) => all.some((e) => !e.done))
+      .filter(([key, all]) => all.some((e) => !e.done) || key === editKey)
       .map(([key, all]) => {
         all.sort((a, b) => a.date.localeCompare(b.date));
-        const es = all.filter((e) => !e.done);
+        // lezárt (már kifizetett) tételnél a szerkesztő a teljes előzményt mutatja
+        const es = all.some((e) => !e.done) ? all.filter((e) => !e.done) : all;
         const s = data.series.find((x) => x.id === es.find((e) => e.series_id)?.series_id);
         return {
           key,
@@ -155,7 +158,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         };
       })
       .sort((a, b) => (a.next?.date || '').localeCompare(b.next?.date || ''));
-  }, [partner, data.entries, data.series, data.today, data.billingo, data.navInvoices, keyOf, L]);
+  }, [partner, data.entries, data.series, data.today, data.billingo, data.navInvoices, keyOf, L, editKey]);
 
   // a következő 12 hónap biztos tervei (ajánlat nélkül), a partner minden tételéből
   const next12 = useMemo(() => {

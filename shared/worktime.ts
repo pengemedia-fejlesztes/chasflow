@@ -122,9 +122,10 @@ export interface BreakevenMonth {
   minutes: number; // a felvitt munkatársak összes ledolgozott ideje
   billableMinutes: number; // ügyfélprojekteken
   directLabor: number; // ügyfélprojektekre jutó munkaköltség (változó költség)
-  contribution: number; // fedezet = bevétel − közvetlen munkaköltség
+  subcontract: number; // alvállalkozók díja (változó költség – projektenként jön)
+  contribution: number; // fedezet = bevétel − változó költség (közvetlen munkaköltség + alvállalkozók)
   ratio: number; // fedezeti hányad
-  fixed: number; // fix költség = összes kiadás − közvetlen munkaköltség
+  fixed: number; // fix költség = összes kiadás − változó költség
   breakeven: number | null; // fedezeti pont (bevétel)
   margin: number | null; // biztonsági sáv = bevétel − fedezeti pont
   revenuePerBillableHour: number | null;
@@ -134,8 +135,8 @@ export interface BreakevenMonth {
 
 /**
  * Fedezeti pont hónaponként: a munkatársak költsége (a cashflow-ban a hozzájuk rendelt kiadási alkategória tényei)
- * a ledolgozott idő arányában oszlik meg a projektek között. Az ügyfélprojektre jutó munkaköltség a változó
- * költség, minden más kiadás fix. Fedezeti pont = fix költség / fedezeti hányad.
+ * a ledolgozott idő arányában oszlik meg a projektek között. Változó költség: az ügyfélprojektre jutó munkaköltség és az
+ * alvállalkozók díja (az „Alvállalkozók” mappa tényei); minden más kiadás fix. Fedezeti pont = fix költség / fedezeti hányad.
  */
 export function breakeven(o: {
   months: string[];
@@ -148,6 +149,21 @@ export function breakeven(o: {
 }): BreakevenMonth[] {
   const sectionOf = new Map(o.leaves.map((l) => [l.id, o.groups.find((g) => g.id === l.group_id)?.section]));
   const incomeLeaves = o.leaves.filter((l) => sectionOf.get(l.id) === 'in');
+  // alvállalkozói kiadások (változó költség) – a munkaidő-táblás munkatársak költség-kategóriája nélkül (az már a munkaköltségben van)
+  const empLeaves = new Set(o.employees.map((e) => e.cost_leaf_id).filter(Boolean));
+  const subLeaves = new Set(
+    o.leaves
+      .filter((l) => sectionOf.get(l.id) === 'out' && !empLeaves.has(l.id))
+      .filter((l) => {
+        const g = o.groups.find((x) => x.id === l.group_id)?.label || '';
+        return g
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .includes('alvallalkoz');
+      })
+      .map((l) => l.id),
+  );
   const leafCache = new Map<string, string | null>();
   const leafOf = (p: string) => {
     if (!leafCache.has(p)) leafCache.set(p, projectLeaf(p, incomeLeaves, o.aliases));
@@ -217,9 +233,11 @@ export function breakeven(o: {
     // bevételes partner, akin ebben a hónapban senki nem dolgozott (a felvitt munkatársak közül)
     for (const [k, x] of leafRevenue)
       if (!projects.has(k)) projects.set(k, { project: labelOf(x.leaf), names: [], leaf: x.leaf, minutes: 0, laborCost: 0, revenue: x.rev });
-    const contribution = revenue - directLabor;
+    const subcontract = -acts.filter((e) => subLeaves.has(e.leaf_id)).reduce((a, e) => a + e.amount, 0);
+    const variable = directLabor + subcontract;
+    const contribution = revenue - variable;
     const ratio = revenue > 0 ? contribution / revenue : 0;
-    const fixed = expenses - directLabor;
+    const fixed = expenses - variable;
     const be = ratio > 0 ? fixed / ratio : null;
     return {
       ym,
@@ -229,6 +247,7 @@ export function breakeven(o: {
       minutes,
       billableMinutes,
       directLabor: Math.round(directLabor),
+      subcontract: Math.round(subcontract),
       contribution: Math.round(contribution),
       ratio,
       fixed: Math.round(fixed),
