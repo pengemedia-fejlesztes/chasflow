@@ -16,6 +16,7 @@ import { IncomeView } from './IncomeView';
 import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
+import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
@@ -113,6 +114,11 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const inM = (e: Entry) => ymOf(e.date) === m;
   const visibleEntry = (e: Entry) =>
     isPast ? e.kind === 'actual' : (e.kind === 'plan' && (filters.includeOffers || !e.tentative)) || (m === ix.cur && e.kind === 'actual' && !e.link_id);
+  // a hónap tételei (ütemezés): ugyanaz a láthatóság, mint a kategóriáknál
+  const monthEntries = data.entries.filter((e) => inM(e) && visibleEntry(e) && (filters.section === 'all' || filters.section === ix.sectionOf(e.leaf_id)));
+  const [expSec, setExpSec] = useState<Section | null>(null);
+  const openEntry = (e: Entry) =>
+    setSheet(e.kind === 'plan' ? { kind: 'detail', planId: e.id, actualId: null } : { kind: 'detail', planId: null, actualId: e.id });
   const sections = (['in', 'out'] as Section[])
     .filter((s) => filters.section === 'all' || filters.section === s)
     .map((s) => {
@@ -432,17 +438,59 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   Ebben a hónapban nincs tétel.
                 </div>
               )}
+              {/* a hónap ütemezése: minden bevétel és kiadás dátum szerint; oldalra húzva az előző / következő hónap */}
+              <MonthSchedule
+                m={m}
+                today={data.today}
+                entries={monthEntries}
+                sectionOf={ix.sectionOf}
+                leafLabel={(l) => ix.leafById[l]?.label || ''}
+                onMonth={(d) => {
+                  const nm = addMonths(m, d);
+                  setM(nm);
+                  scrollToMonth(nm, true);
+                }}
+                onOpen={openEntry}
+              />
               {sections.map(({ s, tot, groups }) => (
                 <div key={s} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '0 4px' }}>
+                  {/* a Bevétel / Kiadás fejlécre vagy az összegre koppintva: a hónap összes tétele a kategóriákból, dátum szerint */}
+                  <button
+                    onClick={() => setExpSec(expSec === s ? null : s)}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      padding: '0 4px',
+                      border: 0,
+                      background: 'transparent',
+                      textAlign: 'left',
+                    }}
+                  >
                     <span style={{ font: `700 13px ${FONT_H}`, color: C.navy, letterSpacing: '.04em', textTransform: 'uppercase' }}>
-                      {s === 'in' ? 'Bevétel' : 'Kiadás'} {isPast ? '· tény' : ''}
+                      {expSec === s ? '▾' : '▸'} {s === 'in' ? 'Bevétel' : 'Kiadás'} {isPast ? '· tény' : ''}
                     </span>
                     <span style={{ font: `700 14px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
                       {s === 'in' ? '+' : '−'}
                       {fmt(tot)}
                     </span>
-                  </div>
+                  </button>
+                  {expSec === s && (
+                    <MonthSchedule
+                      title={s === 'in' ? 'Bevételek' : 'Kiadások'}
+                      m={m}
+                      today={data.today}
+                      entries={monthEntries.filter((e) => ix.sectionOf(e.leaf_id) === s)}
+                      sectionOf={ix.sectionOf}
+                      leafLabel={(l) => ix.leafById[l]?.label || ''}
+                      onMonth={(d) => {
+                        const nm = addMonths(m, d);
+                        setM(nm);
+                        scrollToMonth(nm, true);
+                      }}
+                      onOpen={openEntry}
+                    />
+                  )}
                   <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
                     {groups.map(({ g, plan, done, n, open }, gi) => (
                       <button
