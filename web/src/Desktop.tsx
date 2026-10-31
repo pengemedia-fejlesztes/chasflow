@@ -65,6 +65,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   }, []);
   useEffect(() => {
     const cur = parseHash();
+    // az első szinkron megvárja, amíg a címsorból a partner és a kategória betöltődik (különben a fül / partner elveszne)
+    if (!synced.current && ((cur.partner && !partnerCard) || (cur.group && filters.groupId !== cur.group))) return;
     const t = partnerCard && cur.partner === partnerCard ? cur.tab : null;
     const want = buildHash(view, filters.groupId, partnerCard, t);
     if (want === location.hash) return;
