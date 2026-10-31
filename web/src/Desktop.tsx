@@ -1062,6 +1062,43 @@ function Overview({
           );
         })}
       </div>
+      {/* alapból 3 hónap; a „+” egy-egy hónappal bővíti az időszakot */}
+      {filters.granularity === 'month' && (
+        <button
+          type="button"
+          onClick={() => st.setFilters({ to: addMonths(filters.to, 1) })}
+          title="Még egy hónap betöltése"
+          style={{
+            alignSelf: 'center',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            border: `1px dashed ${C.line2}`,
+            borderRadius: 999,
+            background: '#fff',
+            color: C.navy,
+            padding: '8px 18px 8px 8px',
+            font: `600 13.5px ${FONT}`,
+            cursor: 'pointer',
+          }}
+        >
+          <span
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              background: C.navy,
+              color: '#fff',
+              display: 'grid',
+              placeItems: 'center',
+              font: `700 20px/1 ${FONT_H}`,
+            }}
+          >
+            +
+          </span>
+          {monthLong(addMonths(filters.to, 1))} betöltése
+        </button>
+      )}
       <div style={{ font: `400 12px ${FONT}`, color: C.muted }}>
         ≈ dőlt: becslés az elmúlt 12 hónap tényei alapján · * ajánlatot tartalmaz · szürke háttér: tény (megtörtént) · csak a szűrőknek megfelelő, nem üres
         sorok látszanak

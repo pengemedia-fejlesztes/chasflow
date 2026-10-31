@@ -9,6 +9,7 @@ export function presets(cur: string, firstActual: string | null) {
   const y = Number(cur.slice(0, 4));
   const fy = firstActual ? Number(firstActual.slice(0, 4)) : y - 1;
   const list: { key: string; label: string; f: Partial<Filters> }[] = [
+    { key: 'n3', label: 'Következő 3 hónap', f: { from: cur, to: addMonths(cur, 2), granularity: 'month' } },
     { key: 'n8', label: 'Következő 8 hónap', f: { from: cur, to: addMonths(cur, 7), granularity: 'month' } },
     { key: 'n12', label: 'Következő 12 hónap', f: { from: cur, to: addMonths(cur, 12), granularity: 'month' } },
     { key: 'p12', label: 'Elmúlt 12 hónap', f: { from: addMonths(cur, -12), to: cur, granularity: 'month' } },

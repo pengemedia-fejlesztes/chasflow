@@ -236,7 +236,7 @@ export function defaultFilters(today: string): Filters {
   const cur = ymOf(today);
   return {
     from: cur,
-    to: addMonths(cur, 7),
+    to: addMonths(cur, 2),
     mode: 'auto',
     section: 'all',
     groupId: null,

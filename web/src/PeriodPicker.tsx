@@ -119,6 +119,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
         <b style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>Időszak</b>
         {head('Előre')}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {chip('n3', 'Következő 3 hónap', byKey('n3').f)}
           {chip('n8', 'Következő 8 hónap', byKey('n8').f)}
           {chip('n12', 'Következő 12 hónap', byKey('n12').f)}
           {(() => {
