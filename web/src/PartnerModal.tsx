@@ -144,7 +144,8 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
         // lezárt (már kifizetett) tételnél a szerkesztő a teljes előzményt mutatja
         const es = all.some((e) => !e.done) ? all.filter((e) => !e.done) : all;
         const s = data.series.find((x) => x.id === es.find((e) => e.series_id)?.series_id);
-        const parts = key.startsWith('p:');
+        // egyetlen „– 1. részlet” még nem részletes tétel: sima tételként, a saját nevével látszik
+        const parts = key.startsWith('p:') && all.length > 1;
         return {
           key,
           name: (parts ? baseName(es[0].name).replace(PART_RE, '') : baseName(es[0].name)) || L?.label || '',
@@ -1427,6 +1428,7 @@ function NewItem({
   onCancel: () => void;
   onSave: (b: ReturnType<typeof genSeries>, msg: string) => void;
 }) {
+  const lastSave = useRef(0);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   /** a beírt összeg nettó (a mentéskor +27% ÁFA) vagy bruttó – egyszer, az egész tételre */
@@ -1487,6 +1489,19 @@ function NewItem({
 
   const save = () => {
     if (!name.trim()) return alert('Add meg a tétel nevét (pl. SEO, PPC, Marketing tanácsadás).');
+    // dupla mentés ellen: Enter + gomb, vagy gyors ismételt kattintás ne vegye fel kétszer
+    if (Date.now() - lastSave.current < 2000) return;
+    // azonos nevű nyitott terv már van ennél a partnernél → rákérdez (a meglévőt inkább a saját tételénél kell módosítani)
+    const nm = normalizeText(name.trim().replace(PART_RE, ''));
+    const same = (leafEntries || []).filter((e) => e.kind === 'plan' && !e.done && normalizeText(planNameOf(e.name).replace(PART_RE, '')) === nm);
+    if (
+      same.length &&
+      !confirm(
+        `„${name.trim()}” már szerepel ennél a partnernél ${same.length} nyitott tervvel (${monthName(periodOf(same[0]))}-tól).\n\nBiztosan újat veszel fel mellé? A meglévő módosításához nyisd meg azt a tételt.`,
+      )
+    )
+      return;
+    lastSave.current = Date.now();
     if (rep === 'twice') {
       const g = grossParts();
       const b = partsBatch(
