@@ -122,11 +122,51 @@ export function aliasRuleStmts(env: Env, leafIds: string[], aliases: string[], n
 }
 
 /**
+ * A saját tervhez kötött Billingo-számla adószáma a partneré (ha még nincs adószáma, és más partneré sem ez) – így a számlán
+ * szereplő cégnév (pl. „UrgentCare … Kft.” → Orvosmost) is a partner alternatív neve lesz.
+ */
+async function taxFromLinkedInvoices(env: Env): Promise<number> {
+  const [dR, pR] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT DISTINCT d.partner_tax AS tax, l.label FROM billingo_docs d JOIN entries e ON e.id = d.plan_id JOIN leaves l ON l.id = e.leaf_id
+       WHERE e.plan_amount IS NOT NULL AND d.partner_tax IS NOT NULL AND d.partner_tax <> ''`,
+    ),
+    env.DB.prepare('SELECT key, tax_number FROM partners'),
+  ]);
+  const owner = new Map<string, string>();
+  for (const p of pR.results as any[]) if (taxBase(p.tax_number).length === 8) owner.set(taxBase(p.tax_number), p.key);
+  const taxed = new Set((pR.results as any[]).filter((p) => taxBase(p.tax_number).length === 8).map((p) => p.key as string));
+  // egy partnerhez csak egyféle adószám jöhet így (ha több, kétes → kimarad)
+  const cand = new Map<string, { label: string; taxes: Set<string>; raw: string }>();
+  for (const r of dR.results as any[]) {
+    const k = partnerIdOf(r.label);
+    const b = taxBase(r.tax);
+    if (k.length < 2 || b.length !== 8 || taxed.has(k) || (owner.has(b) && owner.get(b) !== k)) continue;
+    const c = cand.get(k) || cand.set(k, { label: r.label, taxes: new Set(), raw: r.tax }).get(k)!;
+    c.taxes.add(b);
+  }
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  for (const [k, c] of cand) {
+    if (c.taxes.size !== 1) continue;
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO partners (key, name, kind, aliases, tax_number, note, updated_at) VALUES (?, ?, 'vevo', '[]', ?, NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET tax_number = excluded.tax_number, updated_at = excluded.updated_at WHERE partners.tax_number IS NULL OR partners.tax_number = ''`,
+      ).bind(k, c.label, c.raw, t),
+    );
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return stmts.length;
+}
+
+/**
  * Névösszevonás adószám alapján: ha a partnertörzsben van adószám, a NAV- és Billingo-számlákon ugyanezzel az adószámmal
  * szereplő (eltérő) cégnevek a partner alternatív nevei közé kerülnek. Egy nevet csak egyszer vesz fel (a „partner_names_seen”
  * jegyzi), így ha valaki kézzel törli az adatlapról, nem kerül vissza.
  */
 export async function mergePartnerNames(env: Env): Promise<number> {
+  await taxFromLinkedInvoices(env);
   const [pR, nR, bR, lR] = await env.DB.batch([
     env.DB.prepare("SELECT key, name, aliases, tax_number FROM partners WHERE tax_number IS NOT NULL AND tax_number <> ''"),
     env.DB.prepare("SELECT DISTINCT partner_tax AS tax, partner_name AS name FROM nav_invoices WHERE partner_tax IS NOT NULL AND partner_tax <> ''"),
@@ -177,4 +217,47 @@ export async function mergePartnerNames(env: Env): Promise<number> {
     );
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   return added;
+}
+
+/**
+ * Partner típusa (vevő / szállító / mindkettő) a forgalomból, ha még nincs megadva: akinek kiállított (Billingo) számlája vagy
+ * bevétele van, vevő; akinek beérkezett (NAV) számlája vagy kiadása, szállító. Partnertörzs-sort csak számlás partnernek nyit.
+ */
+export async function fillPartnerKind(env: Env): Promise<number> {
+  const [rowsR, pR] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT l.label, g.section, max(CASE WHEN e.source IN ('billingo', 'nav') OR e.ext_ref LIKE 'billingo:%' OR e.ext_ref LIKE 'bpaid:%' THEN 1 ELSE 0 END) AS inv
+       FROM entries e JOIN leaves l ON l.id = e.leaf_id JOIN groups g ON g.id = l.group_id
+       WHERE COALESCE(e.tentative, 0) = 0 AND (e.kind = 'actual' OR e.source IN ('billingo', 'nav')) GROUP BY l.label, g.section`,
+    ),
+    env.DB.prepare('SELECT key, kind FROM partners'),
+  ]);
+  const cur = new Map((pR.results as any[]).map((p) => [p.key as string, p.kind as string | null]));
+  const sides = new Map<string, { name: string; in: boolean; out: boolean; inv: boolean }>();
+  for (const r of rowsR.results as any[]) {
+    const k = partnerIdOf(r.label);
+    if (k.length < 2) continue;
+    const x = sides.get(k) || sides.set(k, { name: r.label, in: false, out: false, inv: false }).get(k)!;
+    if (r.section === 'in') x.in = true;
+    else x.out = true;
+    if (r.inv) x.inv = true;
+  }
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  for (const [k, x] of sides) {
+    const kind = x.in && x.out ? 'mindketto' : x.in ? 'vevo' : 'szallito';
+    if (cur.has(k)) {
+      if (!cur.get(k)) stmts.push(env.DB.prepare('UPDATE partners SET kind = ?, updated_at = ? WHERE key = ? AND kind IS NULL').bind(kind, t, k));
+    } else if (x.inv)
+      stmts.push(
+        env.DB.prepare("INSERT OR IGNORE INTO partners (key, name, kind, aliases, tax_number, note, updated_at) VALUES (?, ?, ?, '[]', NULL, NULL, ?)").bind(
+          k,
+          x.name,
+          kind,
+          t,
+        ),
+      );
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return stmts.length;
 }

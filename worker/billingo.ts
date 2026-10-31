@@ -71,6 +71,67 @@ async function leafForPartner(
   return r.lid;
 }
 
+const OFFER_RX = /aj[áa]nlat/i;
+type GroupRow = { id: string; label: string; section: string };
+
+/**
+ * A kiszámlázott ügyfél projekt, nem ajánlat: ha a partner az Ajánlatok mappában van, a számla a Projektek mappabeli
+ * párjához kerül (ugyanaz a partner), ha nincs ilyen, létrejön a Projektek alatt.
+ */
+export function projectLeafOf(lid: string, leaves: Leaf[], groups: GroupRow[], cache: CategoryCache, stmts: D1PreparedStatement[]): string {
+  const leaf = leaves.find((l) => l.id === lid);
+  const g = groups.find((x) => x.id === leaf?.group_id);
+  if (!leaf || !g || g.section !== 'in' || !OFFER_RX.test(g.label)) return lid;
+  const key = partnerIdOf(leaf.label);
+  const inGroups = groups.filter((x) => x.section === 'in' && !OFFER_RX.test(x.label));
+  const twin = leaves
+    .filter((l) => !l.archived && partnerIdOf(l.label) === key && inGroups.some((x) => x.id === l.group_id))
+    .sort(
+      (a, b) =>
+        Number(/projekt/i.test(groups.find((x) => x.id === b.group_id)?.label || '')) -
+        Number(/projekt/i.test(groups.find((x) => x.id === a.group_id)?.label || '')),
+    )[0];
+  if (twin) return twin.id;
+  const proj = inGroups.find((x) => /projekt/i.test(x.label));
+  const r = cache.stmtsFor('in', proj?.label || 'Projektek', leaf.label);
+  stmts.push(...r.stmts);
+  leaves.push({ id: r.lid, group_id: r.gid, label: leaf.label, sort: 0, archived: 0 } as Leaf);
+  if (!groups.some((x) => x.id === r.gid)) groups.push({ id: r.gid, label: proj?.label || 'Projektek', section: 'in' });
+  return r.lid;
+}
+
+/**
+ * Meglévő adatok: az Ajánlatok mappában maradt kiszámlázott / kifizetett tételek (Billingo-számla, tény, elfogadott terv)
+ * átkerülnek a partner Projektek mappabeli sorába; a még nyitott ajánlatok maradnak.
+ */
+export async function promoteOfferLeaves(env: Env): Promise<number> {
+  const [lR, gR, eR] = await env.DB.batch([
+    env.DB.prepare('SELECT * FROM leaves'),
+    env.DB.prepare('SELECT id, label, section FROM groups'),
+    env.DB.prepare(
+      `SELECT e.id, e.leaf_id FROM entries e JOIN leaves l ON l.id = e.leaf_id JOIN groups g ON g.id = l.group_id
+       WHERE g.section = 'in' AND (lower(g.label) LIKE '%ajánlat%' OR lower(g.label) LIKE '%ajanlat%') AND COALESCE(e.tentative, 0) = 0
+         AND (e.kind = 'actual' OR e.ext_ref LIKE 'billingo:%' OR e.accepted_at IS NOT NULL)`,
+    ),
+  ]);
+  if (!eR.results.length) return 0;
+  const leaves = lR.results as unknown as Leaf[];
+  const groups = gR.results as unknown as GroupRow[];
+  const cache = await new CategoryCache(env).load();
+  const stmts: D1PreparedStatement[] = [];
+  const moves: D1PreparedStatement[] = [];
+  const t = now();
+  for (const e of eR.results as any[]) {
+    const to = projectLeafOf(e.leaf_id, leaves, groups, cache, stmts);
+    if (to === e.leaf_id) continue;
+    moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(to, t, e.id));
+    moves.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE actual_id = ? OR plan_id = ?').bind(to, e.id, e.id));
+  }
+  const all = [...stmts, ...moves];
+  for (let i = 0; i < all.length; i += 100) await env.DB.batch(all.slice(i, i + 100));
+  return moves.length / 2;
+}
+
 export async function syncBillingo(env: Env): Promise<{ docs: number; plans: number }> {
   if (!env.BILLINGO_API_KEY) throw new Error('Nincs beállítva BILLINGO_API_KEY.');
   const start = new Date(Date.now() - 400 * 86400_000).toISOString().slice(0, 10);
@@ -81,7 +142,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   const byTax = await taxLeafMap(env).catch(() => new Map<string, { in?: string; out?: string }>());
   const [leavesR, groupsR, rulesR, existingR, docsR, openR] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM leaves'),
-    env.DB.prepare('SELECT id, section FROM groups'),
+    env.DB.prepare('SELECT id, label, section FROM groups'),
     env.DB.prepare('SELECT pattern, leaf_id FROM partner_rules'),
     env.DB.prepare("SELECT id, ext_ref, done, leaf_id, date FROM entries WHERE ext_ref LIKE 'billingo:%'"),
     env.DB.prepare('SELECT id, due_date FROM billingo_docs'),
@@ -196,7 +257,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         // a számlából létrejött terv neve a számla; a tervhez kötött számla a terv saját nevét (pl. „Havi díj”) tartja meg
         env.DB.prepare(
           // a terv összege csak a számlából létrejött tervnél követi a számlát; előzetes tervnél a terv marad (a számla a bill_amount)
-          'UPDATE entries SET bill_amount = ?, amount = CASE WHEN ? THEN ? ELSE amount END, name = CASE WHEN ? AND (COALESCE(name, \'\') = \'\' OR instr(name, ?) > 0) THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0',
+          "UPDATE entries SET bill_amount = ?, amount = CASE WHEN ? THEN ? ELSE amount END, name = CASE WHEN ? AND (COALESCE(name, '') = '' OR instr(name, ?) > 0) THEN ? ELSE name END, date = CASE WHEN ? THEN ? ELSE date END, updated_at = ? WHERE id = ? AND done = 0",
         ).bind(
           gross,
           ex.id === 'b' + d.id ? 1 : 0,
@@ -215,8 +276,14 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
     } else if (gross > 0) {
       // adószám (partnertörzs) alapján a partner bevételi alkategóriája, különben név/szabály alapján
-      const lid = byTax.get(taxBase(d.partner?.taxcode))?.in || (await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains));
-      const matched = findPlan(lid, gross, due);
+      const lid0 = byTax.get(taxBase(d.partner?.taxcode))?.in || (await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains));
+      // kiszámlázva → projekt (az ajánlat-mappából a partner projekt-sorába)
+      const lid = projectLeafOf(lid0, leaves, groupsR.results as unknown as GroupRow[], cache, stmts);
+      if (lid !== lid0) {
+        leafGroup[lid] = leaves.find((l) => l.id === lid)!.group_id;
+        secOfGroup[leafGroup[lid]] = 'in';
+      }
+      const matched = findPlan(lid, gross, due) || (lid0 !== lid ? findPlan(lid0, gross, due) : null);
       if (matched) {
         // a meglévő tervből „kiszámlázott” tétel lesz
         planId = matched.id;
@@ -226,8 +293,8 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         stmts.push(
           env.DB.prepare(
             // a terv összege megmarad (a lefedett tervek összegével együtt); a számla összege a bill_amount
-            "UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = amount + ?, bill_amount = ?, date = ?, accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0, updated_at = ? WHERE id = ?",
-          ).bind(ext, coveredSum, coveredSum, gross, due, t, t, matched.id),
+            "UPDATE entries SET leaf_id = ?, ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount + ?), amount = amount + ?, bill_amount = ?, date = ?, accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0, updated_at = ? WHERE id = ?",
+          ).bind(lid, ext, coveredSum, coveredSum, gross, due, t, t, matched.id),
         );
         if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
         plans++;
@@ -372,4 +439,61 @@ export async function autoPayBillingo(env: Env, opts: { dry?: boolean } = {}) {
     await setSetting(env, 'billingo_autopay_last', JSON.stringify({ at: now(), ...res }));
   }
   return res;
+}
+
+/**
+ * A számlából külön létrejött terv („b…”) összevonása a partner saját tervével: a számla a terv alá kerül (a terv összege
+ * marad – az a tiéd –, a számla összege a friss becslés), a kifizetés (tény) is a tervhez kötődik, a külön sor megszűnik.
+ */
+export function attachInvoiceStmts(
+  env: Env,
+  bill: { id: string; ext_ref: string; amount: number; bill_amount: number | null; date: string; done: number; link_id: string | null },
+  planId: string,
+  t: number,
+): D1PreparedStatement[] {
+  return [
+    // az egyedi ext_ref miatt előbb a számla-terv engedi el
+    env.DB.prepare('UPDATE entries SET ext_ref = NULL WHERE id = ?').bind(bill.id),
+    env.DB.prepare(
+      `UPDATE entries SET ext_ref = ?, source = 'billingo', plan_amount = COALESCE(plan_amount, amount), bill_amount = ?, date = ?,
+         accepted_at = CASE WHEN tentative = 1 THEN COALESCE(accepted_at, ?) ELSE accepted_at END, tentative = 0,
+         done = CASE WHEN ? THEN 1 ELSE done END, link_id = COALESCE(?, link_id), updated_at = ? WHERE id = ?`,
+    ).bind(bill.ext_ref, bill.bill_amount ?? bill.amount, bill.date, t, bill.done ? 1 : 0, bill.link_id, t, planId),
+    env.DB.prepare('UPDATE billingo_docs SET plan_id = ? WHERE plan_id = ?').bind(planId, bill.id),
+    env.DB.prepare('UPDATE bank_tx SET plan_id = ? WHERE plan_id = ?').bind(planId, bill.id),
+    env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(bill.id),
+  ];
+}
+
+/** Utólagos párosítás: a terv nélkül létrejött számla-tervek és a (később felvett vagy elfogadott) saját tervek összevonása. */
+export async function reconcileInvoicePlans(env: Env): Promise<number> {
+  const [billR, openR, leavesR] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT id, ext_ref, leaf_id, amount, bill_amount, date, done, link_id FROM entries WHERE kind = 'plan' AND ext_ref LIKE 'billingo:%' AND plan_amount IS NULL AND id GLOB 'b[0-9]*' AND date >= date('now', '-200 days')",
+    ),
+    env.DB.prepare(
+      "SELECT id, leaf_id, date, amount, tentative FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-250 days')",
+    ),
+    env.DB.prepare('SELECT id, label FROM leaves'),
+  ]);
+  const pid = new Map((leavesR.results as any[]).map((l) => [l.id as string, partnerIdOf(l.label)]));
+  const open = openR.results as any[];
+  const used = new Set<string>();
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  let n = 0;
+  for (const b of billR.results as any[]) {
+    const gross = Number(b.bill_amount ?? b.amount);
+    const near = open
+      .filter((p) => !used.has(p.id) && (p.leaf_id === b.leaf_id || (pid.get(p.leaf_id) && pid.get(p.leaf_id) === pid.get(b.leaf_id))))
+      .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(b.date)) / 86400_000 }))
+      .sort((x, y) => x.tentative - y.tentative || x.dd - y.dd);
+    const hit = near.find((p) => p.dd <= 45 && Math.abs(p.amount - gross) / Math.max(gross, 1) <= 0.03) || near.find((p) => !p.tentative && p.dd <= 20);
+    if (!hit) continue;
+    used.add(hit.id);
+    stmts.push(...attachInvoiceStmts(env, b, hit.id, t));
+    n++;
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return n;
 }

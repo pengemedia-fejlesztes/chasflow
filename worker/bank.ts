@@ -6,8 +6,8 @@ import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
-import { fillPartnerTax, mergePartnerNames } from './partnertax';
-import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
+import { fillPartnerKind, fillPartnerTax, mergePartnerNames } from './partnertax';
+import { attachInvoiceStmts, autoPayBillingo, promoteOfferLeaves, billingoPublicUrl, invoiceRefs, reconcileInvoicePlans, syncBillingo } from './billingo';
 import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { refreshVatPlans } from './vat';
@@ -205,6 +205,16 @@ export async function syncAll(env: Env) {
     res.billingoPaid = await payBillingoFromBank(env);
   } catch (e: any) {
     res.billingoPaidError = e.message;
+  }
+  try {
+    // a terv nélkül létrejött számla-sorok összevonása a később felvett / elfogadott saját tervvel
+    // kiszámlázott ügyfél = projekt: az ajánlat-mappából a számlás tételek a projekt-sorba
+    res.invoicePlansMerged = await reconcileInvoicePlans(env);
+    res.offersPromoted = await promoteOfferLeaves(env);
+    res.partnerKinds = await fillPartnerKind(env);
+    res.namesMerged2 = await mergePartnerNames(env);
+  } catch (e: any) {
+    res.invoicePlansError = e.message;
   }
   try {
     res.leafFixed = await fixLinkedLeaves(env);
@@ -490,6 +500,35 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (bdoc && req.method === 'GET') {
     // Billingo számlakép egy kattintással (nyilvános, időkorlátos link a Billingótól)
     return json({ url: await billingoPublicUrl(env, Number(bdoc[1])) });
+  }
+  if (path === '/api/billingo/promote' && req.method === 'POST') {
+    // a kiszámlázott ajánlatok azonnal projektbe (különben a következő szinkronnál)
+    requireRole(u, 'admin', 'member');
+    await reconcileInvoicePlans(env);
+    const n = await promoteOfferLeaves(env);
+    await fillPartnerKind(env);
+    await mergePartnerNames(env);
+    return json({ ok: true, moved: n });
+  }
+  if (path === '/api/billingo/attach' && req.method === 'POST') {
+    // kézi összevonás: a számlából létrejött külön sor a partner kiválasztott saját tervéhez kerül
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ id: string; plan_id: string }>(req);
+    const bill = await env.DB.prepare(
+      "SELECT id, ext_ref, amount, bill_amount, date, done, link_id FROM entries WHERE id = ? AND kind = 'plan' AND ext_ref LIKE 'billingo:%' AND plan_amount IS NULL",
+    )
+      .bind(String(b.id || ''))
+      .first<any>();
+    if (!bill) throw new HttpError(404, 'Ismeretlen számla-sor.');
+    const plan = await env.DB.prepare("SELECT id FROM entries WHERE id = ? AND kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%')")
+      .bind(String(b.plan_id || ''))
+      .first();
+    if (!plan) throw new HttpError(400, 'A terv már le van zárva, vagy másik számlához tartozik.');
+    await env.DB.batch(attachInvoiceStmts(env, bill, String(b.plan_id), now()));
+    await promoteOfferLeaves(env);
+    await fixLinkedLeaves(env);
+    await audit(env, u.id, 'billingo_attach', { id: bill.id, plan: b.plan_id });
+    return json({ ok: true });
   }
   if (path === '/api/nav/invoice' && req.method === 'GET') {
     // egy bejövő számla teljes tartalma a NAV-ból (tételsorokkal) – a riasztásoknál a sorszámra kattintva

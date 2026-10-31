@@ -1,4 +1,5 @@
 // Kategória / ügyfél választó: „+ Új” elöl, aktív ügyfelek csoportonként, gépelésre kiegészítő kereső.
+import { partnerIdOf } from '../../shared/partners';
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, endOfMonth } from '../../shared/model';
@@ -34,6 +35,9 @@ export function useActiveLeaves(section: Section): Set<string> {
       if (ix.sectionOf(e.leaf_id) !== section) continue;
       if (e.kind === 'plan' ? !e.done && e.date >= ix.cur + '-01' && e.date <= to : e.date >= from) s.add(e.leaf_id);
     }
+    // ugyanaz a partner más mappában (pl. Ajánlatok ↔ Projektek): ha az egyik aktív, a párja is választható
+    const keys = new Set([...s].map((id) => partnerIdOf(ix.leafById[id]?.label || '')));
+    for (const l of ix.leaves) if (!l.archived && ix.sectionOf(l.id) === section && keys.has(partnerIdOf(l.label))) s.add(l.id);
     return s;
   }, [data.entries, ix, section]);
 }

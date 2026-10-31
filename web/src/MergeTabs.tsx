@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { compactName, partnerResolver, suggestPartner } from '../../shared/identity';
 import { fmt, monthLong, ymOf } from '../../shared/model';
+import { partnerIdOf } from '../../shared/partners';
 import { isInternalProject } from '../../shared/worktime';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
@@ -118,8 +119,10 @@ export function useMergeCounts() {
   return { billingo, bank, names };
 }
 
+const KIND_HU: Record<string, string> = { vevo: 'vevő', szallito: 'szállító', mindketto: 'vevő és szállító' };
+
 export function MergeBillingo() {
-  const { data, ix, canEdit, commit } = useStore();
+  const { data, ix, canEdit, commit, run } = useStore();
   const [, ack] = useAck();
   const rows = useBillingoUnplanned();
   const [pick, setPick] = useState<string | null>(null);
@@ -151,6 +154,25 @@ export function MergeBillingo() {
       {rows.map((e) => {
         const d = docs.get(e.id);
         const leaf = ix.leafById[e.leaf_id];
+        const grp = ix.groupById[leaf?.group_id || '']?.label || '';
+        const key = partnerIdOf(leaf?.label || '');
+        const reg = (data.partners || []).find((p) => p.key === key);
+        // a kiszámlázott ügyfél projekt: ha az Ajánlatok mappában van, a javaslat a Projektek
+        const isOffer = /aj[áa]nlat/i.test(grp);
+        // a partner nyitott saját tervei a számla körül – ezek egyikéhez tartozhat a számla
+        const cands = data.entries
+          .filter(
+            (p) =>
+              p.kind === 'plan' &&
+              !p.done &&
+              p.id !== e.id &&
+              p.amount > 0 &&
+              !(p.ext_ref || '').startsWith('billingo:') &&
+              partnerIdOf(ix.leafById[p.leaf_id]?.label || '') === key &&
+              Math.abs(Date.parse(p.date) - Date.parse(e.date)) <= 75 * 86400000,
+          )
+          .sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(e.date)) - Math.abs(Date.parse(b.date) - Date.parse(e.date)))
+          .slice(0, 6);
         return (
           <div key={e.id} style={{ ...card, borderLeft: `4px solid ${C.blue2}`, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -160,13 +182,24 @@ export function MergeBillingo() {
                   {d?.number || ''} · kelt {dot(d?.invoice_date || e.date)} · határidő {dot(e.date)}
                   {e.done ? ' · fizetve' : ''}
                 </span>
-                <span style={{ font: `600 12.5px ${FONT}`, color: C.blueDark }}>
-                  → {leaf?.label || 'ismeretlen kategória'} · {ix.groupById[leaf?.group_id || '']?.label || ''} · {monthLong(ymOf(e.date))}
+                <span style={{ font: `600 12.5px ${FONT}`, color: isOffer ? C.neg : C.blueDark }}>
+                  → {leaf?.label || 'ismeretlen kategória'} · {grp} · {monthLong(ymOf(e.date))}
+                  {reg?.kind ? ` · ${KIND_HU[reg.kind]}` : ''}
                 </span>
+                {isOffer && (
+                  <span style={{ font: `600 12.5px ${FONT}`, color: C.blueDark }}>
+                    Javaslat: Projektek → {leaf?.label} (kiszámlázva, tehát már projekt, nem ajánlat)
+                  </span>
+                )}
               </span>
               <b style={{ font: `700 14px ${FONT}`, color: '#1A7340', fontVariantNumeric: 'tabular-nums' }}>{fmt(e.bill_amount ?? e.amount)} Ft</b>
               {canEdit && (
                 <>
+                  {isOffer && (
+                    <Pill small kind="primary" onClick={() => run(() => api('/api/billingo/promote', { body: {} }), `${leaf?.label}: Projektek közé került`)}>
+                      Projektbe
+                    </Pill>
+                  )}
                   <Pill small onClick={() => setPick(pick === e.id ? null : e.id)}>
                     {pick === e.id ? 'Mégse' : 'Máshova sorolom'}
                   </Pill>
@@ -176,6 +209,25 @@ export function MergeBillingo() {
                 </>
               )}
             </div>
+            {canEdit && cands.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ font: `600 12.5px ${FONT}`, color: C.muted }}>Ehhez a tervhez tartozik:</span>
+                {cands.map((p) => (
+                  <Pill
+                    key={p.id}
+                    small
+                    kind="light"
+                    title="A számla a terv alá kerül (a terv összege marad, a számla a friss becslés), a fizetés a tervhez kötődik"
+                    onClick={() =>
+                      run(() => api('/api/billingo/attach', { body: { id: e.id, plan_id: p.id } }), `${d?.number || 'Számla'} → ${p.name || leaf?.label}`)
+                    }
+                  >
+                    {p.name || '(terv)'} · {p.date.slice(5).replace('-', '.')}. · {fmt(p.amount)}
+                    {p.tentative ? ' · ajánlat' : ''}
+                  </Pill>
+                ))}
+              </div>
+            )}
             {pick === e.id && (
               <LeafPicker
                 section="in"
