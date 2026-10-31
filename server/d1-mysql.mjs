@@ -22,6 +22,41 @@ const RESERVED_UNUSED = [
   'leaves',
 ];
 
+/** felsőszintű vesszők mentén darabol (zárójelen belül nem) */
+function splitTop(str) {
+  const parts = [];
+  let depth = 0,
+    cur = '';
+  for (const ch of str) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+/** SQLite skalár MAX(a, b, …) / MIN(…) -> GREATEST / LEAST; az egyargumentumú (aggregát) MAX(x) marad */
+function scalarMinMax(sql) {
+  return sql.replace(/\b(MAX|MIN)\(/gi, (m, fn, off) => {
+    let depth = 0;
+    for (let i = off + m.length; i < sql.length; i++) {
+      const ch = sql[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') {
+        if (depth === 0) return m;
+        depth--;
+      } else if (ch === ',' && depth === 0) return (fn.toUpperCase() === 'MAX' ? 'GREATEST' : 'LEAST') + '(';
+    }
+    return m;
+  });
+}
+
 export function translate(sqlIn) {
   let sql = sqlIn;
 
@@ -46,8 +81,7 @@ export function translate(sqlIn) {
   );
   sql = sql.replace(/\)\s+IS\s+\?/gi, ') <=> ?');
   // SQLite kétargumentumú MAX(a, b) / MIN(a, b) -> GREATEST / LEAST (az aggregát MAX(x) marad)
-  sql = sql.replace(/\bMAX\(\s*([\w.]+)\s*,/gi, 'GREATEST($1,');
-  sql = sql.replace(/\bMIN\(\s*([\w.]+)\s*,/gi, 'LEAST($1,');
+  sql = scalarMinMax(sql);
 
   // SQLite datum-aritmetika
   sql = sql.replace(/date\(\s*'now'\s*,\s*'([+-]?\d+)\s+days?'\s*\)/gi, (m, n) => {
@@ -119,6 +153,13 @@ export function translate(sqlIn) {
         })
         .join(', ');
       sql = `${head}ON DUPLICATE KEY UPDATE ${wrapped}`;
+    } else {
+      // a régi sort olvasó értékadások (tábla.oszlop) előre: a MySQL balról jobbra frissít, és a későbbi kifejezések már
+      // a frissített értéket látnák (pl. accepted_at az entries.tentative régi értékéből számol)
+      const assigns = splitTop(tail.replace(/ON\s+DUPLICATE\s+KEY\s+UPDATE/i, ''));
+      const old = (a) => /\b[A-Za-z_]\w*\.[A-Za-z_]/.test(a.slice(a.indexOf('=') + 1));
+      assigns.sort((x, y) => Number(old(y)) - Number(old(x)));
+      sql = `${head}ON DUPLICATE KEY UPDATE ${assigns.map((a) => a.trim()).join(', ')}`;
     }
   }
 
