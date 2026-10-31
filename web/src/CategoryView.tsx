@@ -888,7 +888,11 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
               const contRows = recur.filter((x) => ymOf(x.last.date) === maxYm);
               const cont = contRows.map((x) => x.last);
               const contYm = contRows.length ? addMonths(maxYm, Math.min(...contRows.map((x) => x.step))) : '';
-              const names = [...new Set([...prows.map(([, es]) => itemLabel(es[0]?.name || '', L?.label || '')), ...extra.map((x) => x.name)])].filter(Boolean);
+              // a sor alatt a következő számlázandó hónap tétele („Havi díj – 2026. november”), nem a legelső
+              const nextOf = (es: Entry[]) => es.find((e) => !e.done && (e.period || ymOf(e.date)) >= ix.cur) || es.find((e) => !e.done) || es[es.length - 1];
+              const names = [...new Set([...prows.map(([, es]) => itemLabel(nextOf(es)?.name || '', L?.label || '')), ...extra.map((x) => x.name)])].filter(
+                Boolean,
+              );
               return (
                 <div key={leaf}>
                   <div

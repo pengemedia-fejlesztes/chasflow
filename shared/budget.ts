@@ -6,9 +6,18 @@ import { ymOf } from './model';
 import { baseName } from './monthname';
 import type { Entry } from './types';
 
-/** keret-terv: biztos terv, amelynek a neve (hónap nélkül) maga az alkategória neve */
-export const isBudgetPlan = (e: Entry, leafLabel: string) =>
-  e.kind === 'plan' && !e.tentative && !!leafLabel && normalizeText(baseName(e.name || '')) === normalizeText(leafLabel);
+/** keret-kategória: az előre nem látható / egyéb költségek – ide sorolt tételek a keretből fogynak */
+export const isBudgetLeaf = (leafLabel: string) => /^(elore nem lathato|varatlan|egyeb koltseg)/.test(normalizeText(leafLabel || ''));
+
+/**
+ * keret-terv: keret-kategóriában (pl. „Előre nem látható költség”) a kategória nevű terv, vagy bárhol a „keret” nevű terv.
+ * (Az ÁFA, KIVA és hasonló, a kategória nevét viselő terv nem keret – az a fizetendő összeg.)
+ */
+export const isBudgetPlan = (e: Entry, leafLabel: string) => {
+  if (e.kind !== 'plan' || e.tentative) return false;
+  const n = normalizeText(baseName(e.name || ''));
+  return /\bkeret\b/.test(n) || (isBudgetLeaf(leafLabel) && (n === normalizeText(leafLabel) || !n));
+};
 
 export interface BudgetMonth {
   /** a keret (abszolút érték) */

@@ -545,13 +545,23 @@ function ItemRow({
       >
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ font: `600 15px ${FONT}`, color: C.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {it.name}
             {(() => {
-              // havidíjnál a nyitott hónapok is a névben („Havi díj · 2026. október – 2026. december”)
+              // a következő számlázandó hónap a névben („Havi díj – 2026. november”), mellette az összes nyitott hónap
               const ms = [...new Set(it.open.map(periodOf))].sort();
-              return (it.rep !== 'once' || MONTHLY_RX.test(it.name)) && ms.length
-                ? ` · ${monthLong(ms[0])}${ms.length > 1 ? ' – ' + monthLong(ms[ms.length - 1]) : ''}`
-                : '';
+              const recurring = it.rep !== 'once' || MONTHLY_RX.test(it.name);
+              if (!recurring || !ms.length) return it.name;
+              const nx = it.next ? periodOf(it.next) : ms[0];
+              return (
+                <>
+                  {it.name} – {monthLong(nx)}
+                  {ms.length > 1 && (
+                    <span style={{ color: C.muted, fontWeight: 500 }}>
+                      {' '}
+                      · nyitott: {monthLong(ms[0])} – {monthLong(ms[ms.length - 1])}
+                    </span>
+                  )}
+                </>
+              );
             })()}
           </span>
           <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', font: `500 12px ${FONT}`, color: C.muted }}>

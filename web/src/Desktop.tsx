@@ -367,7 +367,15 @@ function colProfit(ix: ReturnType<typeof useStore>['ix'], matrix: Matrix, netAll
   return v;
 }
 
-type ChartBar = { label: string; v: number; kind: 'actual' | 'proj'; cur: boolean };
+type ChartBar = {
+  label: string;
+  v: number;
+  kind: 'actual' | 'proj';
+  cur: boolean;
+  /** a hónap terve és ténye (profitnál: bevétel − kiadás) – a súgóban terv · tény · eltérés */
+  plan?: number;
+  act?: number | null;
+};
 
 /** Havi oszlopdiagram nulla-vonallal (a negatív érték lefelé, pirosan). */
 function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: string; bars: ChartBar[]; signed?: boolean; markMin?: boolean }) {
@@ -378,12 +386,51 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
   const posH = Math.round((H * maxPos) / span);
   const negH = H - posH;
   const minIdx = bars.reduce((mi, b, i) => (b.v < bars[mi].v ? i : mi), 0);
+  const [hov, setHov] = useState<number | null>(null);
+  const hb = hov != null ? bars[hov] : null;
+  const sg = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + ' Ft';
   const val = (b: ChartBar) => (signed && b.v > 0 ? '+' : '') + fmtM(b.v);
   const colorOf = (b: ChartBar, i: number) => (b.v < 0 ? C.neg : markMin && i === minIdx ? C.navy : b.kind === 'actual' ? C.blue : '#BFD8E8');
   return (
     <div style={{ ...card, padding: '18px 20px 14px', minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
         <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>{title}</span>
+        {/* súgó: az oszlop fölé víve – terv, tény (ezres tagolással) és az eltérés zöld / piros */}
+        {hb && (
+          <span
+            style={{
+              flexBasis: '100%',
+              order: 3,
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: C.bg2,
+              font: `600 12.5px ${FONT}`,
+              color: C.ink,
+              fontVariantNumeric: 'tabular-nums',
+              display: 'flex',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <b style={{ color: C.navy }}>{hb.label}</b>
+            {hb.plan != null ? (
+              <>
+                <span>terv {signed ? sg(hb.plan) : fmt(hb.plan) + ' Ft'}</span>
+                <span>tény {hb.act == null ? '–' : signed ? sg(hb.act) : fmt(hb.act) + ' Ft'}</span>
+                {hb.act != null && (
+                  <b style={{ color: hb.act - hb.plan >= 0 ? '#1A7340' : C.neg }}>
+                    eltérés {sg(hb.act - hb.plan)} {hb.act - hb.plan >= 0 ? '▲' : '▼'}
+                  </b>
+                )}
+                {hb.kind === 'proj' && <span style={{ color: C.muted }}>várható: {signed ? sg(hb.v) : fmt(hb.v) + ' Ft'}</span>}
+              </>
+            ) : (
+              <span>
+                {hb.kind === 'actual' ? 'tény' : 'előrejelzés'}: {signed ? sg(hb.v) : fmt(hb.v) + ' Ft'}
+              </span>
+            )}
+          </span>
+        )}
         <span style={{ display: 'flex', gap: 12, font: `400 12px ${FONT}`, color: C.muted, flexWrap: 'wrap' }}>
           <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
             <i style={{ width: 10, height: 10, borderRadius: 3, background: C.blue }} />
@@ -400,8 +447,16 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
         {bars.map((b, i) => (
           <div
             key={i}
-            title={`${b.label}: ${(signed && b.v > 0 ? '+' : '') + fmt(b.v)} Ft`}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}
+            onMouseEnter={() => setHov(i)}
+            onMouseLeave={() => setHov(null)}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              minWidth: 0,
+              cursor: 'default',
+              opacity: hov != null && hov !== i ? 0.6 : 1,
+            }}
           >
             <div
               style={{ height: posH + 16, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}
@@ -620,7 +675,17 @@ function Overview({
       if (c.current && c.kind === 'actual' && cols[i + 1]?.current) return;
       const label = filters.granularity === 'year' ? c.label : monthLabel(c.last);
       bal.push({ label, v: matrix.balance[i], kind: matrix.balanceKind[i], cur: c.current });
-      pr.push({ label, v: colProfit(ix, matrix, netAll, i), kind: c.kind === 'actual' || (!c.current && c.last < ix.cur) ? 'actual' : 'proj', cur: c.current });
+      // a hónap(ok) terve (minden biztos terv, a teljesültek is) és ténye: bevétel − kiadás
+      const sumIx = (m: Map<string, Map<string, number>>) => c.months.reduce((a, ym) => a + [...m.values()].reduce((x, mm) => x + (mm.get(ym) || 0), 0), 0);
+      const past = c.months[0] <= ix.cur;
+      pr.push({
+        label,
+        v: colProfit(ix, matrix, netAll, i),
+        kind: c.kind === 'actual' || (!c.current && c.last < ix.cur) ? 'actual' : 'proj',
+        cur: c.current,
+        plan: sumIx(ix.plan),
+        act: past ? sumIx(ix.actual) : null,
+      });
     });
     return { bars: bal.slice(-24), profitBars: pr.slice(-24) };
   }, [cols, matrix, netAll, ix, filters.granularity]);
