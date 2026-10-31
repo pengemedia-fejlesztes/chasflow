@@ -1,5 +1,5 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
@@ -22,11 +22,56 @@ import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
 
 export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'breakeven', 'settings'];
+
+/** #/nézet[/kategória][?p=partner&t=fül] */
+export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
+  const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
+  const [v, g] = path.split('/');
+  const q = new URLSearchParams(qs || '');
+  const view = (VIEWS as string[]).includes(v) ? (v as View) : 'overview';
+  return { view, group: view === 'cat' && g ? decodeURIComponent(g) : null, partner: q.get('p'), tab: q.get('t') };
+}
+export function buildHash(view: View, group: string | null, partner: string | null, tab: string | null): string {
+  const q = new URLSearchParams();
+  if (partner) q.set('p', partner);
+  if (partner && tab) q.set('t', tab);
+  const qs = q.toString();
+  return `#/${view}${view === 'cat' && group ? '/' + encodeURIComponent(group) : ''}${qs ? '?' + qs : ''}`;
+}
 
 export function Desktop({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, setFilters, toast, canEdit } = st;
-  const [view, setView] = useState<View>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'overview'));
+  const [view, setView] = useState<View>(() =>
+    location.hash.length > 2 ? parseHash().view : new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'overview',
+  );
+  // címsor = hol tartunk (nézet, kategória, partner adatlap): a böngésző Vissza gombja és a frissítés is ide hoz vissza
+  const { partnerCard, openPartner } = st;
+  const synced = useRef(false);
+  useEffect(() => {
+    const h = parseHash();
+    if (h.group) setFilters({ groupId: h.group });
+    if (h.partner) openPartner(h.partner);
+    const onPop = () => {
+      const x = parseHash();
+      setView(x.view);
+      if (x.view === 'cat' && x.group) setFilters({ groupId: x.group });
+      openPartner(x.partner);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const cur = parseHash();
+    const t = partnerCard && cur.partner === partnerCard ? cur.tab : null;
+    const want = buildHash(view, filters.groupId, partnerCard, t);
+    if (want === location.hash) return;
+    if (!synced.current) history.replaceState(null, '', want);
+    else history.pushState(null, '', want);
+    synced.current = true;
+  }, [view, filters.groupId, partnerCard]);
   // nézetváltáskor az oldal tetejére (a dokumentum görget)
   useEffect(() => {
     window.scrollTo({ top: 0 });

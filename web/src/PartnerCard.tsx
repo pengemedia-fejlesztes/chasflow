@@ -95,6 +95,27 @@ export function PartnerEditor({
     ix.leaves.forEach((l) => add(l.label));
     return out.sort((a, b) => a.localeCompare(b, 'hu'));
   }, [data.bankTx, data.partnerNames, data.billingo, data.navInvoices, ix.leaves, name, aliases]);
+  // a nevek előfordulása: hányszor és hol (Billingo-számla, banki tétel, NAV-számla) – a párosítás ezek alapján történik
+  const occ = useMemo(() => {
+    const nz = (x: string) => normalizeText(x).replace(/[^a-z0-9]/g, '');
+    const m = new Map<string, { src: string; n: number }[]>();
+    for (const a of aliases) {
+      const k = nz(a);
+      if (k.length < 3) continue;
+      const bill = data.billingo.filter((d) => !d.cancelled && nz(d.partner || '').includes(k)).length;
+      const bank = data.bankTx.filter((t) => nz(`${t.partner || ''} ${t.memo || ''}`).includes(k)).length;
+      const nav = (data.navInvoices || []).filter((n) => nz(n.partner_name || '').includes(k)).length;
+      m.set(
+        a,
+        [
+          { src: 'Billingo', n: bill },
+          { src: 'bank', n: bank },
+          { src: 'NAV', n: nav },
+        ].filter((x) => x.n > 0),
+      );
+    }
+    return m;
+  }, [aliases, data.billingo, data.bankTx, data.navInvoices]);
   const listId = 'aliases-' + p.key;
   // adószám a NAV-számlákból (ha a partnertörzsben még nincs)
   const navTax = useMemo(() => {
@@ -133,7 +154,6 @@ export function PartnerEditor({
     const mainLeaf = p.leaves[0];
     const groups = ix.groups.filter((g) => k === 'mindketto' || g.section === (k === 'vevo' ? 'in' : 'out'));
     const cnt = (gid: string) => ix.leaves.filter((l) => l.group_id === gid && !l.archived).length;
-    const srcOf = (a: string) => p.billingNames.find((b) => normalizeText(b.name) === normalizeText(a));
     return (
       <>
         <SettingRow title="Típus" sub="Vevő = bevétel, szállító = kiadás">
@@ -186,14 +206,18 @@ export function PartnerEditor({
         <SettingRow title="Nevek" sub="Ezek alapján párosít és összevon: cégnév, Billingo-, NAV-, banki név, üzlet neve">
           <div style={{ border: `1px solid ${C.line2}`, borderRadius: 12, overflow: 'hidden' }}>
             {aliases.map((a) => {
-              const b = srcOf(a);
+              const where = occ.get(a) || [];
               return (
                 <div key={a} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderBottom: `1px solid ${C.line3}` }}>
                   <b style={{ flex: 1, minWidth: 0, font: `600 15px ${FONT}`, color: C.navy }}>{a}</b>
-                  {b && (
-                    <span style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, color: C.blueDark, font: `600 12px ${FONT}` }}>
-                      {b.source} · {b.n}×
-                    </span>
+                  {where.length ? (
+                    where.map((w) => (
+                      <span key={w.src} style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, color: C.blueDark, font: `600 12px ${FONT}` }}>
+                        {w.src} · {w.n}×
+                      </span>
+                    ))
+                  ) : (
+                    <span style={{ font: `500 12px ${FONT}`, color: C.faint }}>még nem fordult elő</span>
                   )}
                   <span style={{ padding: '2px 10px', borderRadius: 999, background: C.bg2, color: C.blueDark, font: `600 12px ${FONT}` }}>✓ párosít</span>
                   {canEdit && (

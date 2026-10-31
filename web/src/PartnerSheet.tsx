@@ -6,6 +6,7 @@ import { fmt, monthLong, ymOf } from '../../shared/model';
 import { baseName, hasMonth } from '../../shared/monthname';
 import type { PartnerStat } from '../../shared/partners';
 import type { Entry } from '../../shared/types';
+import { api } from './api';
 import { BankPickDialog } from './BankPick';
 import { CalendarSheet } from './DatePicker';
 import { usePlanOfActual } from './LinkChain';
@@ -20,7 +21,25 @@ const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.
 const dm = (d?: string | null) => (d ? `${d.slice(5, 7)}.${d.slice(8, 10)}.` : '—');
 const days = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 
-type Hist = { ym: string; name: string; amount: number; late: number | null; open: boolean; due: string | null; paid: string | null; number: string | null };
+type Hist = {
+  ym: string;
+  name: string;
+  amount: number;
+  late: number | null;
+  open: boolean;
+  due: string | null;
+  paid: string | null;
+  number: string | null;
+  /** Billingo bizonylat azonosító – kattintásra megnyílik a számlakép */
+  docId?: number | null;
+};
+const norm = (x: string) =>
+  x
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+const taxKey = (t?: string | null) => (t || '').replace(/\D/g, '').slice(0, 8);
 
 const TONE: Record<string, CSSProperties> = {
   empty: { border: `1.5px dashed ${C.line2}`, background: '#fff' },
@@ -53,8 +72,34 @@ export function PartnerSheet({
   onEditItem: (leaf: string, key?: string) => void;
   onRenamed: (key: string) => void;
 }) {
-  const { data, ix, commit, canEdit } = useStore();
-  const [tab, setTab] = useState<'main' | 'inv' | 'set'>('main');
+  const { data, ix, commit, canEdit, showToast } = useStore();
+  const [tab, setTab0] = useState<'main' | 'inv' | 'set'>(() => {
+    const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
+    return t === 'inv' || t === 'set' ? t : 'main';
+  });
+  // a fül is a címsorba kerül, hogy frissítéskor ugyanitt nyíljon meg
+  const setTab = (k: 'main' | 'inv' | 'set') => {
+    setTab0(k);
+    const [path, qs] = location.hash.split('?');
+    const q = new URLSearchParams(qs || '');
+    if (k === 'main') q.delete('t');
+    else q.set('t', k);
+    const str = q.toString();
+    history.replaceState(null, '', (path || '#/') + (str ? '?' + str : ''));
+  };
+  // Billingo-számlakép megnyitása (időkorlátos nyilvános link)
+  const openDoc = (id: number) => {
+    const w = window.open('', '_blank');
+    api<{ url: string }>(`/api/billingo/doc/${id}/url`)
+      .then((r) => {
+        if (w) w.location.href = r.url;
+        else window.open(r.url, '_blank');
+      })
+      .catch((e) => {
+        w?.close();
+        showToast({ msg: e.message, error: true });
+      });
+  };
   const [filter, setFilter] = useState<'all' | 'late' | 'open'>('all');
   const [pick, setPick] = useState<string | null>(null);
   const [dateFor, setDateFor] = useState<Entry | null>(null);
@@ -93,9 +138,49 @@ export function PartnerSheet({
           due: i.doc.due_date,
           paid: i.doc.paid_date,
           number: i.doc.number,
+          docId: i.doc.id,
         };
       })
       .filter((h) => h.ym);
+    // NAV-számlák (más számlázóból kiállítottak is): kategória, terv / tény kapcsolat, adószám vagy név alapján
+    const leafIds = new Set(p.leaves.map((l) => l.id));
+    const entIds = new Set([...p.past, ...p.future].map((e) => e.id));
+    const myTax = taxKey(p.info?.tax_number);
+    const names = [p.name, ...(p.info?.aliases || [])].map(norm).filter((x) => x.length >= 3);
+    const billNums = new Set(inv.map((h) => h.number).filter(Boolean));
+    const navActIds = new Set<string>();
+    const nav: Hist[] = (data.navInvoices || [])
+      .filter(
+        (n) =>
+          (sec === 'in' ? n.gross > 0 : n.gross < 0) &&
+          !billNums.has(n.invoice_number) &&
+          ((!!n.leaf_id && leafIds.has(n.leaf_id)) ||
+            (!!n.plan_id && entIds.has(n.plan_id)) ||
+            (!!n.actual_id && entIds.has(n.actual_id)) ||
+            (!!myTax && taxKey(n.partner_tax) === myTax) ||
+            names.some((k) => norm(n.partner_name || '').includes(k))),
+      )
+      .map((n) => {
+        const act = n.actual_id ? byId.get(n.actual_id) : undefined;
+        if (act) navActIds.add(act.id);
+        const pl = n.plan_id ? byId.get(n.plan_id) : undefined;
+        const due = n.payment_date || n.issue_date;
+        const paid = act?.date || null;
+        const settled = !!paid || n.status === 'paid' || n.status === 'ignored';
+        return {
+          ym: (pl?.period || n.issue_date || due || '').slice(0, 7),
+          name: pl ? nameOf(pl) : 'Számla',
+          amount: Math.abs(n.gross),
+          late: paid && due ? Math.max(0, days(due, paid)) : settled ? 0 : null,
+          open: !settled,
+          due,
+          paid,
+          number: n.invoice_number,
+          docId: null,
+        };
+      })
+      .filter((h) => h.ym);
+    inv.push(...nav);
     const covered = new Set(inv.map((h) => h.ym));
     const paidIds = new Set(p.invoices.map((i) => i.doc.plan_id).filter(Boolean));
     const acts: Hist[] = p.past
@@ -104,7 +189,7 @@ export function PartnerSheet({
         const pl = planOfActual.get(e.id);
         return { e, pl, ym: pl?.period || ymOf(pl?.date || e.date) };
       })
-      .filter((x) => !covered.has(x.ym) && !(x.pl && paidIds.has(x.pl.id)))
+      .filter((x) => !covered.has(x.ym) && !(x.pl && paidIds.has(x.pl.id)) && !navActIds.has(x.e.id))
       .map(({ e, pl, ym }) => ({
         ym,
         name: pl ? nameOf(pl) : itemLabel(e.name, p.name) || 'befizetés',
@@ -116,7 +201,7 @@ export function PartnerSheet({
         number: null,
       }));
     return [...inv, ...acts].sort((a, b) => b.ym.localeCompare(a.ym));
-  }, [p, byId, planOfActual, seriesName]);
+  }, [p, byId, planOfActual, seriesName, data.navInvoices]);
 
   // miből áll: a befolyt tények a Cashflow-ban rögzített tételnév szerint (a tényhez kötött terv neve, hónap nélkül)
   const comps = useMemo(() => {
@@ -135,6 +220,11 @@ export function PartnerSheet({
     return [...m.values()];
   }, [p.past, planOfActual, ix, sec]);
 
+  // várható: a következő 12 hónap nyitott (biztos) tervei
+  const horizon12 = shiftDate(data.today, 12);
+  const expected12 = p.future
+    .filter((e) => e.kind === 'plan' && !e.done && !e.tentative && e.date <= horizon12 && ix.sectionOf(e.leaf_id) === sec)
+    .reduce((a, e) => a + Math.abs(e.amount), 0);
   const openItems = p.future.filter((e) => e.kind === 'plan' && !e.done).sort((a, b) => a.date.localeCompare(b.date));
   const lateNow = p.outstanding || openItems.filter((e) => e.date < data.today).reduce((a, e) => a + Math.abs(e.amount), 0);
   const lateHist = hist.filter((h) => !h.open && h.late != null && h.late > 0);
@@ -195,6 +285,7 @@ export function PartnerSheet({
         {stat(sec === 'in' ? 'Lejárt kintlévőség' : 'Lejárt tartozás', `${fmt(lateNow)} Ft`, lateNow > 0)}
         {stat('Átlagos késés', p.avgLate == null ? '–' : `${Math.round(p.avgLate)} nap`)}
         {stat(`${sec === 'in' ? 'Bevétel' : 'Kiadás'} · 12 hó`, `${fmt(side?.last12 || 0)} Ft`)}
+        {stat(`Várható ${sec === 'in' ? 'bevétel' : 'kiadás'} · 12 hó`, `${fmt(expected12)} Ft`)}
       </div>
 
       <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.line}` }}>
@@ -353,7 +444,30 @@ export function PartnerSheet({
                     {h.ym.slice(0, 4)} {SM[Number(h.ym.slice(5, 7)) - 1]}
                   </b>
                   <span style={{ font: `400 15px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.name}</span>
-                  <span style={{ font: `400 15px ${FONT}`, color: h.number ? C.blueDark : C.faint }}>{h.number || '–'}</span>
+                  {h.docId ? (
+                    <button
+                      type="button"
+                      title="Számla megnyitása"
+                      onClick={() => openDoc(h.docId!)}
+                      style={{
+                        border: 0,
+                        background: 'transparent',
+                        padding: 0,
+                        textAlign: 'left',
+                        font: `500 15px ${FONT}`,
+                        color: C.blueDark,
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                        textUnderlineOffset: 3,
+                      }}
+                    >
+                      {h.number || 'számla'} ↗
+                    </button>
+                  ) : (
+                    <span style={{ font: `400 15px ${FONT}`, color: h.number ? C.ink : C.faint }} title={h.number ? 'NAV-számla (PDF nincs)' : undefined}>
+                      {h.number || '–'}
+                    </span>
+                  )}
                   <span style={{ font: `400 15px ${FONT}`, color: C.muted }}>{dm(h.due)}</span>
                   <span style={{ font: `400 15px ${FONT}`, color: C.muted }}>{h.open ? '—' : dm(h.paid)}</span>
                   <span>
