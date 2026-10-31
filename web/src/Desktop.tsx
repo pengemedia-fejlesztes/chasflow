@@ -88,14 +88,25 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             <span style={{ font: `700 16px ${FONT_H}`, letterSpacing: '-.01em' }}>
               Cashflow <b style={{ color: C.blue2 }}>tervező</b>
             </span>
-            <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>
-              360 Marketing ·{' '}
-              <span title={VERSION_LABEL} style={{ textTransform: 'none', letterSpacing: '.04em', color: C.blue2 }}>
-                {APP_VERSION}
-              </span>
-            </span>
           </div>
         </div>
+        {/* MOST: a mai nap és a hónapzárásig hátralévő napok */}
+        {(() => {
+          const t = data.today;
+          const last = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)), 0)).getUTCDate();
+          const left = last - Number(t.slice(8, 10));
+          return (
+            <div
+              style={{ margin: '0 14px 14px', padding: '10px 12px', borderRadius: 10, background: C.navy3, display: 'flex', flexDirection: 'column', gap: 2 }}
+            >
+              <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>Most</span>
+              <b style={{ font: `700 15px ${FONT_H}`, color: '#fff' }}>
+                {monthLong(ymOf(t))} {Number(t.slice(8, 10))}.
+              </b>
+              <span style={{ font: `500 11.5px ${FONT}`, color: C.blue2 }}>{left === 0 ? 'hónapzárás ma' : `hónapzárás ${left} nap múlva`}</span>
+            </div>
+          );
+        })()}
         {canEdit && (
           <div style={{ padding: '0 14px 14px' }}>
             <button
@@ -237,7 +248,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             Billingo · {data.integrations.billingo ? relTime(data.settings.billingo_last_sync) : 'nincs beállítva'}
           </span>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted2 }}>{data.me.name}</span>
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted2 }}>
+              {data.me.name}
+              <span title={VERSION_LABEL} style={{ marginLeft: 8, font: `500 10.5px ${FONT}`, color: C.muted2, opacity: 0.7 }}>
+                {APP_VERSION}
+              </span>
+            </span>
             <button onClick={onLogout} style={{ border: 0, background: 'transparent', color: C.blue2, font: `600 12.5px ${FONT}`, cursor: 'pointer' }}>
               Kilépés
             </button>
