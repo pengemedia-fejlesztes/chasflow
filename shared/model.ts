@@ -152,7 +152,52 @@ export function buildEstimates(ix: Index, horizon: string): LeafMonth {
     const start = addMonths(lp && lp >= ix.cur ? lp : ix.cur, 1);
     for (const ym of monthRange(start, horizon)) add(est, leaf, ym, avg);
   }
+  // terv-korrekció: ahol a terv nem pontos (a számla / tény 200 Ft-nál jobban eltér tőle), a jövőbeli tervezett hónapokra
+  // a becslés a múlt alapján jön – a terv maga nem változik, csak a „várható” érték
+  for (const [leaf, monthly] of planCorrections(ix)) {
+    const months = ix.plan.get(leaf);
+    if (!months) continue;
+    for (const ym of monthRange(addMonths(ix.cur, 1), horizon)) {
+      const pv = months.get(ym);
+      if (pv == null || pv === 0) continue;
+      const d = monthly - pv;
+      if (Math.abs(d) >= PLAN_TOL_FT) add(est, leaf, ym, d);
+    }
+  }
   return est;
+}
+
+/** A terv akkor pontos, ha a számla (vagy a tény) legfeljebb ennyivel tér el tőle. */
+export const PLAN_TOL_FT = 200;
+const daysBefore = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') - n * 86400000).toISOString().slice(0, 10);
+
+/**
+ * Partnerek (alkategóriák), ahol a terv nem pontos: az elmúlt 90 napban a tervhez kötött számla vagy tény legalább egyszer
+ * 200 Ft-nál jobban eltért a tervtől. A becsült havi összeg az elmúlt 90 nap tényeinek havi átlaga; új partnernél
+ * (az első tény 90 napon belüli) az elmúlt 30 nap összege.
+ */
+export function planCorrections(ix: Index): Map<string, number> {
+  const from90 = daysBefore(ix.today, 90),
+    from30 = daysBefore(ix.today, 30);
+  const byId = new Map(ix.entries.map((e) => [e.id, e]));
+  const off = new Set<string>();
+  for (const e of ix.entries) {
+    if (e.kind !== 'plan' || e.tentative || e.date < from90 || e.date > ix.today) continue;
+    const planned = e.plan_amount ?? e.amount;
+    const got = e.bill_amount ?? (e.link_id ? byId.get(e.link_id)?.amount : undefined);
+    if (got != null && Math.abs(got - planned) > PLAN_TOL_FT) off.add(e.leaf_id);
+  }
+  const out = new Map<string, number>();
+  for (const leaf of off) {
+    const acts = ix.entries.filter((e) => e.kind === 'actual' && e.leaf_id === leaf && e.date <= ix.today);
+    const first = acts.reduce((m, e) => (e.date < m ? e.date : m), ix.today);
+    const fresh = first >= from90;
+    const from = fresh ? from30 : from90;
+    const sum = acts.filter((e) => e.date > from).reduce((a, e) => a + e.amount, 0);
+    if (!sum) continue;
+    out.set(leaf, Math.round(fresh ? sum : sum / 3));
+  }
+  return out;
 }
 
 // ---------- szűrők, oszlopok ----------
@@ -391,9 +436,20 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
         });
         // csak az aktív szűrőkhöz tartozó (nem üres) sorok – az Ajánlatok mappa sorai kikapcsolt ajánlat-szűrőnél is maradnak (üres számokkal)
         const keepOffer =
-          !f.includeOffers && offerGroup?.id === g.id && columns.some((c) => Math.round(leafValue(ix, l.id, c, { ...f, includeOffers: true }, est, mode).v) !== 0);
+          !f.includeOffers &&
+          offerGroup?.id === g.id &&
+          columns.some((c) => Math.round(leafValue(ix, l.id, c, { ...f, includeOffers: true }, est, mode).v) !== 0);
         if (!keepOffer && !cells.some((c) => Math.round(c.v) !== 0)) continue;
-        const lr: MatrixRow = { type: 'leaf', id: l.id, label: l.label, section, groupId: g.id, cells, total: 0, ...(mode === 'only' ? { offerOnly: true } : {}) };
+        const lr: MatrixRow = {
+          type: 'leaf',
+          id: l.id,
+          label: l.label,
+          section,
+          groupId: g.id,
+          cells,
+          total: 0,
+          ...(mode === 'only' ? { offerOnly: true } : {}),
+        };
         lr.total = cells.reduce((s, c) => s + c.v, 0);
         cells.forEach((c, i) => {
           gRow.cells[i].v += c.v;

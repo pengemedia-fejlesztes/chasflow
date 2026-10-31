@@ -252,7 +252,64 @@ export async function payBillingoFromBank(env: Env) {
     await autoApprove(env, approve).catch(() => 0);
   }
   const approved = await approveBillingoPaid(env).catch((e) => (console.error('billingo paid approve', e), 0));
-  return { ...r, approved };
+  const byInvoice = await approveByInvoice(env).catch((e) => (console.error('invoice approve', e), 0));
+  return { ...r, approved, byInvoice };
+}
+
+/**
+ * Banki tétel → tény jóváhagyás nélkül, ha a partner számlája megvan, és a tervhez kötött számla a tételhez azonosítható:
+ *  - a számla sorszáma a közleményben (ilyenkor eltérő összeggel is – az eltérést a riasztás jelzi: kevesebbet / többet utalt),
+ *  - vagy forintra azonos összeg + a partner neve (cégnév, alternatív név) egyezik, a számla kelte után 60 napon belül.
+ * Bevételnél a Billingo-, kiadásnál a NAV-számla számít; a tény a számla tervéhez kötődik.
+ */
+export async function approveByInvoice(env: Env): Promise<number> {
+  const [docR, navR, txR, partnersR, leavesR] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT d.number, d.partner AS name, d.gross, d.invoice_date AS issued, p.id AS plan_id, p.leaf_id FROM billingo_docs d JOIN entries p ON p.id = d.plan_id
+       WHERE d.cancelled = 0 AND p.kind = 'plan' AND p.done = 0 AND d.invoice_date >= date('now', '-200 days')`,
+    ),
+    env.DB.prepare(
+      `SELECT n.invoice_number AS number, n.partner_name AS name, -abs(n.gross) AS gross, n.issue_date AS issued, p.id AS plan_id, p.leaf_id FROM nav_invoices n
+       JOIN entries p ON p.id = n.plan_id WHERE p.kind = 'plan' AND p.done = 0 AND n.issue_date >= date('now', '-200 days')`,
+    ),
+    env.DB.prepare("SELECT id, date, amount, partner, memo FROM bank_tx WHERE status = 'new' AND actual_id IS NULL"),
+    env.DB.prepare('SELECT key, name, aliases FROM partners'),
+    env.DB.prepare('SELECT id, label FROM leaves'),
+  ]);
+  const invs = [...(docR.results as any[]), ...(navR.results as any[])];
+  const txs = txR.results as { id: string; date: string; amount: number; partner: string; memo: string }[];
+  if (!invs.length || !txs.length) return 0;
+  const label = new Map((leavesR.results as any[]).map((l) => [l.id as string, l.label as string]));
+  const reg = new Map((partnersR.results as any[]).map((p) => [p.key as string, [p.name, ...JSON.parse(p.aliases || '[]')] as string[]]));
+  const namesOf = (inv: any): string[] => {
+    const lab = label.get(inv.leaf_id) || '';
+    return [inv.name, lab, ...(reg.get(partnerKey(lab).replace(/[^a-z0-9]/g, '')) || [])].filter(Boolean);
+  };
+  const squash = (x: string) => normalizeText(x).replace(/[^a-z0-9]/g, '');
+  const items: ApproveItem[] = [];
+  const usedPlan = new Set<string>();
+  for (const tx of [...txs].sort((a, b) => a.date.localeCompare(b.date))) {
+    const text = squash(`${tx.partner} ${tx.memo}`);
+    const same = invs.filter((i) => !usedPlan.has(i.plan_id) && Math.sign(i.gross) === Math.sign(tx.amount));
+    const byNumber = same.find((i) => {
+      const n = squash(String(i.number || ''));
+      return n.length >= 5 && text.includes(n);
+    });
+    const byAmount =
+      byNumber ||
+      same.find(
+        (i) =>
+          Math.abs(i.gross - tx.amount) < 1 &&
+          (!i.issued || (tx.date >= i.issued && Date.parse(tx.date) - Date.parse(i.issued) <= 60 * 86400_000)) &&
+          !!tx.partner &&
+          namesOf(i).some((n) => namesMatch(n, tx.partner)),
+      );
+    if (!byAmount) continue;
+    usedPlan.add(byAmount.plan_id);
+    items.push({ id: tx.id, leaf_id: byAmount.leaf_id, plan_id: byAmount.plan_id });
+  }
+  if (items.length) await approve(env, null, items);
+  return items.length;
 }
 
 /**

@@ -126,34 +126,50 @@ export function aliasRuleStmts(env: Env, leafIds: string[], aliases: string[], n
  * szereplő cégnév (pl. „UrgentCare … Kft.” → Orvosmost) is a partner alternatív neve lesz.
  */
 async function taxFromLinkedInvoices(env: Env): Promise<number> {
-  const [dR, pR] = await env.DB.batch([
+  const [dR, pR, lR] = await env.DB.batch([
     env.DB.prepare(
       `SELECT DISTINCT d.partner_tax AS tax, l.label FROM billingo_docs d JOIN entries e ON e.id = d.plan_id JOIN leaves l ON l.id = e.leaf_id
        WHERE e.plan_amount IS NOT NULL AND d.partner_tax IS NOT NULL AND d.partner_tax <> ''`,
     ),
-    env.DB.prepare('SELECT key, tax_number FROM partners'),
+    env.DB.prepare('SELECT key, name, aliases, tax_number FROM partners'),
+    env.DB.prepare('SELECT label FROM leaves WHERE archived = 0'),
   ]);
+  const live = new Set((lR.results as any[]).map((l) => partnerIdOf(l.label)));
+  const rows = new Map((pR.results as any[]).map((p) => [p.key as string, p]));
   const owner = new Map<string, string>();
   for (const p of pR.results as any[]) if (taxBase(p.tax_number).length === 8) owner.set(taxBase(p.tax_number), p.key);
   const taxed = new Set((pR.results as any[]).filter((p) => taxBase(p.tax_number).length === 8).map((p) => p.key as string));
   // egy partnerhez csak egyféle adószám jöhet így (ha több, kétes → kimarad)
-  const cand = new Map<string, { label: string; taxes: Set<string>; raw: string }>();
+  const cand = new Map<string, { label: string; taxes: Set<string>; raw: string; absorb: string | null }>();
   for (const r of dR.results as any[]) {
     const k = partnerIdOf(r.label);
     const b = taxBase(r.tax);
-    if (k.length < 2 || b.length !== 8 || taxed.has(k) || (owner.has(b) && owner.get(b) !== k)) continue;
-    const c = cand.get(k) || cand.set(k, { label: r.label, taxes: new Set(), raw: r.tax }).get(k)!;
+    if (k.length < 2 || b.length !== 8 || taxed.has(k)) continue;
+    // az adószám egy régi (már csak archivált alkategóriájú) partneré: összevonás – a régi neve, alternatív nevei átkerülnek
+    const old = owner.get(b);
+    if (old && old !== k && live.has(old)) continue;
+    const c = cand.get(k) || cand.set(k, { label: r.label, taxes: new Set(), raw: r.tax, absorb: null }).get(k)!;
     c.taxes.add(b);
+    if (old && old !== k) c.absorb = old;
   }
   const t = now();
   const stmts: D1PreparedStatement[] = [];
   for (const [k, c] of cand) {
     if (c.taxes.size !== 1) continue;
+    const cur = rows.get(k);
+    const aliases: string[] = JSON.parse(cur?.aliases || '[]');
+    if (c.absorb) {
+      const o = rows.get(c.absorb);
+      for (const n of [o?.name, ...JSON.parse(o?.aliases || '[]')])
+        if (n && !aliases.some((a) => compactName(a) === compactName(n)) && compactName(n) !== k) aliases.push(n);
+      stmts.push(env.DB.prepare('DELETE FROM partners WHERE key = ?').bind(c.absorb));
+    }
     stmts.push(
       env.DB.prepare(
-        `INSERT INTO partners (key, name, kind, aliases, tax_number, note, updated_at) VALUES (?, ?, 'vevo', '[]', ?, NULL, ?)
-         ON CONFLICT(key) DO UPDATE SET tax_number = excluded.tax_number, updated_at = excluded.updated_at WHERE partners.tax_number IS NULL OR partners.tax_number = ''`,
-      ).bind(k, c.label, c.raw, t),
+        `INSERT INTO partners (key, name, kind, aliases, tax_number, note, updated_at) VALUES (?, ?, 'vevo', ?, ?, NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET tax_number = excluded.tax_number, aliases = excluded.aliases, updated_at = excluded.updated_at
+         WHERE partners.tax_number IS NULL OR partners.tax_number = ''`,
+      ).bind(k, c.label, JSON.stringify(aliases.slice(0, 30)), c.raw, t),
     );
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));

@@ -24,6 +24,8 @@ export interface Flag {
   entry_id: string;
   /** banki tétel, amiből a tény jött */
   tx?: BankTx;
+  /** az eltérés a számlához képest (nem a tervhez) */
+  vsInvoice?: boolean;
   /** NAV-számla (terv nélküli bejövő számla) */
   nav?: NavInvoice;
 }
@@ -48,7 +50,15 @@ export function flagsFrom(entries: Entry[], today: string): string {
   return afterImport > prevMonth ? afterImport : prevMonth;
 }
 
-export function computeFlags(entries: Entry[], bankTx: BankTx[], sectionOf: (leaf: string) => Section, today: string, ack: string[] = []): Flag[] {
+export function computeFlags(
+  entries: Entry[],
+  bankTx: BankTx[],
+  sectionOf: (leaf: string) => Section,
+  today: string,
+  ack: string[] = [],
+  /** a tervhez kötött (NAV) számla bruttó összege, előjelesen */
+  invoiceOf?: (planId: string) => number | undefined,
+): Flag[] {
   const from = flagsFrom(entries, today);
   const acked = new Set(ack);
   const byId = new Map(entries.map((e) => [e.id, e]));
@@ -67,18 +77,22 @@ export function computeFlags(entries: Entry[], bankTx: BankTx[], sectionOf: (lea
       if (plan && plan.kind === 'plan') {
         // az összevont havi tétel (pl. bankköltség) csak a hónap lezárulta után hasonlítható
         if (merged && ymOf(e.date) >= curYm) continue;
-        const diff = e.amount - plan.amount;
-        if (Math.abs(diff) < DEV_MIN_FT || Math.abs(diff) < Math.abs(plan.amount) * DEV_MIN_REL) continue;
+        // kiszámlázott tételnél a fizetést a számlához mérjük (kevesebbet / többet utalt), forintra; különben a tervhez
+        const bill = plan.bill_amount ?? invoiceOf?.(plan.id);
+        const base = bill ?? plan.amount;
+        const diff = e.amount - base;
+        if (bill != null ? Math.abs(diff) < 1 : Math.abs(diff) < DEV_MIN_FT || Math.abs(diff) < Math.abs(plan.amount) * DEV_MIN_REL) continue;
         out.push({
           id: `dev:${e.id}:${Math.round(e.amount)}`,
           kind: 'deviation',
           section: sectionOf(e.leaf_id),
           date: e.date,
-          name: plan.name || e.name,
+          name: (plan.name || e.name) + (bill != null ? (diff < 0 ? ' – kevesebbet utalt, mint a számla' : ' – többet utalt, mint a számla') : ''),
           leaf_id: e.leaf_id,
           amount: e.amount,
-          plan: plan.amount,
+          plan: base,
           diff,
+          vsInvoice: bill != null,
           entry_id: e.id,
           tx: txByActual.get(e.id),
         });

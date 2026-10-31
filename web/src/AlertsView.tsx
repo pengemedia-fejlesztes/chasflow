@@ -24,7 +24,9 @@ export function useFlags(): Flag[] {
     try {
       ack = JSON.parse(data.settings.flags_ack || '[]');
     } catch {}
-    const bank = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack);
+    // a tervhez kötött NAV-számla összege (kiadás: negatív) – a kifizetés ehhez mérve
+    const navByPlan = new Map((data.navInvoices || []).filter((n) => n.plan_id).map((n) => [n.plan_id as string, -Math.abs(n.gross)]));
+    const bank = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack, (id) => navByPlan.get(id));
     // NAV: bejövő számla, amihez nincs terv (még a kifizetés előtt szól)
     const inv: Flag[] = (data.navInvoices || [])
       .filter((n) => n.status === 'new')
@@ -126,7 +128,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
     ['uninvoiced', 'A terv szerinti számlázási nap (fizetés − fizetési határidő) elmúlt, de nincs hozzá Billingo-számla.'],
     ['underbilled', 'A kiállított számla kevesebb, mint a terv. (Ha több, nincs riasztás.)'],
     ['invoice', 'A NAV-ba beérkezett szállítói számla, amihez nincs terv. Döntsd el: rendszeres (havonta tervbe) vagy előre nem látható költség.'],
-    ['deviation', 'A tény más összeggel érkezett, mint a terv.'],
+    ['deviation', 'A tény más összeggel érkezett, mint a számla (kiszámlázott tételnél forintra), illetve számla nélkül, mint a terv.'],
     ['unplanned', 'Nem volt rá terv. Ha ismétlődik, vedd fel havonta a tervbe; ha egyszeri, az előre nem látható költségek közé kerül.'],
     ['overdue', 'A terv dátuma elmúlt, de nem érkezett hozzá banki tény.'],
   ];
@@ -326,7 +328,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                       <>
                         <span style={{ font: `700 15px ${FONT}`, color: bad ? C.neg : C.blueDark }}>{ft(f.diff || 0)}</span>
                         <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
-                          terv {fmt(Math.abs(f.plan || 0))} → tény {fmt(Math.abs(f.amount))}
+                          {f.vsInvoice ? 'számla' : 'terv'} {fmt(Math.abs(f.plan || 0))} → tény {fmt(Math.abs(f.amount))}
                         </span>
                       </>
                     )}
