@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
+import { useMergeCounts } from './MergeTabs';
 import { AlertsView, FlagBanner, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
 import { BankView } from './BankView';
@@ -43,6 +44,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   }, [modal, canEdit]);
 
   const flags = useFlags();
+  const mc = useMergeCounts();
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
@@ -54,7 +56,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   };
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
-    ['alerts', 'Riasztások', flags.length],
+    ['alerts', 'Összevonás', flags.length + mc.billingo + mc.bank + mc.names],
     ['income', 'Tervezett bevételek, kiadások', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['partners', 'Partnertörzs', 0],
@@ -305,7 +307,9 @@ function DeviationCard() {
         <span>Lezárt, eltérő tételek: {rows.reduce((a, r) => a + r.n, 0)}</span>
       </div>
       {rows.length === 0 ? (
-        <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>Ebben a hónapban minden lezárt tétel pontosan a terv szerint teljesült (vagy még nincs lezárt tétel).</span>
+        <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
+          Ebben a hónapban minden lezárt tétel pontosan a terv szerint teljesült (vagy még nincs lezárt tétel).
+        </span>
       ) : (
         rows.slice(0, 10).map((r) => {
           const sec = ix.sectionOf(r.leaf);
@@ -314,7 +318,17 @@ function DeviationCard() {
               key={r.leaf}
               onClick={() => openPartner(r.leaf)}
               className="hov-light"
-              style={{ display: 'flex', gap: 10, alignItems: 'baseline', border: 0, borderTop: `1px solid ${C.line3}`, background: 'transparent', padding: '7px 0', cursor: 'pointer', textAlign: 'left' }}
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'baseline',
+                border: 0,
+                borderTop: `1px solid ${C.line3}`,
+                background: 'transparent',
+                padding: '7px 0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
               <span style={{ flex: 1, minWidth: 0, font: `600 13.5px ${FONT}`, color: C.navy }}>
                 {ix.leafById[r.leaf]?.label}{' '}
@@ -377,12 +391,36 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${bars.length},minmax(0,1fr))`, gap: 6 }}>
         {bars.map((b, i) => (
-          <div key={i} title={`${b.label}: ${(signed && b.v > 0 ? '+' : '') + fmt(b.v)} Ft`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
-            <div style={{ height: posH + 16, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}>
+          <div
+            key={i}
+            title={`${b.label}: ${(signed && b.v > 0 ? '+' : '') + fmt(b.v)} Ft`}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}
+          >
+            <div
+              style={{ height: posH + 16, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}
+            >
               {b.v >= 0 && (
                 <>
-                  <span style={{ font: `600 10.5px ${FONT}`, color: markMin && i === minIdx ? C.navy : C.muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{val(b)}</span>
-                  <div style={{ width: '100%', maxWidth: 48, height: Math.max(2, Math.round((b.v / span) * H)), background: colorOf(b, i), borderRadius: '6px 6px 2px 2px', transition: 'height .4s' }} />
+                  <span
+                    style={{
+                      font: `600 10.5px ${FONT}`,
+                      color: markMin && i === minIdx ? C.navy : C.muted,
+                      fontVariantNumeric: 'tabular-nums',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {val(b)}
+                  </span>
+                  <div
+                    style={{
+                      width: '100%',
+                      maxWidth: 48,
+                      height: Math.max(2, Math.round((b.v / span) * H)),
+                      background: colorOf(b, i),
+                      borderRadius: '6px 6px 2px 2px',
+                      transition: 'height .4s',
+                    }}
+                  />
                 </>
               )}
             </div>
@@ -391,7 +429,17 @@ function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: s
               <div style={{ height: negH + 16, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                 {b.v < 0 && (
                   <>
-                    <div style={{ width: '100%', maxWidth: 48, height: Math.max(2, Math.round((-b.v / span) * H)), background: colorOf(b, i), opacity: 0.85, borderRadius: '2px 2px 6px 6px', transition: 'height .4s' }} />
+                    <div
+                      style={{
+                        width: '100%',
+                        maxWidth: 48,
+                        height: Math.max(2, Math.round((-b.v / span) * H)),
+                        background: colorOf(b, i),
+                        opacity: 0.85,
+                        borderRadius: '2px 2px 6px 6px',
+                        transition: 'height .4s',
+                      }}
+                    />
                     <span style={{ font: `600 10.5px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{val(b)}</span>
                   </>
                 )}
@@ -617,12 +665,7 @@ function Overview({
 
       {bars.length > 1 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,460px),1fr))', gap: 14 }}>
-          <BarChart
-            title={`Havi profit${filters.includeOffers ? ' – ajánlatokkal' : ''}`}
-            sub="bevétel − kiadás"
-            bars={profitBars}
-            signed
-          />
+          <BarChart title={`Havi profit${filters.includeOffers ? ' – ajánlatokkal' : ''}`} sub="bevétel − kiadás" bars={profitBars} signed />
           <BarChart
             title={`Céges számlák egyenlege${bars.some((b) => b.kind === 'proj') ? ' – tény és előrejelzés' : ''}`}
             sub="hónap végi záró"
@@ -762,13 +805,7 @@ function Overview({
           h={rowH}
         >
           {netAll.map((v, i) => (
-            <Cell
-              key={i}
-              h={rowH}
-              bg={cols[i].kind === 'actual' ? '#E1ECF5' : 'transparent'}
-              fg={!Math.round(v) ? C.muted : v < 0 ? NEG : '#2E7D4F'}
-              fw={700}
-            >
+            <Cell key={i} h={rowH} bg={cols[i].kind === 'actual' ? '#E1ECF5' : 'transparent'} fg={!Math.round(v) ? C.muted : v < 0 ? NEG : '#2E7D4F'} fw={700}>
               {Math.round(v) > 0 ? '+' : ''}
               {fmt(v)}
             </Cell>

@@ -6,7 +6,7 @@ import { autoApprove, loadContains } from './rules';
 import { payDate } from '../shared/workdays';
 import type { Entry, Leaf } from '../shared/types';
 import { requireRole, type User } from './auth';
-import { fillPartnerTax } from './partnertax';
+import { fillPartnerTax, mergePartnerNames } from './partnertax';
 import { autoPayBillingo, billingoPublicUrl, invoiceRefs, syncBillingo } from './billingo';
 import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
@@ -194,6 +194,10 @@ export async function syncAll(env: Env) {
     const more = await fillPartnerTax(env);
     if (more) await rematchNav(env);
     res.taxFilled2 = more;
+    // az azonos adószámú NAV/Billingo cégnevek → a partner alternatív nevei (névösszevonás)
+    const names = await mergePartnerNames(env);
+    if (names) await reapplyRules(env).catch(() => null);
+    res.namesMerged = names;
   } catch (e: any) {
     res.taxError = e.message;
   }

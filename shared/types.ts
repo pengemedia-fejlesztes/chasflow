@@ -105,6 +105,7 @@ export interface BillingoDoc {
   id: number;
   number: string | null;
   partner: string | null;
+  partner_tax?: string | null;
   gross: number;
   currency: string | null;
   invoice_date: string | null;

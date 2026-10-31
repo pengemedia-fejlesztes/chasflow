@@ -16,6 +16,7 @@ import { IncomeView } from './IncomeView';
 import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
+import { useMergeCounts } from './MergeTabs';
 import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
@@ -187,6 +188,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
     .filter((x) => x.groups.length);
 
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
+  const mc = useMergeCounts();
+  const mergeN = flags.length + mc.billingo + mc.bank + mc.names;
   const maxNet = Math.max(...chartMonths.map((ym) => Math.abs(balances.net.get(ym) || 0)), 1);
   const maxBal = Math.max(...chartMonths.map((ym) => Math.abs(balances.bal.get(ym) || 0)), 1);
   const balNeg = chartMonths.some((ym) => (balances.bal.get(ym) || 0) < 0);
@@ -485,6 +488,26 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   Ebben a hónapban nincs tétel.
                 </div>
               )}
+              {/* Összevonás: terv – számla – tény teendők (nincs kiszámlázva, terv nélküli számla, elmaradás, NAV, bank, nevek) */}
+              <button
+                onClick={() => setTab('alerts')}
+                style={{
+                  border: `1px solid ${C.line}`,
+                  background: '#fff',
+                  borderRadius: 14,
+                  padding: '12px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <b style={{ font: `700 14.5px ${FONT}`, color: C.navy }}>🔗 Összevonás{mergeN ? ` (${mergeN})` : ''}</b>
+                  <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>terv – számla – tény: ami még nem állt össze</span>
+                </span>
+                <span style={{ font: `600 18px ${FONT}`, color: C.blueDark }}>›</span>
+              </button>
               {/* a hónap ütemezése külön képernyőn: minden bevétel és kiadás napokra bontva */}
               <button
                 onClick={() => (setSchedSec(null), setTab('sched'))}
@@ -782,7 +805,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         )}
         {tab === 'alerts' && (
           <>
-            <MobileHeader title="Riasztások" sub="Eltérések a havi tervtől" onBack={() => setTab('home')} />
+            <MobileHeader title="Összevonás" sub="terv – számla – tény" onBack={() => setTab('home')} />
             <AlertsView mobile />
           </>
         )}

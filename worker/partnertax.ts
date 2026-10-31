@@ -1,8 +1,10 @@
 // Adószám-alapú partnerazonosítás: a partnertörzs adószáma a NAV- és Billingo-számlákból töltődik ki, és a beérkező
 // számla ez alapján kerül a partnerhez – megelőzve a név/kategória szabályokat (pl. „Tibeko” ne az „IT szolgáltatás”-ba menjen).
 import { namesMatch } from '../shared/billingopay';
+import { normalizeText } from '../shared/categories';
+import { compactName } from '../shared/identity';
 import { partnerIdOf } from '../shared/partners';
-import { Env, now } from './util';
+import { Env, getSetting, now, randomId } from './util';
 
 /** adószám → törzsszám (az első 8 számjegy), így a 12345678-2-13 és a 12345678 is egyezik */
 export const taxBase = (t: string | null | undefined) =>
@@ -99,4 +101,80 @@ export async function fillPartnerTax(env: Env): Promise<number> {
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   return stmts.length;
+}
+
+/** Az alternatív nevekből „tartalmazza” párosítási szabályok a partner összes alkategóriájára (a régi alias-szabályok helyett). */
+export function aliasRuleStmts(env: Env, leafIds: string[], aliases: string[], name: string, t: number): D1PreparedStatement[] {
+  if (!leafIds.length) return [];
+  const out = [env.DB.prepare(`DELETE FROM match_rules WHERE source = 'alias' AND leaf_id IN (${leafIds.map(() => '?').join(',')})`).bind(...leafIds)];
+  for (const a of aliases)
+    for (const id of leafIds)
+      out.push(
+        env.DB.prepare("INSERT INTO match_rules (id, pattern, leaf_id, auto, merge, note, source, updated_at) VALUES (?, ?, ?, 0, 0, ?, 'alias', ?)").bind(
+          randomId('r'),
+          normalizeText(a),
+          id,
+          `${name} – alternatív név`,
+          t,
+        ),
+      );
+  return out;
+}
+
+/**
+ * Névösszevonás adószám alapján: ha a partnertörzsben van adószám, a NAV- és Billingo-számlákon ugyanezzel az adószámmal
+ * szereplő (eltérő) cégnevek a partner alternatív nevei közé kerülnek. Egy nevet csak egyszer vesz fel (a „partner_names_seen”
+ * jegyzi), így ha valaki kézzel törli az adatlapról, nem kerül vissza.
+ */
+export async function mergePartnerNames(env: Env): Promise<number> {
+  const [pR, nR, bR, lR] = await env.DB.batch([
+    env.DB.prepare("SELECT key, name, aliases, tax_number FROM partners WHERE tax_number IS NOT NULL AND tax_number <> ''"),
+    env.DB.prepare("SELECT DISTINCT partner_tax AS tax, partner_name AS name FROM nav_invoices WHERE partner_tax IS NOT NULL AND partner_tax <> ''"),
+    env.DB.prepare("SELECT DISTINCT partner_tax AS tax, partner AS name FROM billingo_docs WHERE partner_tax IS NOT NULL AND partner_tax <> ''"),
+    env.DB.prepare('SELECT id, label FROM leaves WHERE archived = 0'),
+  ]);
+  let seen: string[] = [];
+  try {
+    seen = JSON.parse((await getSetting(env, 'partner_names_seen')) || '[]');
+  } catch {}
+  const seenSet = new Set(seen);
+  const byTax = new Map<string, Set<string>>();
+  for (const r of [...(nR.results as any[]), ...(bR.results as any[])]) {
+    const b = taxBase(r.tax);
+    if (b.length !== 8 || !String(r.name || '').trim()) continue;
+    (byTax.get(b) || byTax.set(b, new Set()).get(b)!).add(String(r.name).replace(/\s+/g, ' ').trim());
+  }
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  let added = 0;
+  for (const p of pR.results as any[]) {
+    const names = byTax.get(taxBase(p.tax_number));
+    if (!names) continue;
+    const aliases: string[] = JSON.parse(p.aliases || '[]');
+    const leafIds = (lR.results as any[]).filter((l) => partnerIdOf(l.label) === p.key).map((l) => l.id as string);
+    const known = new Set([p.name, ...aliases, ...(lR.results as any[]).filter((l) => partnerIdOf(l.label) === p.key).map((l) => l.label)].map(compactName));
+    const fresh: string[] = [];
+    for (const n of names) {
+      const c = compactName(n);
+      const mark = `${p.key}|${c}`;
+      if (c.length < 3 || known.has(c) || seenSet.has(mark)) continue;
+      seenSet.add(mark);
+      known.add(c);
+      if (aliases.length + fresh.length < 30) fresh.push(n);
+    }
+    if (!fresh.length) continue;
+    const all = [...aliases, ...fresh];
+    added += fresh.length;
+    stmts.push(env.DB.prepare('UPDATE partners SET aliases = ?, updated_at = ? WHERE key = ?').bind(JSON.stringify(all), t, p.key));
+    stmts.push(...aliasRuleStmts(env, leafIds, all, p.name, t));
+  }
+  if (seenSet.size !== seen.length)
+    stmts.push(
+      env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(
+        'partner_names_seen',
+        JSON.stringify([...seenSet].slice(-3000)),
+      ),
+    );
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return added;
 }

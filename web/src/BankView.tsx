@@ -23,18 +23,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
   // az új kiadások alapértelmezett kategóriája: „Előre nem látható költség”
   const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
   const ready = inbox.filter((t) => t.leaf_id || (t.amount < 0 && unforeseen));
-  // leggyakoribb kategóriák az elmúlt évből (gyors választáshoz)
-  const [freqIn, freqOut] = useMemo(() => {
-    const since = String(Number(data.today.slice(0, 4)) - 1) + data.today.slice(4);
-    const cnt: Record<string, number> = {};
-    data.entries.forEach((e) => e.kind === 'actual' && e.date >= since && (cnt[e.leaf_id] = (cnt[e.leaf_id] || 0) + 1));
-    const top = (sec: 'in' | 'out') =>
-      Object.keys(cnt)
-        .filter((id) => ix.leafById[id] && !ix.leafById[id].archived && ix.sectionOf(id) === sec)
-        .sort((a, b) => cnt[b] - cnt[a])
-        .slice(0, 6);
-    return [top('in'), top('out')];
-  }, [data.entries, data.today, ix]);
+  const [freqIn, freqOut] = useFrequentLeaves();
 
   return (
     <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1180 }}>
@@ -170,4 +159,20 @@ export function BankView({ mobile }: { mobile?: boolean }) {
       )}
     </div>
   );
+}
+
+/** A leggyakoribb kategóriák az elmúlt évből (gyors választáshoz a banki tételnél): [bevétel, kiadás]. */
+export function useFrequentLeaves(): [string[], string[]] {
+  const { ix, data } = useStore();
+  return useMemo(() => {
+    const since = String(Number(data.today.slice(0, 4)) - 1) + data.today.slice(4);
+    const cnt: Record<string, number> = {};
+    data.entries.forEach((e) => e.kind === 'actual' && e.date >= since && (cnt[e.leaf_id] = (cnt[e.leaf_id] || 0) + 1));
+    const top = (sec: 'in' | 'out') =>
+      Object.keys(cnt)
+        .filter((id) => ix.leafById[id] && !ix.leafById[id].archived && ix.sectionOf(id) === sec)
+        .sort((a, b) => cnt[b] - cnt[a])
+        .slice(0, 6);
+    return [top('in'), top('out')];
+  }, [data.entries, data.today, ix]);
 }

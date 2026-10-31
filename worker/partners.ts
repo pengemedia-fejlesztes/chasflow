@@ -7,7 +7,8 @@ import type { Partner } from '../shared/types';
 import { requireRole, type User } from './auth';
 import { reapplyRules } from './bank';
 import { rematchNav } from './nav';
-import { Env, HttpError, audit, json, now, randomId, readJson } from './util';
+import { aliasRuleStmts } from './partnertax';
+import { Env, HttpError, audit, json, now, readJson } from './util';
 
 const KINDS = new Set(['vevo', 'szallito', 'mindketto']);
 
@@ -89,21 +90,16 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
 
   // alternatív nevek → párosítási szabályok a partner minden alkategóriájára (a régi alias-szabályok helyett)
   const aliasChanged = b.aliases !== undefined;
-  if (aliasChanged && leaves.length) {
-    const ids = leaves.map((l) => l.id);
-    stmts.push(env.DB.prepare(`DELETE FROM match_rules WHERE source = 'alias' AND leaf_id IN (${ids.map(() => '?').join(',')})`).bind(...ids));
-    for (const a of aliases)
-      for (const l of leaves)
-        stmts.push(
-          env.DB.prepare("INSERT INTO match_rules (id, pattern, leaf_id, auto, merge, note, source, updated_at) VALUES (?, ?, ?, 0, 0, ?, 'alias', ?)").bind(
-            randomId('r'),
-            normalizeText(a),
-            l.id,
-            `${name} – alternatív név`,
-            t,
-          ),
-        );
-  }
+  if (aliasChanged && leaves.length)
+    stmts.push(
+      ...aliasRuleStmts(
+        env,
+        leaves.map((l) => l.id),
+        aliases,
+        name,
+        t,
+      ),
+    );
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   await audit(env, u.id, 'partner_updated', { key, newKey, name, kind, aliases: aliases.length });
   // a még jóváhagyásra váró banki tételek és NAV-számlák újrapárosítása az új nevek alapján

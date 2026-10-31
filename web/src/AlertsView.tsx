@@ -1,4 +1,6 @@
-// Riasztások: ahol a tény eltér a havi tervtől (eltérés, nem tervezett tétel, elmaradt terv).
+// Összevonás: a terv, a számla (Billingo / NAV) és a tény (bank) összekötésének teendői fülekre bontva –
+// nincs kiszámlázva, új számla terv nélkül (hova sorolta a rendszer), elmaradás a tervhez képest, kategóriába sorolt
+// NAV-számlák, be nem azonosított banki tételek, és az egy partnerhez tartozó nevek összevonása.
 import { useEffect, useMemo, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../../shared/flags';
@@ -11,6 +13,7 @@ import { targetTracking } from '../../shared/insights';
 import type { Entry, NavInvoice } from '../../shared/types';
 import { api } from './api';
 import { PartnerLink } from './PartnerCard';
+import { MergeBank, MergeBillingo, MergeNames, useMergeCounts } from './MergeTabs';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Modal, Pill, card } from './ui';
 
@@ -66,6 +69,17 @@ export function useFlags(): Flag[] {
   }, [data.entries, data.bankTx, data.navInvoices, data.settings.flags_ack, data.settings.profit_target, data.today, ix]);
 }
 
+type MergeTab = 'bill' | 'new' | 'gap' | 'nav' | 'bank' | 'names';
+/** melyik riasztás melyik fülön */
+const TAB_KINDS: Record<MergeTab, FlagKind[]> = {
+  bill: ['uninvoiced', 'underbilled'],
+  new: ['invoice'],
+  gap: ['target', 'overdue', 'deviation', 'unplanned'],
+  nav: [],
+  bank: [],
+  names: [],
+};
+
 const ft = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n)) + ' Ft';
 const dot = (d: string) => d.replace(/-/g, '.') + '.';
 
@@ -86,6 +100,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
   const st = useStore();
   const { data, ix, canEdit, run, commit } = st;
   const flags = useFlags();
+  const counts = useMergeCounts();
   const [invoice, setInvoice] = useState<string | null>(null);
   // „Nem kell terv” jelölt (kézzel kezelt) bejövő számlák – visszanézhetők, visszanyithatók
   const [showIgnored, setShowIgnored] = useState(false);
@@ -116,25 +131,99 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
     ['overdue', 'A terv dátuma elmúlt, de nem érkezett hozzá banki tény.'],
   ];
 
+  const navCount = plannedNav.length + ignoredNav.length;
+  const tabs: [MergeTab, string, number][] = [
+    ['bill', 'Nincs kiszámlázva', flags.filter((f) => TAB_KINDS.bill.includes(f.kind)).length],
+    ['new', 'Új számla, nincs terv', flags.filter((f) => TAB_KINDS.new.includes(f.kind)).length + counts.billingo],
+    ['gap', 'Elmaradás a tervtől', flags.filter((f) => TAB_KINDS.gap.includes(f.kind)).length],
+    ['nav', 'NAV-számlák', 0],
+    ['bank', 'Bankszinkron', counts.bank],
+    ['names', 'Partnernevek', counts.names],
+  ];
+  const [tab, setTabS] = useState<MergeTab>(() => {
+    try {
+      const v = localStorage.getItem('cf_merge_tab') as MergeTab | null;
+      if (v && v in TAB_KINDS) return v;
+    } catch {}
+    return 'bill';
+  });
+  const setTab = (t: MergeTab) => {
+    setTabS(t);
+    try {
+      localStorage.setItem('cf_merge_tab', t);
+    } catch {}
+  };
+  const tabFlags = flags.filter((f) => TAB_KINDS[tab].includes(f.kind));
+
   const pad = mobile ? '14px 16px 24px' : '28px 32px 120px';
   return (
     <div style={{ padding: pad, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 980 }}>
       {invoice && <NavInvoiceModal number={invoice} onClose={() => setInvoice(null)} />}
       {!mobile && (
         <div>
-          <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.neg, marginBottom: 8 }}>Riasztások</div>
-          <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Eltérések a tervtől</h1>
+          <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.neg, marginBottom: 8 }}>Összevonás</div>
+          <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Terv – számla – tény</h1>
+          <p style={{ margin: '10px 0 0', font: `400 14px/1.5 ${FONT}`, color: C.muted, maxWidth: '70ch' }}>
+            A terv a tiéd. A kiállított (Billingo) és a beérkezett (NAV) számla a terv alá kerül, ez a friss becslés; a bank tétele a tény. Itt látod, mi nem
+            állt még össze.
+          </p>
         </div>
       )}
-      <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
-        Figyelt időszak: {dot(from)} – ma. Eltérésnek számít, ha a tény legalább 1 000 Ft-tal (és 1%-kal) más, mint a terv. A „Rendben” mindkettőtöknél
-        eltünteti a riasztást.
-      </span>
-      {!flags.length && (
-        <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>✓ Nincs eltérés – minden tény a terv szerint alakult.</div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          flexWrap: mobile ? 'nowrap' : 'wrap',
+          overflowX: mobile ? 'auto' : undefined,
+          margin: mobile ? '0 -16px' : undefined,
+          padding: mobile ? '0 16px 2px' : undefined,
+        }}
+      >
+        {tabs.map(([k, label, n]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            style={{
+              flex: 'none',
+              height: 36,
+              borderRadius: 999,
+              padding: '0 14px',
+              border: tab === k ? 0 : `1.5px solid ${C.line2}`,
+              background: tab === k ? C.navy : '#fff',
+              color: tab === k ? '#fff' : C.ink,
+              font: `600 13px ${FONT}`,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {label}
+            {k === 'nav' ? (
+              <span style={{ opacity: 0.7 }}> {navCount}</span>
+            ) : n > 0 ? (
+              <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 999, background: C.neg, color: '#fff', font: `700 11px ${FONT}` }}>{n}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+      {tab === 'bank' && <MergeBank mobile={mobile} />}
+      {tab === 'names' && <MergeNames />}
+      {tab === 'new' && <MergeBillingo />}
+      {(tab === 'gap' || tab === 'bill' || tab === 'new') && (
+        <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
+          Figyelt időszak: {dot(from)} – ma. Eltérésnek számít, ha a tény legalább 1 000 Ft-tal (és 1%-kal) más, mint a terv. A „Rendben” mindkettőtöknél
+          eltünteti a riasztást.
+        </span>
+      )}
+      {tab === 'new' && !tabFlags.length && !counts.billingo && (
+        <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>✓ Minden új számlához van terv.</div>
+      )}
+      {(tab === 'gap' || tab === 'bill') && !tabFlags.length && (
+        <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>
+          {tab === 'bill' ? '✓ Minden esedékes terv ki van számlázva.' : '✓ Nincs elmaradás – minden tény a terv szerint alakult.'}
+        </div>
       )}
       {groups.map(([kind, help]) => {
-        const fs = flags.filter((f) => f.kind === kind);
+        const fs = tabFlags.filter((f) => f.kind === kind);
         if (!fs.length) return null;
         return (
           <section key={kind} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -292,7 +381,10 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
           </section>
         );
       })}
-      {plannedNav.length > 0 && (
+      {tab === 'nav' && !navCount && (
+        <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.muted }}>Még nincs besorolt NAV-számla.</div>
+      )}
+      {tab === 'nav' && plannedNav.length > 0 && (
         <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button
             onClick={() => setShowPlanned(!showPlanned)}
@@ -300,11 +392,10 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
           >
             {showPlanned ? '▾' : '▸'} Kategóriába sorolt NAV-számlák <span style={{ color: C.muted }}>({plannedNav.length})</span>
           </button>
-          {showPlanned &&
-            plannedNav.map((n) => <PlannedNavRow key={n.id} n={n} plan={n.plan_id ? byId.get(n.plan_id) : undefined} onInvoice={setInvoice} />)}
+          {showPlanned && plannedNav.map((n) => <PlannedNavRow key={n.id} n={n} plan={n.plan_id ? byId.get(n.plan_id) : undefined} onInvoice={setInvoice} />)}
         </section>
       )}
-      {ignoredNav.length > 0 && (
+      {tab === 'nav' && ignoredNav.length > 0 && (
         <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button
             onClick={() => setShowIgnored(!showIgnored)}

@@ -469,7 +469,7 @@ export function StatsHub({
                     </div>
                   ))}
                 </div>
-                <Note>Ha az előző hónap vagy a folyó hónap várható eredménye a cél alatt van, a Riasztások között is megjelenik.</Note>
+                <Note>Ha az előző hónap vagy a folyó hónap várható eredménye a cél alatt van, az Összevonás oldalon is megjelenik.</Note>
               </>
             ) : (
               <Note>Add meg a havi eredmény-célt (pl. 500 000 Ft). Utána a program havonta összeveti, és riaszt, ha elmarad tőle.</Note>

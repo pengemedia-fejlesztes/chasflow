@@ -59,7 +59,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
       "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
     ),
     env.DB.prepare(
-      "SELECT id, number, partner, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
+      "SELECT id, number, partner, partner_tax, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
     ),
     env.DB.prepare('SELECT key, value FROM settings'),
     env.DB.prepare(
