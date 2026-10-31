@@ -7,7 +7,7 @@ import { api } from './api';
 import { repStep, shiftDate } from './logic';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card, inputStyle, shortDate } from './ui';
+import { C, FONT, FONT_H, Pill, card, inputStyle, shortDate, R } from './ui';
 
 const chip = (active: boolean, accent = C.blue): React.CSSProperties => ({
   border: `1px solid ${active ? accent : C.line2}`,
@@ -167,11 +167,16 @@ export function TxCard({
       <div style={{ borderTop: `1px solid ${C.line}`, borderLeft: `3px solid ${open ? C.blue : 'transparent'}`, background: '#fff' }}>
         <div
           onClick={onToggle}
+          role="button"
+          tabIndex={0}
+          aria-expanded={!!open}
+          aria-label={`${name || t.partner || 'banki tétel'}, ${fmt(Math.abs(t.amount))} Ft – részletek`}
+          onKeyDown={(ev) => ev.target === ev.currentTarget && (ev.key === ' ' || ev.key === 'Enter') && (ev.preventDefault(), onToggle?.())}
           style={{ display: 'grid', gridTemplateColumns: BANK_COLS, gap: 12, alignItems: 'center', padding: '14px 18px', cursor: 'pointer' }}
         >
           <b style={{ font: `600 14.5px ${FONT}`, color: C.navy }}>{t.date.slice(5).replace('-', '.')}.</b>
           <span>
-            <span style={{ padding: '3px 9px', borderRadius: 6, background: C.bg, font: `500 12px ${FONT}`, color: C.muted }}>{acc?.bank_name || '—'}</span>
+            <span style={{ padding: '3px 9px', borderRadius: R.md, background: C.bg, font: `500 12px ${FONT}`, color: C.muted }}>{acc?.bank_name || '—'}</span>
           </span>
           <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -212,7 +217,7 @@ export function TxCard({
           <b
             style={{
               font: `700 17px ${FONT_H}`,
-              color: t.amount > 0 ? C.blueDark : C.navy,
+              color: t.amount > 0 ? C.inc : C.navy,
               fontVariantNumeric: 'tabular-nums',
               textAlign: 'right',
               whiteSpace: 'nowrap',
@@ -278,7 +283,7 @@ export function TxCard({
                 )}
               </div>
               {newGroupFor && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', background: C.bg2, borderRadius: R.lg, padding: '8px 10px' }}>
                   <span style={{ font: `600 12px ${FONT}`, color: C.muted }}>Melyik csoport?</span>
                   {groupsSec.map((g) => (
                     <button key={g.id} type="button" onClick={() => createLeaf(g.id)} style={chip(false)}>
@@ -292,7 +297,7 @@ export function TxCard({
                   display: 'grid',
                   gridTemplateColumns: 'minmax(180px,.8fr) minmax(0,1.6fr)',
                   border: `1px solid ${C.line}`,
-                  borderRadius: 12,
+                  borderRadius: R.lg,
                   overflow: 'hidden',
                 }}
               >
@@ -320,7 +325,7 @@ export function TxCard({
                           justifyContent: 'space-between',
                           gap: 8,
                           border: 0,
-                          borderRadius: 8,
+                          borderRadius: R.md,
                           padding: '7px 10px',
                           background: on ? C.bg : 'transparent',
                           font: `${on ? 700 : 500} 13.5px ${FONT}`,
@@ -359,7 +364,7 @@ export function TxCard({
                   style={{ border: 0, outline: 'none', font: `500 13px ${FONT}`, color: C.ink, width: 150, background: 'transparent' }}
                 />
               </div>
-              <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden' }}>
                 {[null, ...planChips].map((e, i) => {
                   const on = e ? plan === e.id : !plan;
                   const d = e ? Math.abs(t.amount) - Math.abs(e.amount) : 0;
@@ -472,7 +477,7 @@ export function TxCard({
                     </button>
                   ))}
               </div>
-              <div style={{ marginTop: 6, background: C.bg3, borderRadius: 10, padding: '12px 14px', font: `500 13.5px/1.5 ${FONT}`, color: C.ink }}>
+              <div style={{ marginTop: 6, background: C.bg3, borderRadius: R.lg, padding: '12px 14px', font: `500 13.5px/1.5 ${FONT}`, color: C.ink }}>
                 Tény: <b style={{ color: C.navy }}>{t.date.replace(/-/g, '.')}.</b> (banki dátum)
                 {L ? (
                   <>
@@ -487,7 +492,7 @@ export function TxCard({
                   ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}`
                   : ''}
                 {planE && diff !== 0 && (
-                  <span style={{ display: 'block', color: '#8A6D1C' }}>
+                  <span style={{ display: 'block', color: C.offer }}>
                     Eltérés a tervtől: {diff > 0 ? '+' : '−'}
                     {fmt(Math.abs(diff))} Ft
                   </span>
@@ -515,7 +520,7 @@ export function TxCard({
             {t.memo ? ' · ' + t.memo : ''}
           </span>
         </div>
-        <span style={{ font: `700 17px ${FONT_H}`, color: t.amount > 0 ? C.blueDark : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        <span style={{ font: `700 17px ${FONT_H}`, color: t.amount > 0 ? C.inc : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
           {t.amount > 0 ? '+' : '−'}
           {fmt(Math.abs(t.amount))}
         </span>
@@ -565,7 +570,7 @@ export function TxCard({
             </div>
           </div>
           {newGroupFor && (
-            <div style={{ ...row, background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>
+            <div style={{ ...row, background: C.bg2, borderRadius: R.lg, padding: '8px 10px' }}>
               <span style={{ ...label, paddingTop: mobile ? 0 : 6 }}>Melyik csoport?</span>
               <div style={chips}>
                 {ix.groups
@@ -582,7 +587,7 @@ export function TxCard({
           <div style={row}>
             <span style={label}>Mappa</span>
             <div
-              style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 12, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}
+              style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: R.lg, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}
             >
               {ix.groups
                 .filter((g) => g.section === section)
@@ -599,7 +604,7 @@ export function TxCard({
                           width: '100%',
                           textAlign: 'left',
                           border: 0,
-                          borderRadius: 8,
+                          borderRadius: R.md,
                           padding: '5px 8px',
                           background: on ? C.bg3 : 'transparent',
                           font: `${on ? 700 : 500} 13px ${FONT}`,
@@ -723,7 +728,7 @@ export function TxCard({
                 ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}`
                 : ''}
               {planE && diff !== 0 && (
-                <span style={{ display: 'block', color: '#8A6D1C' }}>
+                <span style={{ display: 'block', color: C.offer }}>
                   Eltérés a tervtől: {diff > 0 ? '+' : '−'}
                   {fmt(Math.abs(diff))} Ft
                 </span>

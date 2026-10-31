@@ -22,7 +22,7 @@ import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted } from './ui';
+import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted, R } from './ui';
 
 type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
 type Sheet =
@@ -401,7 +401,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                         scrollSnapAlign: 'start',
                         height: '100%',
                         border: 0,
-                        borderRadius: 8,
+                        borderRadius: R.md,
                         background: ym === m ? 'rgba(255,255,255,.08)' : 'transparent',
                         padding: '2px 0',
                         display: 'flex',
@@ -478,7 +478,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   style={{
                     background: '#fff',
                     border: `1px dashed ${C.line2}`,
-                    borderRadius: 14,
+                    borderRadius: R.lg,
                     padding: '28px 16px',
                     textAlign: 'center',
                     font: `500 14px ${FONT}`,
@@ -494,7 +494,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 style={{
                   border: `1px solid ${C.line}`,
                   background: '#fff',
-                  borderRadius: 14,
+                  borderRadius: R.lg,
                   padding: '12px 14px',
                   display: 'flex',
                   alignItems: 'center',
@@ -534,7 +534,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                     </span>
                   </button>
 
-                  <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden' }}>
                     {groups.map(({ g, plan, done, n, open }, gi) => (
                       <button
                         key={g.id}
@@ -564,7 +564,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                         </span>
                         {!isPast && (
                           <span style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ flex: 1, height: 5, borderRadius: 999, background: '#EEF2F7', overflow: 'hidden' }}>
+                            <span style={{ flex: 1, height: 5, borderRadius: 999, background: C.bg2, overflow: 'hidden' }}>
                               <i
                                 style={{
                                   display: 'block',
@@ -676,7 +676,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   style={{
                     background: '#fff',
                     border: `1px dashed ${C.line2}`,
-                    borderRadius: 14,
+                    borderRadius: R.lg,
                     padding: '28px 16px',
                     textAlign: 'center',
                     font: `500 14px ${FONT}`,
@@ -708,7 +708,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   key={'del' + d.rid}
                   style={{
                     border: `1.5px dashed ${C.line2}`,
-                    borderRadius: 14,
+                    borderRadius: R.lg,
                     padding: '12px 14px',
                     display: 'flex',
                     alignItems: 'center',
@@ -827,7 +827,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
             zIndex: 8,
             background: C.navy,
             color: '#fff',
-            borderRadius: 20,
+            borderRadius: R.lg,
             padding: 12,
             display: 'flex',
             flexDirection: 'column',
@@ -926,7 +926,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
 const mBtn = (bg: string, fg: string): React.CSSProperties => ({
   height: 44,
   border: 0,
-  borderRadius: 12,
+  borderRadius: R.lg,
   background: bg,
   color: fg,
   font: `600 14px ${FONT}`,
@@ -1043,7 +1043,7 @@ function SheetView({
           display: 'flex',
           alignItems: 'center',
           border: `1.5px solid ${C.line2}`,
-          borderRadius: 12,
+          borderRadius: R.lg,
           padding: '0 12px',
           height: 46,
         }}
@@ -1106,7 +1106,7 @@ function SheetView({
       flex: 1,
       height: 38,
       border: 0,
-      borderRadius: 9,
+      borderRadius: R.md,
       font: `600 13.5px ${FONT}`,
       background: on ? C.navy : 'transparent',
       color: on ? '#fff' : C.muted,
@@ -1143,7 +1143,7 @@ function SheetView({
         {f.type === 'in' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={lbl}>Konstrukció</span>
-            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
               {(
                 [
                   ['simple', 'Egy tétel'],
@@ -1164,8 +1164,8 @@ function SheetView({
                 borderRadius: 999,
                 padding: '0 14px',
                 border: `1.5px solid ${offer ? '#C9A227' : C.line2}`,
-                background: offer ? '#FFF6DE' : '#fff',
-                color: offer ? '#8A6D1C' : C.muted,
+                background: offer ? C.offerBg : '#fff',
+                color: offer ? C.offer : C.muted,
                 font: `600 13px ${FONT}`,
               }}
             >
@@ -1209,7 +1209,7 @@ function SheetView({
           value={f.name}
           onChange={(e) => set({ name: e.target.value })}
           placeholder="Megnevezés (nem kötelező)"
-          style={{ height: 46, border: `1px solid ${C.line2}`, borderRadius: 12, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
+          style={{ height: 46, border: `1px solid ${C.line2}`, borderRadius: R.lg, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={lbl}>{f.type === 'in' ? 'Ügyfél / kategória' : 'Kategória'}</span>
@@ -1228,7 +1228,7 @@ function SheetView({
               <DateField value={f.mStart || f.date} min={ix.cur + '-01'} onChange={(v) => set({ mStart: v })} style={{ flex: '0 0 170px' }} />
             </div>
             <span style={lbl}>Hány hónapig tart?</span>
-            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+            <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
               {[3, 6, 12, 24].map((c) => (
                 <button key={c} onClick={() => set({ months: c })} style={seg((f.months || 12) === c)}>
                   {c} hó
@@ -1260,7 +1260,7 @@ function SheetView({
           <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <span style={lbl}>Ütemezés</span>
-              <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+              <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
                 {(
                   [
                     ['once', 'Egyszeri'],
@@ -1274,7 +1274,7 @@ function SheetView({
                 ))}
               </div>
               {f.rep !== 'once' && (
-                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
                   {[3, 6, 12, 24].map((c) => (
                     <button key={c} onClick={() => set({ count: c })} style={seg(f.count === c)}>
                       {c} hó
@@ -1374,7 +1374,7 @@ function SheetView({
               flex: 'none',
               height: 48,
               border: `1.5px solid ${C.line2}`,
-              borderRadius: 12,
+              borderRadius: R.lg,
               padding: '0 14px',
               font: `700 17px ${FONT_H}`,
               color: C.navy,
@@ -1388,7 +1388,7 @@ function SheetView({
               alignItems: 'center',
               border: `1.5px solid ${C.blue}`,
               background: C.bg2,
-              borderRadius: 14,
+              borderRadius: R.lg,
               padding: '0 16px',
             }}
           >
@@ -1426,7 +1426,7 @@ function SheetView({
                   style={{
                     height: 52,
                     border: sheet.date === d ? `1.5px solid ${C.blue}` : 0,
-                    borderRadius: 12,
+                    borderRadius: R.lg,
                     background: sheet.date === d ? '#fff' : C.bg2,
                     color: C.blueDark,
                     display: 'flex',
@@ -1449,7 +1449,7 @@ function SheetView({
               style={{
                 minHeight: 50,
                 border: `1.5px solid ${sheet.pick ? C.blue : C.line2}`,
-                borderRadius: 12,
+                borderRadius: R.lg,
                 background: '#fff',
                 padding: '8px 14px',
                 display: 'flex',
@@ -1468,7 +1468,7 @@ function SheetView({
             </button>
             {sheet.pick && (
               <>
-                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 12, padding: 3, gap: 2 }}>
+                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
                   {(
                     [
                       ['in', 'Bevétel'],
@@ -1482,7 +1482,7 @@ function SheetView({
                         flex: 1,
                         height: 38,
                         border: 0,
-                        borderRadius: 10,
+                        borderRadius: R.lg,
                         background: sheet.section === v ? C.navy : 'transparent',
                         color: sheet.section === v ? '#fff' : C.navy,
                         font: `600 14px ${FONT}`,
@@ -1604,14 +1604,14 @@ function SheetView({
             value={sheet.q}
             onChange={(ev) => setSheet({ ...sheet, q: ev.target.value })}
             placeholder="🔍 Keresés: partner, közlemény, összeg…"
-            style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: 12, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
+            style={{ height: 46, border: `1.5px solid ${C.line2}`, borderRadius: R.lg, padding: '0 14px', font: `500 16px ${FONT}`, color: C.ink }}
           />
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
               border: `1px solid ${C.line}`,
-              borderRadius: 14,
+              borderRadius: R.lg,
               overflow: 'hidden',
               maxHeight: '52vh',
               overflowY: 'auto',
@@ -1648,7 +1648,7 @@ function SheetView({
                       {t.memo}
                     </span>
                   </span>
-                  <b style={{ font: `700 14px ${FONT}`, color: same ? '#1A7340' : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  <b style={{ font: `700 14px ${FONT}`, color: same ? C.inc : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                     {fmt(Math.abs(t.amount))}
                   </b>
                 </button>
@@ -1707,7 +1707,7 @@ function SheetView({
           onClick={focus && editPlan ? () => editPlan(focus) : undefined}
           style={{
             background: C.bg,
-            borderRadius: 12,
+            borderRadius: R.lg,
             padding: '10px 12px',
             display: 'flex',
             flexDirection: 'column',
@@ -1771,7 +1771,7 @@ function SheetView({
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–', undefined, 'amount')}
-            {cell('Tény', actual ? `${fmt(actual.amount * sign)} Ft` : '–', dev ? C.neg : C.blueDark)}
+            {cell('Tény', actual ? `${fmt(actual.amount * sign)} Ft` : '–', dev ? C.neg : C.inc)}
             {cell('Tervezett dátum', plan ? dd(plan.date) : '–', undefined, 'date')}
             {cell('Teljesült', actual ? dd(actual.date) : plan?.done ? 'késznek jelölve' : 'még nyitott', !actual && plan && !plan.done ? C.muted : undefined)}
             {cell('Különbség', plan && actual ? `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmt(Math.abs(diff))} Ft` : '–', dev ? C.neg : undefined)}
@@ -1797,7 +1797,7 @@ function SheetView({
             </span>
           )}
           {(tx || actual?.note) && (
-            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: R.lg, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span style={lbl}>Banki tétel</span>
               <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{tx?.partner || actual?.name}</span>
               <span style={{ font: `400 13px ${FONT}`, color: C.muted, wordBreak: 'break-word' }}>{tx?.memo || actual?.note}</span>

@@ -12,7 +12,7 @@ import { usePlanOfActual } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { markDone, shiftDate } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Seg, card, SyncPill } from './ui';
+import { C, FONT, FONT_H, Seg, card, SyncPill, R } from './ui';
 
 const dm = (d: string) => `${d.slice(5, 7)}.${d.slice(8, 10)}.`;
 
@@ -109,7 +109,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           alignItems: 'flex-start',
           gap: 2,
           padding: '9px 14px',
-          borderRadius: 12,
+          borderRadius: R.lg,
           cursor: 'pointer',
           textAlign: 'left',
           background: dark ? C.navy : tone === 'red' ? C.negBg : '#fff',
@@ -159,6 +159,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Partner, tétel…"
+            aria-label="Keresés partnerre vagy tételre"
             style={{ border: `1px solid ${C.line2}`, borderRadius: 999, padding: '9px 16px', font: `500 13px ${FONT}`, width: 200, outline: 'none' }}
           />
           {canEdit && <SyncPill label="↻ Szinkron" onRun={sync} />}
@@ -287,7 +288,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                               {days} napja lejárt
                             </Tag>
                           ) : e.tentative ? (
-                            <Tag color={C.muted} border={C.line2}>
+                            <Tag color={C.offer} bg={C.offerBg}>
                               ajánlat
                             </Tag>
                           ) : inv ? (
@@ -295,14 +296,14 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                               számla kint
                             </Tag>
                           ) : side === 'all' ? (
-                            <Tag color={out ? C.neg : C.blueDark}>{out ? 'kiadás' : 'bevétel'}</Tag>
+                            <Tag color={out ? C.neg : C.inc}>{out ? 'kiadás' : 'bevétel'}</Tag>
                           ) : null}
                         </span>
                         <b
                           style={{
                             textAlign: 'right',
                             font: `700 14px ${FONT}`,
-                            color: e.tentative ? C.faint : out ? C.neg : C.navy,
+                            color: e.tentative ? C.offer : out ? C.ink : C.inc,
                             fontVariantNumeric: 'tabular-nums',
                             whiteSpace: 'nowrap',
                           }}
@@ -379,7 +380,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           </div>
           <span style={{ font: `400 13px ${FONT}`, color: C.muted, margin: '6px 0 8px' }}>
             Összesen{' '}
-            <b style={{ color: recTotal < 0 ? C.neg : C.blueDark, marginLeft: 4 }}>
+            <b style={{ color: recTotal < 0 ? C.neg : C.inc, marginLeft: 4 }}>
               {recTotal > 0 ? '+' : recTotal < 0 ? '−' : ''}
               {fmt(Math.abs(recTotal))}
             </b>{' '}
@@ -423,7 +424,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                           : 'pontosan a terv'}
                   </span>
                 </span>
-                <b style={{ font: `700 13.5px ${FONT}`, color: e.amount < 0 ? C.neg : C.blueDark, fontVariantNumeric: 'tabular-nums' }}>
+                <b style={{ font: `700 13.5px ${FONT}`, color: e.amount < 0 ? C.neg : C.inc, fontVariantNumeric: 'tabular-nums' }}>
                   {e.amount < 0 ? '−' : '+'}
                   {fmt(Math.abs(e.amount))}
                 </b>

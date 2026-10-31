@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { MSL } from '../../shared/model';
 import { addDays, isWorkday, lastWorkday, mondayAfter } from '../../shared/workdays';
 import { useBack } from './back';
-import { C, FONT, FONT_H } from './ui';
+import { C, FONT, FONT_H, R } from './ui';
 
 const WD = ['H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
 const WDL = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
@@ -145,7 +145,7 @@ export function CalendarSheet({ value, min, onPick, onClose }: { value: string; 
               style={{
                 width: 40,
                 height: 40,
-                borderRadius: 12,
+                borderRadius: R.lg,
                 border: `1.5px solid ${C.line2}`,
                 background: '#fff',
                 color: C.navy,
@@ -183,7 +183,7 @@ export function CalendarSheet({ value, min, onPick, onClose }: { value: string; 
                 }}
                 style={{
                   height: 42,
-                  borderRadius: 12,
+                  borderRadius: R.lg,
                   border: isToday && !sel ? `1.5px solid ${C.blue}` : '1.5px solid transparent',
                   background: sel ? C.navy : 'transparent',
                   color: sel ? '#fff' : dis ? C.line2 : off ? C.faint : C.navy,

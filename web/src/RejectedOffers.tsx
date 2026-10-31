@@ -78,7 +78,7 @@ export function RejectedOffers({ leafIds, showLeaf }: { leafIds: string[]; showL
               {showLeaf && ix.leafById[r.leaf_id] ? ` · ${ix.leafById[r.leaf_id].label}` : ''}
             </s>
             <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
-              <b style={{ color: '#B3261E' }}>✕ elutasítva {day(r.rejected_at)}</b>
+              <b style={{ color: C.neg }}>✕ elutasítva {day(r.rejected_at)}</b>
               {r.days !== null ? ` · ${r.days} nap után zártad le` : ''} · {r.n} alkalom ({dot(r.from)}
               {r.to !== r.from ? ` – ${dot(r.to)}` : ''})
             </span>

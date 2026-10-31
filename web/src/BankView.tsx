@@ -5,7 +5,7 @@ import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
 import { BANK_COLS, TxCard } from './TxCard';
-import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill } from './ui';
+import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill, R } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
   const { ix, data, run, canEdit } = useStore();
@@ -34,6 +34,9 @@ export function BankView({ mobile }: { mobile?: boolean }) {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.metaKey || e.ctrlKey) return;
+      // gombon / soron álló fókusznál az Enter azt az elemet működteti, nem hagy jóvá
+      const onControl = tag === 'BUTTON' || (e.target as HTMLElement)?.getAttribute?.('role') === 'button';
+      if (onControl && (e.key === 'Enter' || e.key === 'k' || e.key === 'K')) return;
       const i = inbox.findIndex((t) => t.id === curOpen);
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         const n = inbox[i + (e.key === 'ArrowDown' ? 1 : -1)];
@@ -87,7 +90,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
       <div
         style={{
           background: C.navy2,
-          borderRadius: 14,
+          borderRadius: R.lg,
           padding: '16px 20px',
           display: 'flex',
           gap: mobile ? 14 : 28,
@@ -122,7 +125,7 @@ export function BankView({ mobile }: { mobile?: boolean }) {
               style={{
                 width: 40,
                 height: 40,
-                borderRadius: 11,
+                borderRadius: R.lg,
                 background: C.navy3,
                 display: 'grid',
                 placeItems: 'center',

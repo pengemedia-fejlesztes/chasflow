@@ -4,7 +4,7 @@ import { MS, type Filters } from '../../shared/model';
 import { useBack } from './back';
 import { presets } from './Filters';
 import { useStore } from './store';
-import { C, FONT, FONT_H } from './ui';
+import { C, FONT, FONT_H, R } from './ui';
 
 export function PeriodPicker({ label }: { label: string }) {
   const [open, setOpen] = useState(false);
@@ -66,7 +66,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
           border: `1.5px solid ${on ? C.navy : C.line2}`,
           background: on ? C.navy : '#fff',
           color: on ? '#fff' : C.navy,
-          borderRadius: 14,
+          borderRadius: R.lg,
           padding: '10px 12px',
           display: 'flex',
           flexDirection: 'column',
@@ -144,7 +144,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
             border: `1.5px solid ${custom ? C.blue : C.line2}`,
             background: custom ? C.bg2 : '#fff',
             color: C.blueDark,
-            borderRadius: 14,
+            borderRadius: R.lg,
             padding: '12px 14px',
             font: `700 14px ${FONT}`,
             textAlign: 'left',
@@ -164,7 +164,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
                   style={{
                     border: `1.5px solid ${step === k ? C.blue : C.line2}`,
                     background: '#fff',
-                    borderRadius: 12,
+                    borderRadius: R.lg,
                     padding: '8px 12px',
                     textAlign: 'left',
                     cursor: 'pointer',
@@ -207,7 +207,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
                     }}
                     style={{
                       height: 40,
-                      borderRadius: 10,
+                      borderRadius: R.lg,
                       border: 0,
                       background: st === 'end' ? C.navy : st === 'in' ? C.bg2 : C.bg,
                       color: st === 'end' ? '#fff' : C.navy,
@@ -253,7 +253,7 @@ function PeriodSheet({ onClose }: { onClose: () => void }) {
 const navBtn: React.CSSProperties = {
   width: 40,
   height: 40,
-  borderRadius: 12,
+  borderRadius: R.lg,
   border: `1.5px solid ${C.line2}`,
   background: '#fff',
   color: C.navy,

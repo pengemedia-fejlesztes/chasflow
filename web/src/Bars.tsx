@@ -3,9 +3,9 @@
 // Opcionális tervjelölő (vízszintes vonal) – így a terv és a tény eltérése is látszik.
 import { useState } from 'react';
 import { fmt, fmtK, monthLabel } from '../../shared/model';
-import { C, FONT, FONT_H, card } from './ui';
+import { C, FONT, FONT_H, card, R } from './ui';
 
-export const POS = '#1A7340';
+export const POS = C.inc;
 export const NEG = '#E36B57';
 
 export interface BarPoint {
@@ -54,7 +54,7 @@ export function DivergingBars({
           {shown ? (
             <>
               {labelOf ? labelOf(shown.ym) : `${shown.ym.replace('-', '. ')}.`}:{' '}
-              <b style={{ color: shown.v < 0 ? '#B04A3C' : POS }}>
+              <b style={{ color: shown.v < 0 ? C.neg : POS }}>
                 {(shown.v > 0 ? '+' : shown.v < 0 ? '−' : '') + fmt(Math.abs(shown.v))} {unit}
               </b>
               {shown.plan != null ? (
@@ -122,7 +122,7 @@ export function DivergingBars({
                     color: C.ink,
                     whiteSpace: 'nowrap',
                     background: 'rgba(255,255,255,.85)',
-                    borderRadius: 4,
+                    borderRadius: R.sm,
                     padding: '0 2px',
                   }}
                 >
@@ -154,11 +154,11 @@ export function DivergingBars({
       </div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', font: `500 11.5px ${FONT}`, color: C.muted }}>
         <span>
-          <i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: POS, marginRight: 5, verticalAlign: -1 }} />
+          <i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: R.sm, background: POS, marginRight: 5, verticalAlign: -1 }} />
           plusz
         </span>
         <span>
-          <i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: NEG, marginRight: 5, verticalAlign: -1 }} />
+          <i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: R.sm, background: NEG, marginRight: 5, verticalAlign: -1 }} />
           mínusz
         </span>
         {points.some((p) => p.plan != null) && (
@@ -170,7 +170,15 @@ export function DivergingBars({
         {points.some((p) => p.future) && (
           <span>
             <i
-              style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, border: `1.5px dashed ${C.muted}`, marginRight: 5, verticalAlign: -1 }}
+              style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: R.sm,
+                border: `1.5px dashed ${C.muted}`,
+                marginRight: 5,
+                verticalAlign: -1,
+              }}
             />
             várható / terv
           </span>

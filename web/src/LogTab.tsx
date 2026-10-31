@@ -4,7 +4,7 @@ import { normalizeText } from '../../shared/categories';
 import { fmt } from '../../shared/model';
 import { api, ApiError } from './api';
 import { useStore } from './store';
-import { C, FONT, Pill, Seg, card, inputStyle, relTime } from './ui';
+import { C, FONT, Pill, Seg, card, inputStyle, relTime, R } from './ui';
 
 interface Item {
   op: 'new' | 'edit' | 'del';
@@ -127,7 +127,15 @@ export function LogTab() {
       });
     }
     for (const s of data.system)
-      list.push({ key: 's' + s.id, ts: s.ts, user: s.user_name || 'rendszer', kinds: ['system'], sys: s, items: [], text: `${SYS_LABEL[s.action] || s.action} ${s.detail || ''}` });
+      list.push({
+        key: 's' + s.id,
+        ts: s.ts,
+        user: s.user_name || 'rendszer',
+        kinds: ['system'],
+        sys: s,
+        items: [],
+        text: `${SYS_LABEL[s.action] || s.action} ${s.detail || ''}`,
+      });
     return list
       .filter((x) => (!who || x.user === who) && (kind === 'all' || x.kinds.includes(kind)))
       .filter((x) => {
@@ -161,9 +169,9 @@ export function LogTab() {
   };
 
   const chip = (k: Kind) => {
-    const col = k === 'del' || k === 'undo' ? '#B3261E' : k === 'new' ? '#1E7A46' : k === 'system' ? C.muted : C.blueDark;
+    const col = k === 'del' || k === 'undo' ? C.neg : k === 'new' ? C.inc : k === 'system' ? C.muted : C.blueDark;
     return (
-      <span key={k} style={{ font: `600 11px ${FONT}`, color: col, background: C.bg, borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>
+      <span key={k} style={{ font: `600 11px ${FONT}`, color: col, background: C.bg, borderRadius: R.md, padding: '2px 7px', whiteSpace: 'nowrap' }}>
         {k === 'all' ? '' : KIND_LABEL[k]}
       </span>
     );
@@ -179,8 +187,20 @@ export function LogTab() {
     if (p.done !== undefined) ch.push(i.prev?.done ? 'újranyitva' : 'lezárva / párosítva');
     if (p.tentative !== undefined) ch.push(p.tentative ? 'ajánlatból elfogadva' : 'ajánlattá téve');
     return (
-      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '4px 0', borderTop: `1px solid ${C.line3}`, font: `500 12.5px ${FONT}`, color: C.ink }}>
-        <span style={{ minWidth: 64, font: `600 11px ${FONT}`, color: i.op === 'del' ? '#B3261E' : i.op === 'new' ? '#1E7A46' : C.blueDark }}>
+      <div
+        key={j}
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'baseline',
+          flexWrap: 'wrap',
+          padding: '4px 0',
+          borderTop: `1px solid ${C.line3}`,
+          font: `500 12.5px ${FONT}`,
+          color: C.ink,
+        }}
+      >
+        <span style={{ minWidth: 64, font: `600 11px ${FONT}`, color: i.op === 'del' ? C.neg : i.op === 'new' ? C.inc : C.blueDark }}>
           {i.op === 'new' ? 'felvéve' : i.op === 'del' ? 'törölve' : 'módosítva'}
         </span>
         <span style={{ flex: '1 1 200px', minWidth: 0, textDecoration: i.op === 'del' ? 'line-through' : undefined }}>
@@ -221,7 +241,9 @@ export function LogTab() {
       </div>
       <Seg small value={kind} onChange={setKind} options={[['all', 'Minden'], ...(Object.entries(KIND_LABEL) as [Kind, string][])]} />
       {rows === null && <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>Betöltés…</span>}
-      {rows && !rows.length && <div style={{ ...card, padding: '18px 20px', font: `500 13.5px ${FONT}`, color: C.muted }}>Nincs a szűrőknek megfelelő bejegyzés.</div>}
+      {rows && !rows.length && (
+        <div style={{ ...card, padding: '18px 20px', font: `500 13.5px ${FONT}`, color: C.muted }}>Nincs a szűrőknek megfelelő bejegyzés.</div>
+      )}
       {rows?.map((x) => {
         const r = x.log;
         const isOpen = r && open === r.id;
@@ -230,7 +252,14 @@ export function LogTab() {
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <div
                 onClick={() => r && x.items.length && setOpen(isOpen ? null : r.id)}
-                style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3, cursor: r && x.items.length ? 'pointer' : 'default' }}
+                style={{
+                  flex: '1 1 260px',
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                  cursor: r && x.items.length ? 'pointer' : 'default',
+                }}
               >
                 <span style={{ font: `600 13.5px ${FONT}`, color: C.ink, textDecoration: r?.undone_at ? 'line-through' : undefined }}>
                   {r ? r.summary : SYS_LABEL[x.sys!.action] || x.sys!.action}
@@ -242,7 +271,7 @@ export function LogTab() {
                     {x.user} · {dt(x.ts)} ({relTime(x.ts)})
                   </span>
                   {r?.undone_at ? (
-                    <b style={{ color: '#B3261E' }}>
+                    <b style={{ color: C.neg }}>
                       visszavonta {r.undone_by_name || '?'}, {dt(r.undone_at)}
                     </b>
                   ) : null}

@@ -4,7 +4,7 @@ import { fmt } from '../../shared/model';
 import type { Entry } from '../../shared/types';
 import { api } from './api';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card } from './ui';
+import { C, FONT, FONT_H, Pill, card, R } from './ui';
 
 export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => void }) {
   const { data, ix, run } = useStore();
@@ -59,9 +59,10 @@ export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => 
           value={q0}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Keresés: partner, közlemény, összeg…"
-          style={{ height: 40, border: `1px solid ${C.line2}`, borderRadius: 10, padding: '0 12px', font: `500 14px ${FONT}`, color: C.ink }}
+          aria-label="Banki tétel keresése"
+          style={{ height: 40, border: `1px solid ${C.line2}`, borderRadius: R.lg, padding: '0 12px', font: `500 14px ${FONT}`, color: C.ink }}
         />
-        <div style={{ display: 'flex', flexDirection: 'column', border: `1px solid ${C.line}`, borderRadius: 12, overflowY: 'auto' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', border: `1px solid ${C.line}`, borderRadius: R.lg, overflowY: 'auto' }}>
           {!cands.length && <div style={{ padding: 16, font: `500 13.5px ${FONT}`, color: C.muted }}>Nincs összevonható banki tétel.</div>}
           {cands.map(({ t }, i) => {
             const same = Math.abs(t.amount) === Math.abs(plan.amount);

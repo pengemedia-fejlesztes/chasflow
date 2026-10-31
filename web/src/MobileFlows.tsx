@@ -8,13 +8,13 @@ import type { Entry, Section } from '../../shared/types';
 import { shiftDate } from './logic';
 import { PartnerEditor } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H } from './ui';
+import { C, FONT, FONT_H, R } from './ui';
 
 const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
 const MU = ['JAN', 'FEBR', 'MÁRC', 'ÁPR', 'MÁJ', 'JÚN', 'JÚL', 'AUG', 'SZEPT', 'OKT', 'NOV', 'DEC'];
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 const shortDate = (d: string) => `${SM[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}.`;
-const GOOD = '#1A7340';
+const GOOD = C.inc;
 
 // ───────────────────────── Teendők ─────────────────────────
 export interface Todo {
@@ -35,7 +35,7 @@ export function TodoCard({ items }: { items: Todo[] }) {
         <span style={{ font: `500 14px ${FONT}`, color: C.muted }}>{shown.length ? `${shown.length} csoport` : 'nincs teendő'}</span>
       </div>
       {shown.length > 0 && (
-        <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 18, overflow: 'hidden' }}>
+        <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden' }}>
           {shown.map((t, i) => (
             <button
               key={t.title}
@@ -141,7 +141,9 @@ export function DueList({
               color: C.navy,
             }}
           >
-            <i style={{ width: 16, height: 16, borderRadius: 4, background: offers ? C.blue : 'transparent', border: offers ? 0 : `1.5px solid ${C.line2}` }} />
+            <i
+              style={{ width: 16, height: 16, borderRadius: R.sm, background: offers ? C.blue : 'transparent', border: offers ? 0 : `1.5px solid ${C.line2}` }}
+            />
             Ajánlatokkal
           </button>
         </div>
@@ -236,7 +238,7 @@ function DueCard({
       style={{
         background: '#fff',
         border: offer ? `1.5px dashed ${C.line2}` : `1px solid ${C.line}`,
-        borderRadius: 18,
+        borderRadius: R.lg,
         padding: '14px 16px',
         display: 'flex',
         alignItems: 'center',
@@ -322,7 +324,7 @@ export function PlanQuick({ plan, onEdit, onPartner }: { plan: Entry; onEdit: ()
         <b style={{ font: `800 26px/1.15 ${FONT_H}`, color: C.navy }}>{plan.name || L?.label}</b>
       </div>
       <div
-        style={{ background: C.bg, borderRadius: 16, padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+        style={{ background: C.bg, borderRadius: R.lg, padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
       >
         <b style={{ font: `800 34px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>
           {fmt(Math.abs(plan.amount))} <small style={{ font: `600 16px ${FONT}`, color: C.muted }}>Ft</small>
@@ -349,7 +351,7 @@ export function PlanQuick({ plan, onEdit, onPartner }: { plan: Entry; onEdit: ()
               style={{
                 flex: 1,
                 height: 50,
-                borderRadius: 14,
+                borderRadius: R.lg,
                 border: `2px solid ${C.blue}`,
                 background: C.bg2,
                 display: 'flex',
@@ -364,7 +366,7 @@ export function PlanQuick({ plan, onEdit, onPartner }: { plan: Entry; onEdit: ()
             </span>
             <button
               onClick={() => setDate(shiftDate(plan.date, 1))}
-              style={{ height: 50, borderRadius: 14, border: 0, background: C.navy, color: '#fff', padding: '0 20px', font: `700 16px ${FONT}` }}
+              style={{ height: 50, borderRadius: R.lg, border: 0, background: C.navy, color: '#fff', padding: '0 20px', font: `700 16px ${FONT}` }}
             >
               +1 hó
             </button>
@@ -393,7 +395,7 @@ export function MiniCalendar({ value, today, onPick }: { value: string; today: s
   const cells: (number | null)[] = [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
   const iso = (d: number) => `${ym}-${String(d).padStart(2, '0')}`;
   return (
-    <div style={{ border: `1px solid ${C.line}`, borderRadius: 16, padding: '12px 14px' }}>
+    <div style={{ border: `1px solid ${C.line}`, borderRadius: R.lg, padding: '12px 14px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <button
           onClick={() => setYm(addMonths(ym, -1))}
@@ -493,18 +495,18 @@ export function MobilePartnerScreen({
       : h.late == null || h.late <= 0
         ? ['időben', C.blueDark, C.bg2]
         : h.late < 30
-          ? [`${h.late} nap`, C.blueDark, '#E3EEF6']
-          : [`${h.late} nap`, C.neg, '#FBE4DF'];
+          ? [`${h.late} nap`, C.blueDark, C.bg2]
+          : [`${h.late} nap`, C.neg, C.negBg];
   const tone = (h?: Hist) => (!h ? 'empty' : h.open ? 'open' : h.late == null || h.late <= 0 ? 'ok' : h.late < 30 ? 'lt30' : h.late < 90 ? 'lt90' : 'late');
   const TONE: Record<string, React.CSSProperties> = {
     empty: { border: `1.5px dashed ${C.line2}` },
     ok: { background: C.blue },
     lt30: { background: '#C3DCEB' },
-    lt90: { background: '#EBA799' },
-    late: { background: '#B5443A' },
+    lt90: { background: C.negLight },
+    late: { background: C.neg },
     open: { border: `2.5px solid #B5443A`, background: '#fff' },
   };
-  const card: React.CSSProperties = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 18 };
+  const card: React.CSSProperties = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg };
   const leaf = p.leaves[0]?.id;
   return (
     <div style={{ position: 'fixed', inset: 0, background: C.bg, zIndex: 950, overflow: 'auto' }}>
@@ -533,7 +535,7 @@ export function MobilePartnerScreen({
           ).map(([l, v, red]) => (
             <span
               key={l}
-              style={{ background: red ? '#FBE9E5' : C.bg, borderRadius: 14, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}
+              style={{ background: red ? C.negBg : C.bg, borderRadius: R.lg, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}
             >
               <span style={{ font: `500 13px ${FONT}`, color: red ? C.neg : C.muted }}>{l}</span>
               <b style={{ font: `800 20px ${FONT_H}`, color: red ? C.neg : C.navy, fontVariantNumeric: 'tabular-nums' }}>{v}</b>
@@ -689,7 +691,7 @@ export function MobilePartnerScreen({
                             title={h ? `${monthLong(ym)}: ${chip(h)[0]}` : monthLong(ym)}
                             style={{
                               aspectRatio: '1',
-                              borderRadius: 6,
+                              borderRadius: R.md,
                               border: 0,
                               padding: 0,
                               outline: pick === ym ? `2px solid ${C.navy}` : undefined,
@@ -712,7 +714,7 @@ export function MobilePartnerScreen({
                       ] as const
                     ).map(([k, l]) => (
                       <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <i style={{ width: 13, height: 13, borderRadius: 3, ...TONE[k] }} />
+                        <i style={{ width: 13, height: 13, borderRadius: R.sm, ...TONE[k] }} />
                         {l} {cnt[k]}
                       </span>
                     ))}
@@ -731,7 +733,7 @@ export function MobilePartnerScreen({
                         <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', color: C.muted }}>SZÁMLA</span>
                         <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{sel.issued ? shortDate(sel.issued) : '–'}</b>
                       </span>
-                      <span style={{ height: 4, borderRadius: 2, background: tone(sel) === 'ok' ? C.blue : '#B5443A' }} />
+                      <span style={{ height: 4, borderRadius: R.sm, background: tone(sel) === 'ok' ? C.blue : C.neg }} />
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                         <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', color: C.muted }}>{sel.open ? 'NYITOTT' : 'FIZETVE'}</span>
                         <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{sel.paid ? shortDate(sel.paid) : '–'}</b>

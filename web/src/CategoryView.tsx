@@ -30,10 +30,10 @@ import { CalendarSheet } from './DatePicker';
 import { budgetMonth } from '../../shared/budget';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, FONT, FONT_H, LeafSelect, NetBox, Pill, Seg, ShowDeletedToggle, card, eyebrow, inputStyle, shortDate, useShowDeleted } from './ui';
+import { C, FONT, FONT_H, LeafSelect, NetBox, Pill, Seg, ShowDeletedToggle, card, eyebrow, inputStyle, shortDate, useShowDeleted, R } from './ui';
 
-const GOOD = '#1A7340';
-const GOOD_BG = '#E8F5EE';
+const GOOD = C.inc;
+const GOOD_BG = C.incBg;
 // a folyó („MOST”) hónap oszlopának háttere
 const CUR_BG = '#F1F6FB';
 // névelő: „az ÁFA”, „a Bank költség”
@@ -504,7 +504,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
           minWidth: minW,
           alignItems: 'center',
           borderTop: `1px solid ${C.line}`,
-          background: anySel ? '#F7FAFD' : '#fff',
+          background: anySel ? C.bg3 : '#fff',
         }}
       >
         <div style={{ paddingLeft: 16, display: 'flex' }}>
@@ -556,7 +556,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
           >
             {REP[inferred]}
           </span>
-          {tentative && <span style={{ font: `600 10.5px ${FONT}`, color: '#8A6D1C' }}>ajánlat</span>}
+          {tentative && <span style={{ font: `600 10.5px ${FONT}`, color: C.offer }}>ajánlat</span>}
           {fromBillingo && <span style={{ font: `600 10.5px ${FONT}`, color: C.blueDark }}>Billingo számla</span>}
         </div>
         {months.map((m) =>
@@ -612,7 +612,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                       style={{
                         width: '100%',
                         height: 30,
-                        borderRadius: 8,
+                        borderRadius: R.md,
                         border: `1px dashed ${C.line}`,
                         background: 'transparent',
                         cursor: canEdit ? 'pointer' : 'default',
@@ -639,7 +639,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                     style={{
                       width: '100%',
                       height: 30,
-                      borderRadius: 8,
+                      borderRadius: R.md,
                       border: `1px solid ${isSel ? C.blue : red ? C.neg : green ? GOOD : done ? C.blue : C.line2}`,
                       background: isSel ? C.blue : red ? C.negBg : green ? GOOD_BG : done ? '#fff' : C.bg2,
                       display: 'flex',
@@ -734,7 +734,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                 width: 30,
                 height: 30,
                 border: 0,
-                borderRadius: 8,
+                borderRadius: R.md,
                 background: 'transparent',
                 color: C.muted,
                 cursor: 'pointer',
@@ -858,7 +858,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
         {/* tartós túllépés: az elmúlt 3 lezárt hónap tényleges átlaga a terv felett – a terv nem változik, csak jelzés */}
         {showSug &&
           (suggest.length > 0 ? (
-            <div style={{ ...card, background: '#FDF6F4', border: `1px solid ${C.negLight}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ ...card, background: C.negBg, border: `1px solid ${C.negLight}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div style={{ padding: '12px 16px 8px', display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <b style={{ font: `700 14px/1.3 ${FONT_H}`, color: C.neg }}>▲ Tartós túllépés várható · +{fmt(sugTotal)} Ft/hó</b>
                 <span style={{ font: `400 11.5px/1.4 ${FONT}`, color: C.muted, maxWidth: 260 }}>
@@ -1212,7 +1212,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                   title={`keret ${fmt(bm.budget)} Ft · felhasználva ${fmt(bm.used)} Ft · ${over ? `túllépés ${fmt(-rest)}` : `maradt ${fmt(rest)}`} Ft`}
                                   style={{
                                     minHeight: 34,
-                                    borderRadius: 8,
+                                    borderRadius: R.md,
                                     padding: '3px 8px',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -1262,7 +1262,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                   title={`ajánlat ${fmt(offer)} Ft (még nem biztos – a Terv sorban nincs benne)`}
                                   style={{
                                     height: 34,
-                                    borderRadius: 8,
+                                    borderRadius: R.md,
                                     padding: '0 8px',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -1270,12 +1270,12 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                     alignItems: 'flex-end',
                                     lineHeight: 1.1,
                                     border: '1px dashed #C9A94A',
-                                    background: '#FFF9E6',
+                                    background: C.offerBg,
                                     fontVariantNumeric: 'tabular-nums',
                                   }}
                                 >
-                                  <b style={{ font: `700 12.5px ${FONT}`, color: '#8A6D1C' }}>{fmt(offer)}</b>
-                                  <span style={{ font: `500 10px ${FONT}`, color: '#8A6D1C' }}>ajánlat</span>
+                                  <b style={{ font: `700 12.5px ${FONT}`, color: C.offer }}>{fmt(offer)}</b>
+                                  <span style={{ font: `500 10px ${FONT}`, color: C.offer }}>ajánlat</span>
                                 </div>
                               </div>
                             );
@@ -1305,7 +1305,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                 title={`terv ${fmt(plan)} Ft${cmp ? ` · tény ${fmt(act)} Ft · különbség ${diff > 0 ? '+' : ''}${fmt(diff)} Ft` : ''}`}
                                 style={{
                                   minHeight: 34,
-                                  borderRadius: 8,
+                                  borderRadius: R.md,
                                   padding: '3px 8px',
                                   display: 'flex',
                                   flexDirection: 'column',
@@ -1334,7 +1334,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                                 {!cmp && plan !== 0 && sugMap.get(leaf) && (
                                   <span style={{ font: `700 10px ${FONT}`, color: C.neg }}>≈ {fmt(sugMap.get(leaf)!.avg)} várható</span>
                                 )}
-                                {!cmp && offer !== 0 && <span style={{ font: `500 10px ${FONT}`, color: '#8A6D1C' }}>+ ajánlat {fmt(offer)}</span>}
+                                {!cmp && offer !== 0 && <span style={{ font: `500 10px ${FONT}`, color: C.offer }}>+ ajánlat {fmt(offer)}</span>}
                               </div>
                             </div>
                           );
@@ -1354,7 +1354,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                             width: 30,
                             height: 30,
                             border: 0,
-                            borderRadius: 8,
+                            borderRadius: R.md,
                             background: 'transparent',
                             color: C.muted,
                             cursor: 'pointer',
@@ -1377,7 +1377,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                 ['Terv (biztos)', (m: string) => monthPlan(m), C.navy],
                 ...(months.some((m) => monthOffer(m) !== 0)
                   ? ([
-                      ['Ajánlat (nem biztos)', (m: string) => monthOffer(m) || null, '#8A6D1C'],
+                      ['Ajánlat (nem biztos)', (m: string) => monthOffer(m) || null, C.offer],
                       ['Terv + ajánlat', (m: string) => monthPlan(m) + monthOffer(m), C.navy],
                     ] as [string, (m: string) => number | null, string | null][])
                   : []),
@@ -1705,7 +1705,7 @@ const selBtn = (bg: string): React.CSSProperties => ({
 function Legend({ bg, border, text }: { bg: string; border?: string; text: string }) {
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <i style={{ width: 12, height: 12, borderRadius: 4, background: bg, border }} />
+      <i style={{ width: 12, height: 12, borderRadius: R.sm, background: bg, border }} />
       {text}
     </span>
   );
@@ -1723,7 +1723,7 @@ function DeletedCell({ ds, sign, canEdit, onRestore }: { ds: DeletedEntry[]; sig
       style={{
         width: '100%',
         height: 30,
-        borderRadius: 8,
+        borderRadius: R.md,
         border: `1px dashed ${C.line2}`,
         background: 'transparent',
         color: C.faint,
@@ -1767,7 +1767,7 @@ function ContinueBtn({ onExtend, onEdit }: { onExtend: (months: number) => void;
         style={{
           width: '100%',
           height: 34,
-          borderRadius: 8,
+          borderRadius: R.md,
           border: `1px dashed ${C.blue}`,
           background: '#F2F8FC',
           color: C.blue,
@@ -1791,7 +1791,7 @@ function ContinueBtn({ onExtend, onEdit }: { onExtend: (months: number) => void;
             flexDirection: 'column',
             background: '#fff',
             border: `1px solid ${C.line2}`,
-            borderRadius: 10,
+            borderRadius: R.lg,
             boxShadow: '0 8px 24px rgba(0,30,60,.15)',
             padding: '4px 0',
           }}
@@ -1819,7 +1819,7 @@ function ActCell(p: { act: number | null; diff: number; good: boolean; bad: bool
             style={{
               font: `700 10.5px ${FONT}`,
               padding: '2px 6px',
-              borderRadius: 6,
+              borderRadius: R.md,
               whiteSpace: 'nowrap',
               color: p.good ? GOOD : p.bad ? C.neg : C.muted,
               background: p.good ? GOOD_BG : p.bad ? C.negBg : C.bg,

@@ -6,34 +6,52 @@ import { displayGroup } from '../../shared/categories';
 import { fmt, type Index } from '../../shared/model';
 import { VAT_RATE } from '../../shared/vat';
 
+/*
+ * Design tokenek – „Banki főkönyv” arculat: mélykék-grafit alap, meleg papírfelületek, vékony vonalak árnyék helyett.
+ * Állapotszínek: bevétel = mélyzöld (inc), kiadás = grafit (ink), lejárt = téglavörös (neg), ajánlat = okker (offer).
+ * Minden szín legalább 4.5:1 kontrasztú a saját hátterén (a muted2 / blue2 csak sötét felületen).
+ */
 export const C = {
-  navy: '#002040',
-  navy2: '#0C2740',
-  navy3: '#163350',
-  blue: '#287FAA',
-  blue2: '#3D9BD0',
-  blueDark: '#1E6488',
-  ink: '#1F2933',
-  muted: '#5B6770',
-  muted2: '#9DB2C6',
-  faint: '#9AA6B0',
-  line: '#E3E8EF',
-  line2: '#CDD7E2',
-  line3: '#EEF1F5',
-  bg: '#F4F7FB',
-  bg2: '#EAF2F8',
-  bg3: '#FAFBFC',
-  neg: '#B04A3C',
-  negLight: '#FFB4A8',
-  negBg: '#FBEDEA',
+  navy: '#14233A', // oldalsáv, sötét kiemelés
+  navy2: '#1C2E47',
+  navy3: '#2A3F5C',
+  blue: '#1F4E79', // elsődleges művelet, fókusz
+  blue2: '#A9C8E8', // akcentus sötét felületen
+  blueDark: '#1F4E79', // hivatkozás, pozitív kiemelés
+  ink: '#1D2430', // szöveg, kiadás
+  muted: '#55606D',
+  muted2: '#AFBCCB', // halvány szöveg sötét felületen
+  faint: '#6E7682', // nulla / üres érték (4.5:1 a papíron)
+  line: '#E2DED5',
+  line2: '#CCC7BB',
+  line3: '#EEEBE4',
+  bg: '#F5F3EE', // papír háttér
+  bg2: '#E8EEF4', // kijelölt / kiemelt sor
+  bg3: '#FAF9F6',
+  neg: '#A3392A', // lejárt, negatív
+  negLight: '#F0B4A9',
+  negBg: '#FAEDE9',
+  inc: '#1D6A46', // bevétel
+  incBg: '#E7F2EC',
+  offer: '#8A5A10', // ajánlat (nem biztos)
+  offerBg: '#FBF2DF',
   white: '#fff',
 };
 
-export const FONT_H = 'Sora, sans-serif';
-export const FONT = 'Inter, system-ui, sans-serif';
+export const FONT_H = "'Source Serif 4', Georgia, 'Times New Roman', serif";
+export const FONT = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
 
-export const eyebrow: CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
-export const card: CSSProperties = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, boxShadow: '0 1px 2px rgba(0,32,64,.05)' };
+/** térköz-skála (px) */
+export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 } as const;
+/** betűméret-skála (px): címke · apró · törzs · kiemelt · alcím · cím · oldalcím · nagy szám */
+export const FS = { label: 11, xs: 12, sm: 13, md: 14, lg: 16, xl: 20, xxl: 28, num: 24 } as const;
+/** sarokkerekítés */
+export const R = { sm: 4, md: 6, lg: 8, pill: 999 } as const;
+/** árnyékok: a felületeket vonal választja el; árnyék csak a lebegő elemeken */
+export const SHADOW = { none: 'none', card: '0 1px 0 rgba(20,35,58,.04)', pop: '0 8px 24px rgba(20,35,58,.16), 0 1px 3px rgba(20,35,58,.08)' } as const;
+
+export const eyebrow: CSSProperties = { font: `600 ${FS.label}px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted };
+export const card: CSSProperties = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg, boxShadow: SHADOW.card };
 
 export function Pill(props: {
   children: ReactNode;
@@ -48,19 +66,18 @@ export function Pill(props: {
   const k = props.kind || 'ghost';
   const base: CSSProperties = {
     border: 0,
-    borderRadius: 999,
-    padding: props.small ? '7px 13px' : '10px 18px',
-    font: `600 ${props.small ? 12.5 : 13.5}px ${FONT}`,
-    cursor: props.disabled ? 'default' : 'pointer',
+    borderRadius: R.md,
+    padding: props.small ? `${S.xs + 2}px ${S.md}px` : `${S.sm + 1}px ${S.lg}px`,
+    font: `600 ${props.small ? FS.xs : FS.sm}px ${FONT}`,
+    cursor: props.disabled ? 'not-allowed' : 'pointer',
     whiteSpace: 'nowrap',
-    opacity: props.disabled ? 0.55 : 1,
   };
   const kinds: Record<string, CSSProperties> = {
     primary: { background: C.blue, color: '#fff' },
     dark: { background: C.navy, color: '#fff' },
-    ghost: { background: 'transparent', color: C.navy, border: `1.5px solid ${C.line2}` },
+    ghost: { background: '#fff', color: C.navy, border: `1px solid ${C.line2}` },
     light: { background: C.bg2, color: C.blueDark },
-    danger: { background: 'transparent', color: C.neg, border: `1.5px solid ${C.line}` },
+    danger: { background: '#fff', color: C.neg, border: `1px solid ${C.line2}` },
   };
   return (
     <button
@@ -68,6 +85,7 @@ export function Pill(props: {
       title={props.title}
       className={'hov-' + k}
       disabled={props.disabled}
+      aria-disabled={props.disabled || undefined}
       onClick={props.onClick}
       style={{ ...base, ...kinds[k], ...props.style }}
     >
@@ -78,18 +96,23 @@ export function Pill(props: {
 
 export function Seg<T extends string | number>(props: { value: T; options: [T, string][]; onChange: (v: T) => void; full?: boolean; small?: boolean }) {
   return (
-    <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, gap: 2, flex: props.full ? 1 : undefined }}>
+    <div
+      role="group"
+      style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2, flex: props.full ? 1 : undefined }}
+    >
       {props.options.map(([v, l]) => (
         <button
           key={String(v)}
           type="button"
+          aria-pressed={props.value === v}
+          className="seg-btn"
           onClick={() => props.onChange(v)}
           style={{
             flex: props.full ? 1 : undefined,
             border: 0,
-            borderRadius: 999,
-            padding: props.small ? '6px 11px' : '7px 14px',
-            font: `600 ${props.small ? 12 : 13}px ${FONT}`,
+            borderRadius: R.md,
+            padding: props.small ? `${S.xs + 1}px ${S.md - 1}px` : `${S.xs + 3}px ${S.md + 2}px`,
+            font: `600 ${props.small ? FS.xs : FS.sm}px ${FONT}`,
             cursor: 'pointer',
             background: props.value === v ? C.navy : 'transparent',
             color: props.value === v ? '#fff' : C.muted,
@@ -108,12 +131,13 @@ export function Chip(props: { active?: boolean; children: ReactNode; onClick?: (
     <button
       type="button"
       title={props.title}
+      aria-pressed={props.active}
       onClick={props.onClick}
       style={{
         border: `1px solid ${props.active ? C.blue : C.line2}`,
-        borderRadius: 999,
-        padding: '6px 12px',
-        font: `600 12.5px ${FONT}`,
+        borderRadius: R.pill,
+        padding: `${S.xs + 2}px ${S.md}px`,
+        font: `600 ${FS.xs}px ${FONT}`,
         cursor: 'pointer',
         background: props.active ? C.blue : '#fff',
         color: props.active ? '#fff' : C.ink,
@@ -129,9 +153,9 @@ export function Chip(props: { active?: boolean; children: ReactNode; onClick?: (
 export const inputStyle: CSSProperties = {
   height: 38,
   border: `1px solid ${C.line2}`,
-  borderRadius: 8,
-  padding: '0 12px',
-  font: `500 14px ${FONT}`,
+  borderRadius: R.md,
+  padding: `0 ${S.md}px`,
+  font: `500 ${FS.md}px ${FONT}`,
   color: C.ink,
   background: '#fff',
   outlineColor: C.blue,
@@ -158,12 +182,12 @@ export function ToastView(props: { msg: string; undo?: () => void; error?: boole
         background: props.mobile ? C.navy : '#fff',
         color: props.mobile ? '#fff' : C.ink,
         border: props.mobile ? 0 : `1px solid ${props.error ? C.neg : C.line}`,
-        borderRadius: 14,
+        borderRadius: R.lg,
         padding: '12px 14px 12px 18px',
         display: 'flex',
         gap: 14,
         alignItems: 'center',
-        boxShadow: '0 2px 4px rgba(0,32,64,.06),0 24px 48px rgba(0,32,64,.18)',
+        boxShadow: SHADOW.pop,
         maxWidth: props.mobile ? undefined : 560,
       }}
     >
@@ -237,7 +261,7 @@ export function Modal(props: { onClose: () => void; children: ReactNode; width?:
   }, []);
   return createPortal(
     <>
-      <div aria-hidden style={{ position: 'fixed', inset: 0, background: 'rgba(0,32,64,.38)', zIndex: 900 }} onClick={() => close.current()} />
+      <div aria-hidden style={{ position: 'fixed', inset: 0, background: 'rgba(20,35,58,.42)', zIndex: 900 }} onClick={() => close.current()} />
       <dialog
         ref={ref}
         aria-modal="true"

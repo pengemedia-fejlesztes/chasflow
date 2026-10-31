@@ -14,7 +14,7 @@ import { itemLabel } from './MonthList';
 import { rowKey, shiftDate } from './logic';
 import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, card, relTime } from './ui';
+import { C, FONT, FONT_H, Pill, card, relTime, R } from './ui';
 
 const KIND: Record<string, string> = { vevo: 'Vevő', szallito: 'Szállító', mindketto: 'Vevő és szállító' };
 const SM = ['jan.', 'febr.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
@@ -45,19 +45,19 @@ const TONE: Record<string, CSSProperties> = {
   empty: { border: `1.5px dashed ${C.line2}`, background: '#fff' },
   ok: { background: C.blue },
   lt30: { background: '#C3DCEB' },
-  lt90: { background: '#EBA799' },
-  late: { background: '#B5443A' },
+  lt90: { background: C.negLight },
+  late: { background: C.neg },
   open: { border: `2.5px solid #B5443A`, background: '#fff' },
 };
 const tone = (h?: Hist) => (!h ? 'empty' : h.open ? 'open' : h.late == null || h.late <= 0 ? 'ok' : h.late < 30 ? 'lt30' : h.late < 90 ? 'lt90' : 'late');
 const lateChip = (h: Hist, today: string): [string, string, string] =>
   h.open
-    ? [`nyitott · ${h.due ? Math.max(0, days(h.due, today)) : 0} nap`, '#fff', '#B5443A']
+    ? [`nyitott · ${h.due ? Math.max(0, days(h.due, today)) : 0} nap`, '#fff', C.neg]
     : h.late == null || h.late <= 0
       ? ['időben', C.blueDark, C.bg2]
       : h.late < 30
-        ? [`${h.late} nap`, C.blueDark, '#E3EEF6']
-        : [`${h.late} nap késés`, C.neg, '#FBE4DF'];
+        ? [`${h.late} nap`, C.blueDark, C.bg2]
+        : [`${h.late} nap késés`, C.neg, C.negBg];
 
 export function PartnerSheet({
   p,
@@ -242,8 +242,8 @@ export function PartnerSheet({
         justifyContent: 'space-between',
         gap: 12,
         padding: '18px 22px',
-        borderRadius: 14,
-        background: red ? '#FBE9E5' : C.bg,
+        borderRadius: R.lg,
+        background: red ? C.negBg : C.bg,
       }}
     >
       <span style={{ font: `500 14px ${FONT}`, color: red ? C.neg : C.muted }}>{label}</span>
@@ -325,7 +325,7 @@ export function PartnerSheet({
               const late = e.date < data.today;
               const inv = data.billingo.find((d) => d.plan_id === e.id)?.number;
               return (
-                <div key={e.id} style={{ ...card, overflow: 'hidden', background: late ? '#FDF5F3' : '#fff', borderColor: late ? '#F3D9D3' : C.line }}>
+                <div key={e.id} style={{ ...card, overflow: 'hidden', background: late ? C.negBg : '#fff', borderColor: late ? C.negLight : C.line }}>
                   <div
                     onClick={() => onEditItem(e.leaf_id)}
                     style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px', cursor: 'pointer' }}
@@ -338,7 +338,7 @@ export function PartnerSheet({
                       {inv && <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>{inv}</span>}
                     </span>
                     {late && (
-                      <span style={{ padding: '3px 12px', borderRadius: 999, background: '#FBE4DF', color: C.neg, font: `600 13px ${FONT}` }}>
+                      <span style={{ padding: '3px 12px', borderRadius: 999, background: C.negBg, color: C.neg, font: `600 13px ${FONT}` }}>
                         {days(e.date, data.today)} napja lejárt
                       </span>
                     )}
@@ -348,7 +348,9 @@ export function PartnerSheet({
                     </b>
                   </div>
                   {canEdit && !e.tentative && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderTop: `1px solid ${late ? '#F3D9D3' : C.line3}` }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderTop: `1px solid ${late ? C.negLight : C.line3}` }}
+                    >
                       <Btn dark onClick={() => setBankFor(e)}>
                         ⇄ Bank párosítás
                       </Btn>
@@ -437,7 +439,7 @@ export function PartnerSheet({
                     alignItems: 'center',
                     padding: '14px 22px',
                     borderTop: i ? `1px solid ${C.line3}` : 0,
-                    background: h.open ? '#FDF5F3' : '#fff',
+                    background: h.open ? C.negBg : '#fff',
                   }}
                 >
                   <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>
@@ -573,7 +575,7 @@ function Composition({ comps, onEdit }: { comps: Comp[]; onEdit: (leaf: string, 
   const parts: (Comp | { name: string; total: number; count: number; leaf?: undefined; key?: undefined })[] =
     rest > 0 ? [...top, { name: 'egyéb', total: rest, count: list.slice(4).reduce((a, c) => a + c.count, 0) }] : top;
   const sum = parts.reduce((a, c) => a + c.total, 0) || 1;
-  const COL = [C.blue, '#C3DCEB', '#7FB3D5', '#E3EEF6', C.line2];
+  const COL = [C.blue, '#C3DCEB', '#7FB3D5', C.bg2, C.line2];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 4, height: 20 }}>
@@ -581,14 +583,14 @@ function Composition({ comps, onEdit }: { comps: Comp[]; onEdit: (leaf: string, 
           <span
             key={c.name}
             title={`${c.name}: ${fmt(c.total)} Ft`}
-            style={{ flex: c.total / sum, background: COL[i % COL.length], borderRadius: 6, minWidth: 6 }}
+            style={{ flex: c.total / sum, background: COL[i % COL.length], borderRadius: R.md, minWidth: 6 }}
           />
         ))}
       </div>
       <div style={{ display: 'flex', gap: '8px 22px', flexWrap: 'wrap', font: `400 15px ${FONT}`, color: C.ink }}>
         {parts.map((c, i) => (
           <span key={c.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <i style={{ width: 13, height: 13, borderRadius: 3, background: COL[i % COL.length], display: 'inline-block', flex: 'none' }} />
+            <i style={{ width: 13, height: 13, borderRadius: R.sm, background: COL[i % COL.length], display: 'inline-block', flex: 'none' }} />
             {c.leaf ? (
               <button
                 type="button"
@@ -645,7 +647,7 @@ function PayCalendar({ hist, pick, setPick }: { hist: Hist[]; pick: string | nul
                   title={h ? `${monthLong(ym)}: ${lateChip(h, ix.cur + '-01')[0]}` : monthLong(ym)}
                   style={{
                     aspectRatio: '1',
-                    borderRadius: 7,
+                    borderRadius: R.md,
                     border: 0,
                     padding: 0,
                     cursor: h ? 'pointer' : 'default',
@@ -669,7 +671,7 @@ function PayCalendar({ hist, pick, setPick }: { hist: Hist[]; pick: string | nul
             ] as const
           ).map(([k, l]) => (
             <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <i style={{ width: 13, height: 13, borderRadius: 3, display: 'inline-block', boxSizing: 'border-box', ...TONE[k] }} />
+              <i style={{ width: 13, height: 13, borderRadius: R.sm, display: 'inline-block', boxSizing: 'border-box', ...TONE[k] }} />
               {l}
             </span>
           ))}
@@ -688,7 +690,9 @@ function PayCalendar({ hist, pick, setPick }: { hist: Hist[]; pick: string | nul
               <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', color: C.muted }}>HATÁRIDŐ</span>
               <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{dm(sel.due)}</b>
             </span>
-            <span style={{ height: 4, borderRadius: 2, background: tone(sel) === 'ok' ? C.blue : `linear-gradient(90deg, ${C.blue} 0 8%, #B5443A 8% 100%)` }} />
+            <span
+              style={{ height: 4, borderRadius: R.sm, background: tone(sel) === 'ok' ? C.blue : `linear-gradient(90deg, ${C.blue} 0 8%, #B5443A 8% 100%)` }}
+            />
             <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
               <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', color: C.muted }}>{sel.open ? 'NYITOTT' : 'FIZETVE'}</span>
               <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>{sel.open ? '—' : dm(sel.paid)}</b>

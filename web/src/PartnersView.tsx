@@ -12,7 +12,7 @@ import { diffColor, diffText } from './LinkChain';
 import { PartnerLink } from './PartnerCard';
 import { rowKey } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
+import { C, FONT, FONT_H, Pill, Seg, card, inputStyle, R } from './ui';
 
 const dd = (d: string | null | undefined) => (d ? d.replace(/-/g, '.') + '.' : '–');
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -134,7 +134,7 @@ function Tile({ label, value, sub, red }: { label: string; value: string; sub?: 
       style={{
         background: '#fff',
         border: `1px solid ${C.line}`,
-        borderRadius: 12,
+        borderRadius: R.lg,
         padding: '10px 12px',
         display: 'flex',
         flexDirection: 'column',
@@ -176,7 +176,9 @@ function NamesBox({ p }: { p: PartnerStat }) {
     const ents = new Set(data.entries.filter((e) => ids.has(e.leaf_id)).map((e) => e.id));
     const m = new Map<string, Row>();
     const add = (name: string | null | undefined, src: string, n = 1, tax?: string | null) => {
-      const t = String(name || '').replace(/\s+/g, ' ').trim();
+      const t = String(name || '')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (t.length < 2) return;
       const k = normalizeText(t);
       const r = m.get(k) || { name: t, src: {} };
@@ -186,7 +188,8 @@ function NamesBox({ p }: { p: PartnerStat }) {
     };
     for (const b of p.billingNames) add(b.name, b.source === 'Billingo' ? 'Billingo' : 'Bank', b.n);
     for (const x of data.navInvoices || [])
-      if ((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id))) add(x.partner_name, 'NAV', 1, x.partner_tax);
+      if ((x.leaf_id && ids.has(x.leaf_id)) || (x.plan_id && ents.has(x.plan_id)) || (x.actual_id && ents.has(x.actual_id)))
+        add(x.partner_name, 'NAV', 1, x.partner_tax);
     for (const a of aliases) add(a, 'alias', 0);
     return [...m.values()].sort((a, b) => sumOf(b) - sumOf(a));
   }, [p, data.entries, data.navInvoices, aliases]);
@@ -195,7 +198,9 @@ function NamesBox({ p }: { p: PartnerStat }) {
     const seen = new Set(rows.map((r) => normalizeText(r.name)));
     const out: { name: string; src: string }[] = [];
     const add = (s: string | null | undefined, src: string) => {
-      const t = String(s || '').replace(/\s+/g, ' ').trim();
+      const t = String(s || '')
+        .replace(/\s+/g, ' ')
+        .trim();
       const k = normalizeText(t);
       if (k.length < 2 || seen.has(k)) return;
       seen.add(k);
@@ -206,7 +211,10 @@ function NamesBox({ p }: { p: PartnerStat }) {
     data.bankTx.forEach((t) => add(t.partner, 'Bank'));
     return out;
   }, [rows, data.billingo, data.navInvoices, data.bankTx]);
-  const words = (s: string) => normalizeText(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !/^(kft|zrt|bt|nyrt|korlatolt|felelossegu|tarsasag|szolgaltato|es)$/.test(w));
+  const words = (s: string) =>
+    normalizeText(s)
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 3 && !/^(kft|zrt|bt|nyrt|korlatolt|felelossegu|tarsasag|szolgaltato|es)$/.test(w));
   const mine = new Set([p.name, ...aliases].flatMap(words));
   const nq = normalizeText(q);
   const list = nq
@@ -238,7 +246,7 @@ function NamesBox({ p }: { p: PartnerStat }) {
             <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {r.src.Billingo ? badge(`Billingo · kimenő számla ${r.src.Billingo}×`, '#E6F0FA', C.blueDark) : null}
               {r.src.NAV ? badge(`NAV · bejövő számla ${r.src.NAV}×`, '#F3EDFB', '#5B3E8C') : null}
-              {r.src.Bank ? badge(`Bank ${r.src.Bank}×`, '#E8F5EE', '#23714A') : null}
+              {r.src.Bank ? badge(`Bank ${r.src.Bank}×`, C.incBg, '#23714A') : null}
               {own.has(normalizeText(r.name)) ? badge('✓ párosít', C.bg2, C.navy) : null}
             </span>
             {canEdit && !own.has(normalizeText(r.name)) && (
@@ -246,7 +254,15 @@ function NamesBox({ p }: { p: PartnerStat }) {
                 type="button"
                 onClick={() => assign(r.name)}
                 title="Alternatív névként rögzíti – a jövőbeli tételek is ehhez a partnerhez kerülnek"
-                style={{ border: `1px solid ${C.line2}`, background: '#fff', borderRadius: 999, padding: '3px 10px', font: `600 12px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}
+                style={{
+                  border: `1px solid ${C.line2}`,
+                  background: '#fff',
+                  borderRadius: 999,
+                  padding: '3px 10px',
+                  font: `600 12px ${FONT}`,
+                  color: C.blueDark,
+                  cursor: 'pointer',
+                }}
               >
                 ＋ rögzít
               </button>
@@ -254,7 +270,9 @@ function NamesBox({ p }: { p: PartnerStat }) {
           </div>
         ))
       ) : (
-        <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.</span>
+        <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+          Még nincs Billingo-számla, NAV-számla vagy jóváhagyott banki tétel ezzel a partnerrel.
+        </span>
       )}
       {canEdit && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 8, borderTop: `1px solid ${C.line3}`, marginTop: 4 }}>
@@ -272,7 +290,15 @@ function NamesBox({ p }: { p: PartnerStat }) {
                   key={k.name}
                   type="button"
                   onClick={() => assign(k.name)}
-                  style={{ border: `1px dashed ${C.blue}`, background: '#fff', borderRadius: 999, padding: '4px 10px', font: `600 12px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}
+                  style={{
+                    border: `1px dashed ${C.blue}`,
+                    background: '#fff',
+                    borderRadius: 999,
+                    padding: '4px 10px',
+                    font: `600 12px ${FONT}`,
+                    color: C.blueDark,
+                    cursor: 'pointer',
+                  }}
                 >
                   ＋ {k.name} <span style={{ opacity: 0.6, fontWeight: 500 }}>· {k.src}</span>
                 </button>
@@ -445,9 +471,7 @@ export function PartnerDetail({
         </span>
         <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 28}px/1.1 ${FONT_H}`, color: C.navy }}>{p.name}</h2>
       </div>
-      {part !== 'stats' && (
-        <NamesBox p={p} />
-      )}
+      {part !== 'stats' && <NamesBox p={p} />}
       {part !== 'names' && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>

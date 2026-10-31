@@ -10,7 +10,7 @@ const MONTH_HU = ['január', 'február', 'március', 'április', 'május', 'jún
 import { api } from './api';
 import { rowsOfSheet } from './sheetCore';
 import { useStore } from './store';
-import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle } from './ui';
+import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle, R } from './ui';
 
 const h = (min: number) => (min / 60).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
 const pct = (r: number) => (r * 100).toLocaleString('hu-HU', { maximumFractionDigits: 1 }) + '%';
@@ -59,7 +59,7 @@ export async function importWorkbook(
 }
 
 // színek: zöld = pozitív biztonsági sáv / jó óradíj, a kiválasztott hónap oszlopa halványkék
-const GREEN = '#2E7D4F';
+const GREEN = C.inc;
 const GREEN_BG = '#E7F3EC';
 const GREEN_BAR = '#A3CFB3';
 const RED_BAR = '#E5A598';
@@ -92,7 +92,7 @@ function Kpi(p: { label: string; value: string; sub: ReactNode; tone?: 'pos' | '
     <div
       style={{
         background: p.tone === 'pos' ? GREEN_BG : p.tone === 'neg' ? C.negBg : C.bg,
-        borderRadius: 10,
+        borderRadius: R.lg,
         padding: '12px 14px',
         display: 'flex',
         flexDirection: 'column',
@@ -118,7 +118,7 @@ function Kpi(p: { label: string; value: string; sub: ReactNode; tone?: 'pos' | '
 
 /** Eltérés az átlagtól: kék = jó irány, piros = rossz irány. */
 const Delta = (p: { d: number; text: string; good: boolean }) => (
-  <span style={{ color: p.good ? C.blueDark : C.neg, fontWeight: 600 }}>
+  <span style={{ color: p.good ? C.inc : C.neg, fontWeight: 600 }}>
     {p.d >= 0 ? '▲' : '▼'} {p.text}
   </span>
 );
@@ -364,7 +364,7 @@ export function BreakevenView() {
                   style={{
                     width: `${Math.max(6, (Math.abs(r.margin) / maxMargin) * 100)}%`,
                     height: r.ym === sel ? 14 : 7,
-                    borderRadius: 3,
+                    borderRadius: R.sm,
                     background: r.margin >= 0 ? GREEN_BAR : RED_BAR,
                   }}
                 />
@@ -435,7 +435,15 @@ export function BreakevenView() {
               value=""
               onChange={(ev) => ev.target.value && attach(p.project, ev.target.value)}
               title="A projekt ehhez az ügyfélhez tartozik (alternatív név lesz az adatlapján)"
-              style={{ marginLeft: 8, height: 26, maxWidth: 170, borderRadius: 8, border: `1px solid ${C.line2}`, font: `500 12px ${FONT}`, color: C.blueDark }}
+              style={{
+                marginLeft: 8,
+                height: 26,
+                maxWidth: 170,
+                borderRadius: R.md,
+                border: `1px solid ${C.line2}`,
+                font: `500 12px ${FONT}`,
+                color: C.blueDark,
+              }}
             >
               <option value="">Ügyfélhez rendel…</option>
               {clients.map(([k, label]) => (
@@ -449,7 +457,7 @@ export function BreakevenView() {
         <div style={{ ...td, color: C.muted }}>{p.minutes ? h(p.minutes) : '–'}</div>
         <div style={{ ...td, color: C.muted }}>{p.laborCost ? fmt(p.laborCost) : '–'}</div>
         <div style={{ ...td, fontWeight: 700, color: C.navy }}>{p.revenue ? fmt(p.revenue) : '–'}</div>
-        <div style={{ ...td, fontWeight: 700, color: p.leaf ? (contrib < 0 ? C.neg : C.blueDark) : C.muted }}>{p.leaf ? fmt(contrib) : '–'}</div>
+        <div style={{ ...td, fontWeight: 700, color: p.leaf ? (contrib < 0 ? C.neg : C.inc) : C.muted }}>{p.leaf ? fmt(contrib) : '–'}</div>
         <div style={{ ...td, fontWeight: 700, color: contrib < 0 ? C.neg : GREEN }}>{p.leaf && p.minutes ? fmt(contrib / (p.minutes / 60)) : '–'}</div>
       </div>
     );
@@ -574,7 +582,7 @@ export function BreakevenView() {
               }
             />
           </div>
-          <div style={{ background: C.bg, borderRadius: 10, padding: '10px 14px', font: `400 13px/1.5 ${FONT}`, color: C.ink }}>
+          <div style={{ background: C.bg, borderRadius: R.lg, padding: '10px 14px', font: `400 13px/1.5 ${FONT}`, color: C.ink }}>
             {cap(MONTH_IN[Number(sel.slice(5, 7)) - 1])}{' '}
             {cur.margin == null ? (
               'a fedezeti pont nem számolható (nincs pozitív fedezet)'
@@ -799,7 +807,7 @@ export function BreakevenView() {
                             <span>
                               {h(p.billableMinutes)} <span style={{ color: C.muted }}>({Math.round(share * 100)}%)</span>
                             </span>
-                            <span style={{ width: 64, height: 4, borderRadius: 2, background: C.line3, overflow: 'hidden', display: 'block' }}>
+                            <span style={{ width: 64, height: 4, borderRadius: R.sm, background: C.line3, overflow: 'hidden', display: 'block' }}>
                               <span style={{ display: 'block', height: '100%', width: `${share * 100}%`, background: C.blue }} />
                             </span>
                           </span>

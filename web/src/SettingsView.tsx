@@ -17,7 +17,7 @@ import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './
 import { SYNC_HOURS } from '../../shared/aggreg8';
 import { payDefaults } from './logic';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp } from './ui';
+import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp, R } from './ui';
 
 type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'partners' | 'categories' | 'rules' | 'trash' | 'log';
 
@@ -159,7 +159,7 @@ function Account({ onLogout }: { onLogout: () => void }) {
           </div>
         ) : totp ? (
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-            <img src={totp.qr} width={180} height={180} alt="2FA QR kód" style={{ borderRadius: 10, border: `1px solid ${C.line}` }} />
+            <img src={totp.qr} width={180} height={180} alt="2FA QR kód" style={{ borderRadius: R.lg, border: `1px solid ${C.line}` }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 220, flex: 1 }}>
               <span style={{ font: `400 13.5px/1.5 ${FONT}`, color: C.muted }}>
                 Olvasd be a QR kódot (iPhone-on: koppints rá hosszan, vagy add meg kézzel a kulcsot):
@@ -256,7 +256,7 @@ function Users() {
           </Pill>
         </div>
         {temp && (
-          <div style={{ background: C.bg2, borderRadius: 10, padding: 14, font: `500 14px/1.5 ${FONT}`, color: C.navy }}>
+          <div style={{ background: C.bg2, borderRadius: R.lg, padding: 14, font: `500 14px/1.5 ${FONT}`, color: C.navy }}>
             Ideiglenes jelszó ({temp.email}): <b style={{ fontFamily: 'ui-monospace,monospace', userSelect: 'all' }}>{temp.pw}</b>
             <br />
             <span style={{ color: C.muted, fontSize: 12.5 }}>
@@ -448,7 +448,7 @@ function Integrations() {
         sub="A kiállított számlák (Billingo v3 API) naponta 5, 9, 13, 17 és 21 órakor szinkronizálódnak: a nyitott számlák tervezett bevételként jelennek meg a fizetési határidőn. Az API kulcsot titokként kell beállítani (BILLINGO_API_KEY) – lásd README."
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ font: `600 14px ${FONT}`, color: data.integrations.billingo ? C.blueDark : C.neg }}>
+          <span style={{ font: `600 14px ${FONT}`, color: data.integrations.billingo ? C.inc : C.neg }}>
             {data.integrations.billingo ? '✓ API kulcs beállítva' : '✗ Nincs API kulcs'}
           </span>
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>utolsó szinkron: {stamp(data.settings.billingo_last_sync)}</span>
@@ -469,7 +469,7 @@ function Integrations() {
         sub="A cégnek kiállított (bejövő, szállítói) számlák a NAV-ból naponta 5 alkalommal szinkronizálódnak. Ha egy számlához nincs terv, riasztás jön még a kifizetés előtt, javaslattal: rendszeres (havonta tervbe) vagy előre nem látható költség. Hozzáférés: NAV technikai felhasználó (Online Számla → Felhasználók), Cloudflare titokként: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER."
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ font: `600 14px ${FONT}`, color: data.integrations.nav ? C.blueDark : C.neg }}>
+          <span style={{ font: `600 14px ${FONT}`, color: data.integrations.nav ? C.inc : C.neg }}>
             {data.integrations.nav ? '✓ Technikai felhasználó beállítva' : '✗ Nincs beállítva'}
           </span>
           <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
@@ -842,7 +842,7 @@ function Categories() {
       </label>
       {ix.groups.map((g) => (
         <Section key={g.id} title={`${g.section === 'in' ? 'Bevétel' : 'Kiadás'} · ${displayGroup(g.label)}`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg, borderRadius: 10, padding: '8px 10px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg, borderRadius: R.lg, padding: '8px 10px' }}>
             <span style={{ ...eyebrow, fontSize: 10.5 }}>Fizetési nap a csoport minden tételére{g.section === 'in' ? ' (partnerenként felülírható)' : ''}</span>
             {canEdit ? (
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -936,7 +936,7 @@ function Categories() {
               ))}
           </div>
           {canEdit && openLeaf && ix.leafById[openLeaf]?.group_id === g.id && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, border: `1px solid ${C.blue}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, border: `1px solid ${C.blue}`, borderRadius: R.lg, padding: 10 }}>
               <span style={{ font: `700 13.5px ${FONT_H}`, color: C.navy }}>{ix.leafById[openLeaf].label}</span>
               <span style={{ ...eyebrow, fontSize: 10.5 }}>Fizetési nap</span>
               <PayRuleChips
@@ -1118,7 +1118,7 @@ function AutoUpload() {
         </Pill>
       </div>
       {token && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: 12, background: C.bg }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, borderRadius: R.lg, background: C.bg }}>
           <span style={{ font: `600 13px ${FONT}`, color: C.navy }}>1. Másold ki a kulcsot (csak most látszik):</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <code style={{ font: `600 12.5px ui-monospace,monospace`, color: C.navy, wordBreak: 'break-all' }}>{token}</code>

@@ -5,7 +5,7 @@ import { fmt } from '../../shared/model';
 import type { DataBundle, Entry, Section } from '../../shared/types';
 import { openBillingoDoc } from './logic';
 import { useStore } from './store';
-import { C, FONT } from './ui';
+import { C, FONT, R } from './ui';
 
 export interface PlanLink {
   plan: Entry;
@@ -35,7 +35,7 @@ export function planLinks(entries: Entry[], filter: (e: Entry) => boolean = () =
 }
 
 /** Az eltérés színe: bevételnél a több jó (zöld), kiadásnál a több rossz (piros). */
-export const diffColor = (sec: Section | undefined, diff: number) => (!diff ? C.muted : (diff > 0) === (sec !== 'out') ? '#1E7A46' : '#B3261E');
+export const diffColor = (sec: Section | undefined, diff: number) => (!diff ? C.muted : diff > 0 === (sec !== 'out') ? C.inc : C.neg);
 export const diffText = (diff: number) => (diff > 0 ? '+' : diff < 0 ? '−' : '±') + fmt(Math.abs(diff));
 
 const dot = (d?: string | null) => (d ? d.replace(/-/g, '.') + '.' : '');
@@ -56,7 +56,7 @@ export function LinkChain({ plan }: { plan: Entry }) {
   const sub: React.CSSProperties = { font: `500 11.5px ${FONT}`, color: C.muted, overflowWrap: 'anywhere' };
   const arrow = <span style={{ color: C.line2, alignSelf: 'center' }}>→</span>;
   return (
-    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', padding: '8px 10px', borderRadius: 10, background: C.bg }}>
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', padding: '8px 10px', borderRadius: R.lg, background: C.bg }}>
       <span style={cell}>
         <span style={lab}>Terv</span>
         <span style={val}>{fmt(Math.abs(plan.amount))} Ft</span>
@@ -112,7 +112,7 @@ export function LinkChain({ plan }: { plan: Entry }) {
             </span>
           </>
         ) : (
-          <span style={{ ...val, color: '#8A6D1C' }}>még nincs</span>
+          <span style={{ ...val, color: C.offer }}>még nincs</span>
         )}
       </span>
       {diff !== null && (

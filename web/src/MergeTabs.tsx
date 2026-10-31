@@ -12,7 +12,7 @@ import { useFrequentLeaves } from './BankView';
 import { LeafPicker } from './LeafPicker';
 import { useStore } from './store';
 import { TxCard } from './TxCard';
-import { C, FONT, FONT_H, Pill, card } from './ui';
+import { C, FONT, FONT_H, Pill, card, R } from './ui';
 
 const dot = (d: string) => d.replace(/-/g, '.') + '.';
 
@@ -182,7 +182,7 @@ export function MergeBillingo() {
                   {d?.number || ''} · kelt {dot(d?.invoice_date || e.date)} · határidő {dot(e.date)}
                   {e.done ? ' · fizetve' : ''}
                 </span>
-                <span style={{ font: `600 12.5px ${FONT}`, color: isOffer ? C.neg : C.blueDark }}>
+                <span style={{ font: `600 12.5px ${FONT}`, color: isOffer ? C.neg : C.inc }}>
                   → {leaf?.label || 'ismeretlen kategória'} · {grp} · {monthLong(ymOf(e.date))}
                   {reg?.kind ? ` · ${KIND_HU[reg.kind]}` : ''}
                 </span>
@@ -192,7 +192,7 @@ export function MergeBillingo() {
                   </span>
                 )}
               </span>
-              <b style={{ font: `700 14px ${FONT}`, color: '#1A7340', fontVariantNumeric: 'tabular-nums' }}>{fmt(e.bill_amount ?? e.amount)} Ft</b>
+              <b style={{ font: `700 14px ${FONT}`, color: C.inc, fontVariantNumeric: 'tabular-nums' }}>{fmt(e.bill_amount ?? e.amount)} Ft</b>
               {canEdit && (
                 <>
                   {isOffer && (
@@ -318,7 +318,7 @@ export function MergeNames() {
                     style={{
                       height: 34,
                       maxWidth: 220,
-                      borderRadius: 10,
+                      borderRadius: R.lg,
                       border: `1.5px solid ${C.line2}`,
                       padding: '0 8px',
                       font: `500 13px ${FONT}`,

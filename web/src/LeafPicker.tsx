@@ -6,7 +6,7 @@ import { addMonths, endOfMonth } from '../../shared/model';
 import type { Section } from '../../shared/types';
 import { api } from './api';
 import { useStore } from './store';
-import { C, FONT, inputStyle } from './ui';
+import { C, FONT, inputStyle, R } from './ui';
 
 const chip = (active: boolean, big?: boolean): React.CSSProperties => ({
   flex: 'none',
@@ -105,7 +105,7 @@ export function LeafPicker({ section, value, onChange, big }: { section: Section
       </div>
 
       {creating && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg2, borderRadius: 12, padding: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg2, borderRadius: R.lg, padding: 10 }}>
           <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted }}>Melyik csoportba?</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {groups.map((g) => (

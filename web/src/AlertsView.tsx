@@ -16,7 +16,7 @@ import { api } from './api';
 import { PartnerLink } from './PartnerCard';
 import { MergeBank, MergeBillingo, MergeNames, useMergeCounts } from './MergeTabs';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Modal, Pill, card } from './ui';
+import { C, FONT, FONT_H, Modal, Pill, card, R } from './ui';
 
 export function useFlags(): Flag[] {
   const { data, ix } = useStore();
@@ -327,14 +327,14 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
                     )}
                     {f.kind === 'deviation' && (
                       <>
-                        <span style={{ font: `700 15px ${FONT}`, color: bad ? C.neg : C.blueDark }}>{ft(f.diff || 0)}</span>
+                        <span style={{ font: `700 15px ${FONT}`, color: bad ? C.neg : C.inc }}>{ft(f.diff || 0)}</span>
                         <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
                           {f.vsInvoice ? 'számla' : 'terv'} {fmt(Math.abs(f.plan || 0))} → tény {fmt(Math.abs(f.amount))}
                         </span>
                       </>
                     )}
                     {f.kind === 'invoice' && <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{ft(f.amount)}</span>}
-                    {f.kind === 'unplanned' && <span style={{ font: `700 15px ${FONT}`, color: f.amount < 0 ? C.neg : C.blueDark }}>{ft(f.amount)}</span>}
+                    {f.kind === 'unplanned' && <span style={{ font: `700 15px ${FONT}`, color: f.amount < 0 ? C.neg : C.inc }}>{ft(f.amount)}</span>}
                     {f.kind === 'overdue' && (
                       <>
                         <span style={{ font: `700 15px ${FONT}`, color: C.neg }}>{ft(f.amount)}</span>
@@ -588,7 +588,7 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
       : `Először fordul elő → javaslat: ${section === 'out' ? 'előre nem látható költség' : 'egyszeri bevétel'}.`;
   return (
     <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.ink, background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>💡 {text}</span>
+      <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.ink, background: C.bg2, borderRadius: R.lg, padding: '8px 10px' }}>💡 {text}</span>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {chosen && leaf && (
           <Pill small kind="primary" onClick={assign}>
@@ -653,7 +653,7 @@ export function FlagBanner({ n, kinds, onClick, mobile }: { n: number; kinds: st
         width: mobile ? 'calc(100% - 32px)' : '100%',
         border: `1px solid ${C.negLight}`,
         background: C.negBg,
-        borderRadius: 14,
+        borderRadius: R.lg,
         padding: '13px 16px',
         display: 'flex',
         alignItems: 'center',
@@ -760,7 +760,7 @@ export function NavInvoiceModal({ number, onClose }: { number: string; onClose: 
               )}
             </div>
             {/* tételsorok: keskeny kijelzőn is olvasható (név, alatta mennyiség × egységár · nettó · ÁFA, jobbra a bruttó) */}
-            <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden' }}>
               {inv.lines.map((l, i) => (
                 <div
                   key={i}

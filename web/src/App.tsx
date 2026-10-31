@@ -8,7 +8,7 @@ import { Mobile } from './Mobile';
 import { StoreProvider } from './store';
 import { PartnerCardHost } from './PartnerCard';
 import { APP_VERSION, VERSION_LABEL } from './version';
-import { C, FONT, FONT_H, inputStyle } from './ui';
+import { C, FONT, FONT_H, inputStyle, R } from './ui';
 
 function useIsMobile() {
   const q = '(max-width: 900px)';
@@ -164,7 +164,7 @@ function Shell({ title, sub, children }: { title: string; sub?: string; children
             </span>
           </div>
         </div>
-        <div style={{ background: '#fff', borderRadius: 20, padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ background: '#fff', borderRadius: R.lg, padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <div style={{ font: `700 20px ${FONT_H}`, color: C.navy }}>{title}</div>
             {sub && <div style={{ font: `400 13.5px/1.5 ${FONT}`, color: C.muted, marginTop: 6 }}>{sub}</div>}
@@ -177,7 +177,7 @@ function Shell({ title, sub, children }: { title: string; sub?: string; children
   );
 }
 
-const big: React.CSSProperties = { ...inputStyle, height: 48, fontSize: 16, borderRadius: 12 };
+const big: React.CSSProperties = { ...inputStyle, height: 48, fontSize: 16, borderRadius: R.lg };
 
 function Login({ setup, onDone }: { setup: boolean; onDone: () => void }) {
   const [f, setF] = useState({ email: '', password: '', totp: '', token: '', name: '' });
@@ -373,7 +373,7 @@ function Setup2fa({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogo
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'stretch' }}>
         {t ? (
           <>
-            <img src={t.qr} width={180} height={180} alt="2FA QR kód" style={{ alignSelf: 'center', borderRadius: 10, border: `1px solid ${C.line}` }} />
+            <img src={t.qr} width={180} height={180} alt="2FA QR kód" style={{ alignSelf: 'center', borderRadius: R.lg, border: `1px solid ${C.line}` }} />
             <a href={t.url} style={{ font: `600 13.5px ${FONT}`, textAlign: 'center' }}>
               Megnyitás hitelesítő alkalmazásban (ezen a telefonon)
             </a>

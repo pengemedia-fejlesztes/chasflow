@@ -19,7 +19,7 @@ import { setCellValue } from './logic';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
-import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime } from './ui';
+import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
 export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'breakeven' | 'settings';
 const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'breakeven', 'settings'];
@@ -150,7 +150,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           const left = last - Number(t.slice(8, 10));
           return (
             <div
-              style={{ margin: '0 14px 14px', padding: '10px 12px', borderRadius: 10, background: C.navy3, display: 'flex', flexDirection: 'column', gap: 2 }}
+              style={{ margin: '0 14px 14px', padding: '10px 12px', borderRadius: R.lg, background: C.navy3, display: 'flex', flexDirection: 'column', gap: 2 }}
             >
               <span style={{ font: `600 10px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>Most</span>
               <b style={{ font: `700 15px ${FONT_H}`, color: '#fff' }}>
@@ -180,7 +180,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
               }}
             >
               <span>+ Új tétel</span>
-              <span style={{ font: `600 11px ${FONT}`, background: 'rgba(255,255,255,.18)', borderRadius: 6, padding: '2px 7px' }}>N</span>
+              <span style={{ font: `600 11px ${FONT}`, background: 'rgba(255,255,255,.18)', borderRadius: R.md, padding: '2px 7px' }}>N</span>
             </button>
           </div>
         )}
@@ -189,6 +189,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             <button
               key={v}
               className="side-btn"
+              aria-current={view === v ? 'page' : undefined}
               onClick={() => setView(v)}
               style={{
                 display: 'flex',
@@ -198,7 +199,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
                 cursor: 'pointer',
                 textAlign: 'left',
                 padding: '10px 12px',
-                borderRadius: 8,
+                borderRadius: R.md,
                 background: view === v ? C.navy3 : 'transparent',
                 color: '#fff',
                 font: `600 14px ${FONT}`,
@@ -260,7 +261,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
                       cursor: 'pointer',
                       textAlign: 'left',
                       padding: '8px 12px',
-                      borderRadius: 8,
+                      borderRadius: R.md,
                       background: view === 'cat' && filters.groupId === g.id ? C.navy3 : 'transparent',
                       color: '#fff',
                       font: `500 13.5px ${FONT}`,
@@ -412,7 +413,7 @@ function HeroKpi(p: { label: string; value: string; sub: string; color?: string;
         flexDirection: 'column',
         gap: 4,
         padding: p.boxed ? '10px 12px' : '10px 0',
-        borderRadius: 10,
+        borderRadius: R.lg,
         background: p.boxed ? C.bg2 : 'transparent',
         minWidth: 0,
       }}
@@ -497,7 +498,7 @@ function ComboChart({ bars, profit }: { bars: ChartBar[]; profit: ChartBar[] }) 
               transform: 'translateX(-50%)',
               background: '#fff',
               border: `1px solid ${C.line}`,
-              borderRadius: 8,
+              borderRadius: R.md,
               padding: '6px 10px',
               font: `500 12px ${FONT}`,
               color: C.ink,
@@ -525,10 +526,10 @@ function ComboChart({ bars, profit }: { bars: ChartBar[]; profit: ChartBar[] }) 
           <i style={{ width: 18, height: 2.5, background: C.navy, display: 'inline-block' }} /> egyenleg hó végén
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <i style={{ width: 10, height: 10, borderRadius: 2, background: C.blue, display: 'inline-block' }} /> havi eredmény (tény)
+          <i style={{ width: 10, height: 10, borderRadius: R.sm, background: C.blue, display: 'inline-block' }} /> havi eredmény (tény)
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <i style={{ width: 10, height: 10, borderRadius: 2, background: '#C3DAEA', display: 'inline-block' }} /> terv
+          <i style={{ width: 10, height: 10, borderRadius: R.sm, background: '#C3DAEA', display: 'inline-block' }} /> terv
         </span>
       </div>
     </div>
@@ -536,7 +537,7 @@ function ComboChart({ bars, profit }: { bars: ChartBar[]; profit: ChartBar[] }) 
 }
 const NEG_C = C.neg;
 /** eltérés színe: kék = jó irány, piros = rosszabb a tervnél */
-const devColor = (sec: string | undefined, diff: number) => (!diff ? C.muted : diff > 0 === (sec !== 'out') ? C.blueDark : C.neg);
+const devColor = (sec: string | undefined, diff: number) => (!diff ? C.muted : diff > 0 === (sec !== 'out') ? C.inc : C.neg);
 
 /** Eltérés a tervtől az aktuális hónapban: lezárt (tényhez kötött) tervek, ahol a tény eltért. */
 function DeviationPanel() {
@@ -623,7 +624,7 @@ function DeviationPanel() {
           );
         })}
       </div>
-      <span style={{ font: `400 11.5px ${FONT}`, color: C.muted, marginTop: 10 }}>kék = jó irány · piros = rosszabb a tervnél</span>
+      <span style={{ font: `400 11.5px ${FONT}`, color: C.muted, marginTop: 10 }}>zöld = jó irány · piros = rosszabb a tervnél</span>
     </div>
   );
 }
@@ -776,6 +777,7 @@ function Overview({
             value={filters.search}
             onChange={(e) => st.setFilters({ search: e.target.value })}
             placeholder="Keresés…"
+            aria-label="Keresés a táblázatban"
             style={{ border: `1px solid ${C.line2}`, borderRadius: 999, padding: '9px 16px', font: `500 13px ${FONT}`, width: 200, outline: 'none' }}
           />
           {canEdit && (
@@ -904,7 +906,7 @@ function Overview({
                 gridRow: 2,
                 padding: '10px 12px',
                 textAlign: 'right',
-                background: c.current ? '#EEF4F9' : '#fff',
+                background: c.current ? C.bg2 : '#fff',
                 font: `700 13px ${FONT_H}`,
                 color: C.navy,
               }}
@@ -927,7 +929,7 @@ function Overview({
             <Cell
               key={i}
               h={rowH + 16}
-              bg={cols[i].current ? '#E1ECF5' : 'transparent'}
+              bg={cols[i].current ? C.bg2 : 'transparent'}
               fg={!Math.round(v) ? C.muted : v < 0 ? NEG : C.blueDark}
               fw={700}
               size={15}
@@ -1076,7 +1078,7 @@ function Overview({
                       alignItems: 'center',
                       justifyContent: 'flex-end',
                       padding: '0 12px',
-                      background: isEd ? C.bg2 : col.current ? (isSec ? '#EEF2F7' : '#F7FAFC') : 'transparent',
+                      background: isEd ? C.bg2 : col.current ? (isSec ? C.bg2 : '#F7FAFC') : 'transparent',
                       color: fg,
                       font: `${isSec ? 700 : isGroup ? 600 : 400} 13.5px ${FONT}`,
                       fontVariantNumeric: 'tabular-nums',

@@ -20,22 +20,10 @@ import { PartnerNames, PartnersView, usePartners } from './PartnersView';
 import { PlanActualView } from './PlanActualView';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, card } from './ui';
+import { C, FONT, FONT_H, card, R } from './ui';
 
 export type StatId =
-  | 'target'
-  | 'season'
-  | 'offers'
-  | 'tax'
-  | 'pva'
-  | 'trend'
-  | 'liquidity'
-  | 'aging'
-  | 'partners'
-  | 'concentration'
-  | 'discipline'
-  | 'names'
-  | 'costs';
+  'target' | 'season' | 'offers' | 'tax' | 'pva' | 'trend' | 'liquidity' | 'aging' | 'partners' | 'concentration' | 'discipline' | 'names' | 'costs';
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const dd = (d: string) => d.replace(/-/g, '.') + '.';
@@ -355,7 +343,7 @@ export function StatsHub({
                     {p.invoices.length} számla · {p.lateCount} késve fizetve{p.outstanding ? ` · lejárt: ${fmt(p.outstanding)} Ft` : ''}
                   </span>
                 </span>
-                <b style={{ font: `700 14px ${FONT}`, color: (p.avgLate || 0) > 3 ? C.neg : '#1A7340' }}>
+                <b style={{ font: `700 14px ${FONT}`, color: (p.avgLate || 0) > 3 ? C.neg : C.inc }}>
                   {(p.avgLate || 0) <= 0 ? 'határidőre' : `${Math.round(p.avgLate!)} nap késés`}
                 </b>
               </div>
@@ -377,7 +365,7 @@ export function StatsHub({
                       height: 40,
                       width: 150,
                       border: `1.5px solid ${C.line2}`,
-                      borderRadius: 10,
+                      borderRadius: R.lg,
                       padding: '0 10px',
                       font: `700 15px ${FONT_H}`,
                       color: C.navy,
@@ -433,7 +421,7 @@ export function StatsHub({
                         </span>
                         <span>
                           Cél 12 hónapra: <b>{fmt(goal)} Ft</b> ·{' '}
-                          <b style={{ color: sum >= goal ? '#1A7340' : C.neg }}>
+                          <b style={{ color: sum >= goal ? C.inc : C.neg }}>
                             {sum >= goal ? '+' : ''}
                             {fmt(sum - goal)}
                           </b>
@@ -445,7 +433,7 @@ export function StatsHub({
                           </b>
                         </span>
                         {offers !== 0 && (
-                          <span style={{ color: '#8A6D1C' }}>
+                          <span style={{ color: C.offer }}>
                             ajánlatokkal: <b>{fmt(sum + offers)} Ft</b>
                           </span>
                         )}
@@ -463,7 +451,7 @@ export function StatsHub({
                         {monthLong(t.ym)} {t.forecast ? <span style={{ color: C.muted, fontWeight: 500 }}>({t.ym > ix.cur ? 'terv' : 'várható'})</span> : null}
                       </span>
                       <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(t.net)}</b>
-                      <b style={{ font: `700 12.5px ${FONT}`, minWidth: 92, textAlign: 'right', color: t.ok ? '#1A7340' : C.neg }}>
+                      <b style={{ font: `700 12.5px ${FONT}`, minWidth: 92, textAlign: 'right', color: t.ok ? C.inc : C.neg }}>
                         {t.ok ? '✓ cél teljesült' : `${fmt(t.gap)}`}
                       </b>
                     </div>
@@ -484,11 +472,11 @@ export function StatsHub({
             </Note>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', font: `500 12px ${FONT}`, color: C.muted }}>
               <span>
-                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: 2, background: C.muted2, marginRight: 5, verticalAlign: -1 }} />
+                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: R.sm, background: C.muted2, marginRight: 5, verticalAlign: -1 }} />
                 átlag
               </span>
               <span>
-                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: 2, background: C.blue, marginRight: 5, verticalAlign: -1 }} />
+                <i style={{ display: 'inline-block', width: 12, height: 10, borderRadius: R.sm, background: C.blue, marginRight: 5, verticalAlign: -1 }} />
                 elmúlt év (tény)
               </span>
               <span>
@@ -497,7 +485,7 @@ export function StatsHub({
                     display: 'inline-block',
                     width: 12,
                     height: 10,
-                    borderRadius: 2,
+                    borderRadius: R.sm,
                     border: `1.5px dashed ${C.navy}`,
                     marginRight: 5,
                     verticalAlign: -2,
@@ -531,7 +519,7 @@ export function StatsHub({
                   <div key={r.m} style={{ padding: '8px 0', borderTop: `1px solid ${C.line3}`, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                       <b style={{ flex: 1, font: `700 13.5px ${FONT}`, color: C.navy }}>{MSL[r.m - 1]}</b>
-                      <b style={{ font: `700 12.5px ${FONT}`, color: r.index < 85 ? C.neg : r.index > 115 ? '#1A7340' : C.muted }}>
+                      <b style={{ font: `700 12.5px ${FONT}`, color: r.index < 85 ? C.neg : r.index > 115 ? C.inc : C.muted }}>
                         {r.index}% {r.index < 85 ? '· gyenge' : r.index > 115 ? '· erős' : ''}
                       </b>
                     </div>
@@ -668,7 +656,7 @@ export function StatsHub({
                 <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <b style={{ font: `700 15px ${FONT}`, color: C.navy }}>{c.title}</b>
                   <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{c.desc}</span>
-                  {c.value && <span style={{ font: `700 13px ${FONT}`, color: c.red ? C.neg : C.blueDark }}>{c.value}</span>}
+                  {c.value && <span style={{ font: `700 13px ${FONT}`, color: c.red ? C.neg : C.inc }}>{c.value}</span>}
                 </span>
                 <span style={{ font: `600 18px ${FONT}`, color: C.blueDark }}>›</span>
               </button>
@@ -706,7 +694,7 @@ function CostRow({ label, sub, v, prev, total }: { label: string; sub?: string; 
           {label} {sub && <span style={{ color: C.muted, fontWeight: 500, fontSize: 12 }}>· {sub}</span>}
         </span>
         <b style={{ font: `700 13px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(v)}</b>
-        <span style={{ font: `600 11.5px ${FONT}`, minWidth: 44, textAlign: 'right', color: ch === null ? C.muted : ch > 0.05 ? C.neg : '#1A7340' }}>
+        <span style={{ font: `600 11.5px ${FONT}`, minWidth: 44, textAlign: 'right', color: ch === null ? C.muted : ch > 0.05 ? C.neg : C.inc }}>
           {ch === null ? 'új' : `${ch > 0 ? '+' : ''}${Math.round(ch * 100)}%`}
         </span>
       </div>

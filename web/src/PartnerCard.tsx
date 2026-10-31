@@ -17,7 +17,7 @@ import { MobilePartnerScreen } from './MobileFlows';
 import { PartnerModal } from './PartnerModal';
 import { PartnerSheet } from './PartnerSheet';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle } from './ui';
+import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle, R } from './ui';
 
 type Kind = NonNullable<Partner['kind']> | 'auto';
 const KIND_LABEL: Record<NonNullable<Partner['kind']>, string> = { vevo: 'Vevő', szallito: 'Szállító', mindketto: 'Vevő és szállító' };
@@ -189,7 +189,7 @@ export function PartnerEditor({
           </div>
         </PanelRow>
         <PanelRow title="Felismert nevek" sub="cégnév, Billingo-, banki név, üzlet/kút neve">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', border: `1px solid ${C.line2}`, borderRadius: 10, padding: 6 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', border: `1px solid ${C.line2}`, borderRadius: R.lg, padding: 6 }}>
             {aliases.map((a) => (
               <span
                 key={a}
@@ -213,6 +213,7 @@ export function PartnerEditor({
                       persist({ aliases: next });
                     }}
                     title="Eltávolítás"
+                    aria-label="Név eltávolítása"
                     style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 13px ${FONT}`, padding: '0 4px' }}
                   >
                     ×
@@ -316,7 +317,7 @@ export function PartnerEditor({
               display: 'grid',
               gridTemplateColumns: 'minmax(150px,1fr) minmax(0,1fr)',
               border: `1px solid ${C.line}`,
-              borderRadius: 12,
+              borderRadius: R.lg,
               overflow: 'hidden',
             }}
           >
@@ -335,7 +336,7 @@ export function PartnerEditor({
                       justifyContent: 'space-between',
                       gap: 8,
                       border: 0,
-                      borderRadius: 8,
+                      borderRadius: R.md,
                       padding: '8px 10px',
                       background: on ? C.bg : 'transparent',
                       font: `${mine ? 700 : 500} 13.5px ${FONT}`,
@@ -457,7 +458,7 @@ export function PartnerEditor({
           {browse && <FolderTree p={p} kind={k} canEdit={canEdit} onMove={moveLeaf} onAdd={addRole} />}
         </SettingRow>
         <SettingRow title="Nevek" sub="Ezek alapján párosít és összevon: cégnév, Billingo-, NAV-, banki név, üzlet neve">
-          <div style={{ border: `1px solid ${C.line2}`, borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ border: `1px solid ${C.line2}`, borderRadius: R.lg, overflow: 'hidden' }}>
             {aliases.map((a) => {
               const where = occ.get(a) || [];
               return (
@@ -481,6 +482,7 @@ export function PartnerEditor({
                         persist({ aliases: next });
                       }}
                       title="Eltávolítás"
+                      aria-label="Név eltávolítása"
                       style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 15px ${FONT}`, padding: '0 4px' }}
                     >
                       ×
@@ -665,6 +667,7 @@ export function PartnerEditor({
                         persist({ aliases: next });
                       }}
                       title="Eltávolítás"
+                      aria-label="Név eltávolítása"
                       style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 14px ${FONT}`, padding: '0 4px' }}
                     >
                       ×
@@ -850,7 +853,7 @@ function LeafActions({ leafId, siblings, onDone }: { leafId: string; siblings: {
       style={{
         margin: '2px 0 8px 8px',
         padding: 10,
-        borderRadius: 10,
+        borderRadius: R.lg,
         background: C.bg,
         display: 'flex',
         flexDirection: 'column',
@@ -954,7 +957,7 @@ function FolderTree({
           flex: '1 1 260px',
           minWidth: 0,
           border: `1px solid ${C.line2}`,
-          borderRadius: 12,
+          borderRadius: R.lg,
           padding: 10,
           display: 'flex',
           flexDirection: 'column',
@@ -980,7 +983,7 @@ function FolderTree({
                     width: '100%',
                     textAlign: 'left',
                     border: 0,
-                    borderRadius: 8,
+                    borderRadius: R.md,
                     padding: '6px 8px',
                     background: on ? C.bg3 : pick === g.id ? C.bg2 : 'transparent',
                     font: `${on ? 700 : 500} 13px ${FONT}`,
@@ -1010,7 +1013,7 @@ function FolderTree({
                               background: self ? C.bg3 : 'transparent',
                               textAlign: 'left',
                               padding: '3px 8px',
-                              borderRadius: 6,
+                              borderRadius: R.md,
                               font: `${self ? 700 : 500} 12.5px ${FONT}`,
                               color: self ? C.navy : C.blueDark,
                               cursor: self && !canEdit ? 'default' : 'pointer',
@@ -1267,8 +1270,8 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
                 alignItems: 'center',
                 gap: 18,
                 padding: '14px 18px',
-                borderRadius: 12,
-                background: '#FDF5F3',
+                borderRadius: R.lg,
+                background: C.negBg,
                 border: `1px solid #F3D9D3`,
                 flexWrap: 'wrap',
               }}
@@ -1362,7 +1365,7 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
       {sec === 'out' && normalizeText(ix.groupById[L?.group_id || '']?.label || '').includes('alvallalkoz') && <SheetLink leafId={leafId} />}
       {sec === 'in' && avgLate != null && avgLate > 5 && (
         // a tényleges fizetési szokás: átlagos késés a határidőhöz képest → javasolt tervezési nap (10-re kerekítve)
-        <div style={{ background: C.bg, borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ background: C.bg, borderRadius: R.lg, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <b style={{ font: `600 15px ${FONT}`, color: C.navy }}>Valójában átlag {Math.round(avgLate)} nap késéssel fizet</b>
           <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>
             Javaslat: a cashflow-tervben számolj {Math.max(10, Math.round(((mode === 'inv' ? clamp('inv', n) : 8) + avgLate) / 10) * 10)} nappal.
@@ -1584,7 +1587,7 @@ export function PlannedTasks({ p, onEdit }: { p: PartnerStat; onEdit: (leaf: str
             </span>
             {r.offer && canEdit && (
               <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `600 13px ${FONT}`, color: '#1A7340', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `600 13px ${FONT}`, color: C.inc, cursor: 'pointer' }}>
                   <input type="checkbox" checked={false} onChange={() => accept(r)} style={{ width: 18, height: 18, cursor: 'pointer' }} />
                   Elfogadva
                 </label>
@@ -1737,10 +1740,18 @@ export function PartnerLink({ leaf, children, style }: { leaf: string; children:
   return (
     <span
       role="button"
+      tabIndex={0}
       title="Partner adatlapja"
       onClick={(ev) => {
         ev.stopPropagation();
         openPartner(leaf);
+      }}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openPartner(leaf);
+        }
       }}
       className="partner-link"
       style={{ cursor: 'pointer', ...style }}
@@ -1871,6 +1882,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Keresés névben, felismert névben…"
+            aria-label="Partner keresése névben, felismert névben"
             style={{ ...inputStyle, height: 42, width: 380, borderRadius: 999, padding: '0 18px' }}
           />
           <select
@@ -1936,6 +1948,11 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                   <div
                     key={p.key}
                     onClick={() => setSel(p.key)}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={on}
+                    aria-label={`${p.name} kiválasztása`}
+                    onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setSel(p.key))}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: COLS,
@@ -1944,7 +1961,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                       padding: '10px 18px 10px 15px',
                       borderTop: `1px solid ${C.line3}`,
                       borderLeft: `3px solid ${on ? C.blue : 'transparent'}`,
-                      background: on ? '#EEF4F9' : '#fff',
+                      background: on ? C.bg2 : '#fff',
                       cursor: 'pointer',
                     }}
                   >
@@ -1982,7 +1999,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                       style={{
                         textAlign: 'right',
                         font: `700 14.5px ${FONT}`,
-                        color: v12 > 0 ? C.blueDark : v12 < 0 ? C.navy : C.faint,
+                        color: v12 > 0 ? C.inc : v12 < 0 ? C.navy : C.faint,
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
@@ -2031,12 +2048,12 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                         justifyContent: 'space-between',
                         gap: 8,
                         padding: '10px 14px',
-                        borderRadius: 10,
+                        borderRadius: R.lg,
                         background: C.bg,
                       }}
                     >
                       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{l}</span>
-                      <b style={{ font: `800 19px ${FONT_H}`, color: v > 0 ? C.blueDark : C.navy, fontVariantNumeric: 'tabular-nums' }}>{v ? money(v) : '–'}</b>
+                      <b style={{ font: `800 19px ${FONT_H}`, color: v > 0 ? C.inc : C.navy, fontVariantNumeric: 'tabular-nums' }}>{v ? money(v) : '–'}</b>
                     </div>
                   ))}
                 </div>

@@ -6,7 +6,7 @@ import { api } from './api';
 import { LeafPicker } from './LeafPicker';
 import { PartnerLink } from './PartnerCard';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Pill, Seg, card, inputStyle } from './ui';
+import { C, FONT, FONT_H, Pill, Seg, card, inputStyle, R } from './ui';
 
 interface ContainsRow {
   id: string;
@@ -136,7 +136,7 @@ export function RulesTab() {
           </div>
         </div>
         {canEdit && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: C.bg, borderRadius: 12, padding: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: C.bg, borderRadius: R.lg, padding: 12 }}>
             <span style={{ font: `700 13.5px ${FONT_H}`, color: C.navy }}>Új párosítás</span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <input
@@ -326,7 +326,7 @@ export function RulesTab() {
                     )}
                   </div>
                   {editing === key && (
-                    <div style={{ background: C.bg, borderRadius: 10, padding: 10 }}>
+                    <div style={{ background: C.bg, borderRadius: R.lg, padding: 10 }}>
                       <LeafPicker
                         section={G.section}
                         value={r.leaf_id}

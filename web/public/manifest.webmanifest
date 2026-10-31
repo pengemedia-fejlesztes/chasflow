@@ -3,8 +3,8 @@
   "short_name": "Cashflow",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#002040",
-  "theme_color": "#002040",
+  "background_color": "#14233A",
+  "theme_color": "#14233A",
   "lang": "hu",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },

@@ -7,7 +7,7 @@ import { REP, repStep, ruleDateFor, ruleOf, dateIn, genSeries, rowKey, signed } 
 import { payRuleLabel } from '../../shared/workdays';
 import { LeafPicker } from './LeafPicker';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, eyebrow, inputStyle } from './ui';
+import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, eyebrow, inputStyle, R } from './ui';
 
 export interface EditTarget {
   key: string; // rowKey
@@ -165,7 +165,7 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                 display: 'flex',
                 alignItems: 'center',
                 border: `1.5px solid ${C.blue}`,
-                borderRadius: 14,
+                borderRadius: R.lg,
                 padding: '0 14px',
                 background: C.bg2,
               }}
@@ -199,7 +199,7 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
               value={f.name}
               onChange={(e) => set({ name: e.target.value })}
               placeholder="Megnevezés (pl. Ügyfél – SEO)"
-              style={{ ...inputStyle, flex: '1 1 240px', height: 60, borderRadius: 14, padding: '0 16px', fontSize: 15 }}
+              style={{ ...inputStyle, flex: '1 1 240px', height: 60, borderRadius: R.lg, padding: '0 16px', fontSize: 15 }}
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -230,7 +230,7 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                   inputMode="numeric"
                   value={f.day}
                   onChange={(e) => set({ day: e.target.value.replace(/\D/g, '').slice(0, 2) })}
-                  style={{ width: 52, height: 34, border: `1px solid ${C.line2}`, borderRadius: 8, textAlign: 'center', font: `600 13px ${FONT}` }}
+                  style={{ width: 52, height: 34, border: `1px solid ${C.line2}`, borderRadius: R.md, textAlign: 'center', font: `600 13px ${FONT}` }}
                 />
               </label>
             )}

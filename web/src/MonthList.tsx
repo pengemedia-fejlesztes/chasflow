@@ -6,7 +6,7 @@ import type { Entry } from '../../shared/types';
 import { PartnerLink } from './PartnerCard';
 import { CalendarSheet } from './DatePicker';
 import { useStore } from './store';
-import { C, FONT, FONT_H } from './ui';
+import { C, FONT, FONT_H, R } from './ui';
 
 export type RowFilter = { actual: boolean; plan: boolean; offer: boolean };
 const FKEY = 'cf_month_filter_v1';
@@ -95,7 +95,7 @@ export function MonthList(props: {
             minHeight: 54,
             border: `1.5px solid ${devN ? C.negLight : C.line2}`,
             background: devN ? C.negBg : C.bg2,
-            borderRadius: 14,
+            borderRadius: R.lg,
             padding: '10px 14px',
             display: 'flex',
             alignItems: 'center',
@@ -158,8 +158,8 @@ function Row(p: {
   // eltérés iránya: a tény − terv (nyers, előjeles) pozitív = bevételnél több jött be, kiadásnál kevesebbet fizettünk → jó (zöld)
   const good = r.dev && !r.late && r.diff > 0;
   const red = r.late || (r.dev && !good);
-  const GOOD = '#1A7340',
-    GOOD_BG = '#E8F4EC';
+  const GOOD = C.inc,
+    GOOD_BG = C.incBg;
   const chip =
     r.kind === 'merged'
       ? 'Terv → Tény'
@@ -196,7 +196,7 @@ function Row(p: {
         minHeight: 68,
         border: `1.5px solid ${s ? C.blue : red ? C.negLight : good ? '#9FD3B2' : C.line}`,
         background: s ? C.bg2 : '#fff',
-        borderRadius: 14,
+        borderRadius: R.lg,
         padding: '12px 14px',
         display: 'flex',
         alignItems: 'center',
@@ -210,7 +210,7 @@ function Row(p: {
             width: 24,
             height: 24,
             flex: 'none',
-            borderRadius: 7,
+            borderRadius: R.md,
             border: `2px solid ${!planId ? C.line : s ? C.blue : C.line2}`,
             background: s ? C.blue : '#fff',
             color: '#fff',
@@ -238,7 +238,7 @@ function Row(p: {
           alignItems: 'center',
           lineHeight: 1.05,
           padding: '6px 0',
-          borderRadius: 10,
+          borderRadius: R.lg,
           background: red ? C.negBg : good ? GOOD_BG : r.completed ? C.bg2 : C.bg,
           outline: canPick ? `1px dashed ${red ? C.negLight : C.line2}` : undefined,
         }}
@@ -274,9 +274,9 @@ function Row(p: {
             style={{
               padding: '2px 8px',
               borderRadius: 999,
-              background: unplanned(r) ? '#FFF6DE' : r.completed ? '#fff' : r.kind === 'offer' ? '#FFF6DE' : C.bg2,
+              background: unplanned(r) ? C.offerBg : r.completed ? '#fff' : r.kind === 'offer' ? C.offerBg : C.bg2,
               border: unplanned(r) ? '1px solid #E8C770' : r.completed ? `1px solid ${C.line2}` : 0,
-              color: r.kind === 'offer' || unplanned(r) ? '#8A6D1C' : C.blueDark,
+              color: r.kind === 'offer' || unplanned(r) ? C.offer : C.blueDark,
               font: `600 11px ${FONT}`,
               whiteSpace: 'nowrap',
             }}

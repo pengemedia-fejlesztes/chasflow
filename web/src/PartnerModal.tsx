@@ -19,7 +19,7 @@ import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc,
 import { CalendarSheet } from './DatePicker';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, card, eyebrow, inputStyle } from './ui';
+import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, card, eyebrow, inputStyle, R } from './ui';
 
 /** Ütemezés: a „Részletekben” (twice) egyszeri tétel 2–4 külön fizetéssel (saját összeg és dátum), sorozat nélkül */
 type Mode = Rep | 'twice';
@@ -59,9 +59,9 @@ function MonthDots({ all, today, onPick }: { all: Entry[]; today: string; onPick
             style={{
               width: 14,
               height: 14,
-              borderRadius: 4,
+              borderRadius: R.sm,
               cursor: 'pointer',
-              background: st === 'done' ? C.blue : st === 'plan' ? (late ? '#F6C9C1' : '#D6E4EF') : 'transparent',
+              background: st === 'done' ? C.blue : st === 'plan' ? (late ? C.negLight : C.bg2) : 'transparent',
               border: st === 'gap' ? `1.5px dashed ${C.line2}` : 0,
             }}
           />
@@ -311,7 +311,7 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                 />
               ))}
               {open === 'new' && (
-                <div style={{ ...card, borderRadius: 16, overflow: 'hidden' }}>
+                <div style={{ ...card, borderRadius: R.lg, overflow: 'hidden' }}>
                   <NewItem
                     key={focusYm || 'cur'}
                     initYm={focusYm}
@@ -338,13 +338,13 @@ export function PartnerModal({ leaf, edit, onClose }: { leaf?: string | null; ed
                   {(
                     [
                       ['fizetve', { background: C.blue }],
-                      ['tervezett', { background: '#D6E4EF' }],
-                      ['lejárt', { background: '#F6C9C1' }],
+                      ['tervezett', { background: C.bg2 }],
+                      ['lejárt', { background: C.negLight }],
                       ['kihagyva / üres', { border: `1.5px dashed ${C.line2}` }],
                     ] as [string, React.CSSProperties][]
                   ).map(([l, st]) => (
                     <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      <i style={{ width: 14, height: 14, borderRadius: 4, ...st }} />
+                      <i style={{ width: 14, height: 14, borderRadius: R.sm, ...st }} />
                       {l}
                     </span>
                   ))}
@@ -394,7 +394,7 @@ function ClosedItems({ leaf, focusKey, keyOf }: { leaf: string; focusKey: string
   const sum = links.reduce((a, l) => a + (l.diff || 0), 0);
   const sec = ix.sectionOf(leaf);
   return (
-    <div style={{ ...card, marginTop: 6, borderRadius: 16, overflow: 'hidden' }}>
+    <div style={{ ...card, marginTop: 6, borderRadius: R.lg, overflow: 'hidden' }}>
       <button
         onClick={() => setShow(!show)}
         style={{
@@ -749,7 +749,7 @@ function ItemRow({
   const pctOf = (e: Entry) => (grossTotal ? `${Math.round((Math.abs(e.amount) / grossTotal) * 100)}%` : '–');
 
   return (
-    <div style={{ ...card, borderRadius: 16, background: '#fff', overflow: 'hidden' }}>
+    <div style={{ ...card, borderRadius: R.lg, background: '#fff', overflow: 'hidden' }}>
       <button
         onClick={onToggle}
         style={{
@@ -984,7 +984,7 @@ function ItemRow({
                   ) && onSave({ delete: editable.map((e) => e.id), rejected: true }, `Ajánlat elutasítva: ${it.name} – lezárva, kikerült a tervből`)
                 }
               >
-                <span style={{ color: '#B3261E' }}>✕ Elutasítva</span>
+                <span style={{ color: C.neg }}>✕ Elutasítva</span>
               </Pill>
             )}
             <Pill
@@ -1051,8 +1051,8 @@ const md = (d: string) => `${d.slice(5, 7)}. ${d.slice(8, 10)}.`;
 const instLabel = (i: number, n: number) => (i === 0 ? 'előleg' : i === n - 1 ? 'végteljesítés' : `${i + 1}. részlet`);
 const labelStrong: React.CSSProperties = { font: `700 14px ${FONT}`, color: C.navy };
 const labelSoft: React.CSSProperties = { font: `500 14px ${FONT}`, color: C.muted };
-const nameInputStyle: React.CSSProperties = { ...inputStyle, height: 50, borderRadius: 12, font: `500 16px ${FONT}`, padding: '0 16px' };
-const formBox: React.CSSProperties = { border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden', background: '#fff' };
+const nameInputStyle: React.CSSProperties = { ...inputStyle, height: 50, borderRadius: R.lg, font: `500 16px ${FONT}`, padding: '0 16px' };
+const formBox: React.CSSProperties = { border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden', background: '#fff' };
 const boxFoot: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -1066,7 +1066,7 @@ const boxFoot: React.CSSProperties = {
 };
 const chipStyle = (active: boolean, disabled = false): React.CSSProperties => ({
   border: `1px solid ${active ? C.navy : C.line2}`,
-  borderRadius: 8,
+  borderRadius: R.md,
   minWidth: 36,
   height: 34,
   padding: '0 12px',
@@ -1137,7 +1137,7 @@ function WrapSeg<T extends string | number>({ value, options, onChange }: { valu
         maxWidth: '100%',
         background: C.bg,
         border: `1px solid ${C.line}`,
-        borderRadius: 22,
+        borderRadius: R.lg,
         padding: 3,
         gap: 2,
       }}
@@ -1219,7 +1219,7 @@ function AmountBox({
           alignItems: 'center',
           height: 62,
           border: `1.5px solid ${C.blue}`,
-          borderRadius: 12,
+          borderRadius: R.lg,
           padding: '0 18px',
           background: C.bg2,
         }}
@@ -1321,7 +1321,7 @@ function PartsTable({
               alignItems: 'center',
               height: 44,
               border: `1px solid ${C.line2}`,
-              borderRadius: 10,
+              borderRadius: R.lg,
               padding: '0 12px',
               background: r.lock ? C.bg3 : '#fff',
             }}
@@ -1375,7 +1375,7 @@ interface TimelinePoint {
 /** „Így kerül a cashflow-ba”: pontonként összeg, dátum és címke */
 function CashflowTimeline({ points, more, note }: { points: TimelinePoint[]; more?: number; note?: string }) {
   return (
-    <div style={{ background: C.bg, borderRadius: 12, padding: '14px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ background: C.bg, borderRadius: R.lg, padding: '14px 18px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <span style={eyebrow}>Így kerül a cashflow-ba</span>
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))` }}>
@@ -1865,12 +1865,12 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
         const paid = isAct || !!e.done || doc?.payment_status === 'paid' || nav?.status === 'paid';
         const late = e.date < data.today;
         const [txt, fg, bg] = paid
-          ? ['fizetve ✓', '#2E7D4F', '#E8F4EC']
+          ? ['fizetve ✓', C.inc, C.incBg]
           : doc || nav
-            ? [late ? 'kiszámlázva, nincs fizetve' : 'kiszámlázva', late ? C.neg : C.blueDark, late ? C.negBg : C.bg2]
+            ? [late ? 'kiszámlázva, nincs fizetve' : 'kiszámlázva', late ? C.neg : C.inc, late ? C.negBg : C.bg2]
             : late
               ? ['nincs kiszámlázva', C.neg, C.negBg]
-              : ['terv', '#8A6D1C', '#FFF9E6'];
+              : ['terv', C.offer, C.offerBg];
         return (
           <span
             key={e.id}
@@ -2027,7 +2027,7 @@ function MonthList({
     onApply({ upsert: [{ ...e, date: nd, period: periodOf(e) }] }, `${it.name} – ${monthName(periodOf(e))}: később számlázzuk, fizetés ${dot(nd)}`);
   };
   return (
-    <div ref={boxRef} style={{ display: 'flex', flexDirection: 'column', borderRadius: 12, border: `1px solid ${C.line3}`, overflowX: 'auto' }}>
+    <div ref={boxRef} style={{ display: 'flex', flexDirection: 'column', borderRadius: R.lg, border: `1px solid ${C.line3}`, overflowX: 'auto' }}>
       {dating && (
         <CalendarSheet
           value={dating.date}
@@ -2053,12 +2053,12 @@ function MonthList({
                 ...ROW,
                 borderTop: `1px solid ${C.line3}`,
                 font: `500 13px ${FONT}`,
-                background: '#FFF7F6',
+                background: C.negBg,
                 ...hl(e.gap),
               }}
             >
               {title(e.gap)}
-              <span style={{ ...ellip, gridColumn: '2 / span 3', color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
+              <span style={{ ...ellip, gridColumn: '2 / span 3', color: C.neg, fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
               <span style={ACTS}>
                 {tpl && editable.length + closed.length > 0 && (
                   <button type="button" style={mini()} title={`Felvétel: ${fmt(Math.abs(tpl.amount))} Ft`} onClick={() => addMonth(e.gap)}>
@@ -2099,7 +2099,7 @@ function MonthList({
                     <span style={{ ...ellip, fontVariantNumeric: 'tabular-nums' }} title={`terv ${fmt(pl)} Ft · tény ${fmt(ac)} Ft`}>
                       <b>{fmt(ac)} Ft</b>
                       {d !== 0 && (
-                        <b style={{ marginLeft: 6, font: `700 11.5px ${FONT}`, color: good ? '#1A7340' : C.neg }}>
+                        <b style={{ marginLeft: 6, font: `700 11.5px ${FONT}`, color: good ? C.inc : C.neg }}>
                           {d > 0 ? '▲' : '▼'} {fmt(Math.abs(d))}
                         </b>
                       )}
@@ -2109,7 +2109,7 @@ function MonthList({
               ) : (
                 <span style={{ ...ellip, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</span>
               )}
-              <span style={statusPill('#2E7D4F', '#E3F2E9')} title={e.kind === 'actual' ? 'befizetve, terv nélkül' : undefined}>
+              <span style={statusPill(C.inc, '#E3F2E9')} title={e.kind === 'actual' ? 'befizetve, terv nélkül' : undefined}>
                 ✓ {e.kind === 'actual' ? 'terv nélkül' : act ? 'fizetve' : 'kész'}
               </span>
               <span style={ACTS}>
@@ -2193,9 +2193,9 @@ function MonthList({
                 NAV-számla
               </span>
             ) : late ? (
-              <span style={statusPill('#B3261E', C.negBg)}>még nincs kiszámlázva</span>
+              <span style={statusPill(C.neg, C.negBg)}>még nincs kiszámlázva</span>
             ) : (
-              <span style={statusPill('#8A6D1C', '#FBF3DC')}>terv</span>
+              <span style={statusPill(C.offer, '#FBF3DC')}>terv</span>
             )}
             {canEdit && !doc ? (
               <span style={moving === e.id ? { ...ACTS, gridColumn: '1 / -1', justifyContent: 'flex-start', flexWrap: 'wrap' } : ACTS}>

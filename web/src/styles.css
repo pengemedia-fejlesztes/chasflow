@@ -1,87 +1,186 @@
+/* Globális alapok és állapot-stílusok – a színek a ui.tsx C tokenjeivel egyeznek („Banki főkönyv” arculat). */
+:root {
+  --c-navy: #14233a;
+  --c-navy3: #2a3f5c;
+  --c-blue: #1f4e79;
+  --c-ink: #1d2430;
+  --c-muted: #55606d;
+  --c-line: #e2ded5;
+  --c-line2: #ccc7bb;
+  --c-bg: #f5f3ee;
+  --c-bg2: #e8eef4;
+  --c-bg3: #faf9f6;
+  --c-neg: #a3392a;
+  --focus: 0 0 0 2px #fff, 0 0 0 4px #1f4e79;
+}
 * {
   box-sizing: border-box;
 }
 html,
 body {
   margin: 0;
-  background: #f4f7fb;
-  color: #1f2933;
-  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--c-bg);
+  color: var(--c-ink);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* a számok mindenhol egyforma szélességűek (táblázatokban oszlopba rendeződnek) */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
 }
 a {
-  color: #1e6488;
+  color: var(--c-blue);
   text-decoration: none;
 }
 a:hover {
-  color: #287faa;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 button,
 input,
-select {
+select,
+textarea {
   font-family: inherit;
+  font-variant-numeric: tabular-nums;
 }
 button {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
-.hov-primary:hover:not(:disabled) {
-  background: #3d9bd0 !important;
+
+/* ── fókusz: billentyűzetes használatnál mindig látható gyűrű ── */
+:focus {
+  outline: none;
 }
-.hov-dark:hover:not(:disabled) {
-  background: #163350 !important;
+:focus-visible,
+button:focus-visible,
+a:focus-visible,
+[role='button']:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus) !important;
 }
-.hov-ghost:hover:not(:disabled) {
-  border-color: #002040 !important;
-}
-.hov-light:hover:not(:disabled) {
-  background: #dceaf4 !important;
-}
-.side-btn:hover {
-  background: #163350 !important;
-}
-.add-btn:hover {
-  background: #287faa !important;
-  color: #fff !important;
-  border-color: #287faa !important;
-}
-.row-hover:hover {
-  background: #fafbfc !important;
-}
-.cell-empty:hover:not(:disabled) {
-  border-color: #287faa !important;
-}
-.icon-btn:hover {
-  background: #eaf2f8 !important;
-  color: #1e6488 !important;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (max-width: 900px) {
-  input,
-  select {
-    font-size: 16px !important;
-  } /* iOS: ne zoomoljon be fókuszkor */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--c-blue) !important;
+  box-shadow: 0 0 0 3px rgba(31, 78, 121, 0.18) !important;
 }
 
-/* alsó lapok: a mezők és gombok ne nyomódjanak össze, ha a lap görgethető */
-.sheet > * {
-  flex-shrink: 0;
+/* ── letiltott ── */
+button:disabled,
+[aria-disabled='true'],
+input:disabled,
+select:disabled,
+fieldset:disabled button {
+  opacity: 0.5;
+  cursor: not-allowed !important;
 }
-input,
-select,
-textarea {
-  box-sizing: border-box;
+
+/* ── hover ── */
+.hov-primary:hover:not(:disabled) {
+  background: #163a5c !important;
+}
+.hov-dark:hover:not(:disabled) {
+  background: var(--c-navy3) !important;
+}
+.hov-ghost:hover:not(:disabled),
+.hov-danger:hover:not(:disabled) {
+  border-color: var(--c-navy) !important;
+  background: var(--c-bg3) !important;
+}
+.hov-light:hover:not(:disabled) {
+  background: #dae4ee !important;
+}
+.seg-btn:hover:not([aria-pressed='true']) {
+  color: var(--c-ink) !important;
+  background: rgba(20, 35, 58, 0.05) !important;
+}
+.side-btn:hover {
+  background: var(--c-navy3) !important;
+}
+.add-btn:hover {
+  background: var(--c-blue) !important;
+  color: #fff !important;
+  border-color: var(--c-blue) !important;
+}
+.row-hover:hover {
+  background: var(--c-bg3) !important;
+}
+.cell-empty:hover:not(:disabled) {
+  border-color: var(--c-blue) !important;
+}
+.icon-btn:hover {
+  background: var(--c-bg2) !important;
+  color: var(--c-blue) !important;
 }
 .partner-link:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
+/* ── betöltés ── */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+.is-loading {
+  animation: pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ── üres állapot ── */
+.empty-state {
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--c-muted);
+  font-size: 14px;
+  border: 1px dashed var(--c-line2);
+  border-radius: 8px;
+  background: var(--c-bg3);
+}
+
+/* csak képernyőolvasónak */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  input,
+  select {
+    font-size: 16px !important;
+  } /* iOS: ne zoomoljon be fókuszkor */
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* alsó lapok: a mezők és gombok ne nyomódjanak össze, ha a lap görgethető */
+.sheet > * {
+  flex-shrink: 0;
+}
+
 dialog::backdrop {
-  background: rgba(0, 32, 64, 0.45);
+  background: rgba(20, 35, 58, 0.42);
 }

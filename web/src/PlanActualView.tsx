@@ -27,7 +27,7 @@ interface Row {
 function Diff({ v, good, muted }: { v: number | null; good: boolean; muted?: boolean }) {
   if (v === null) return <span style={{ color: C.faint }}>–</span>;
   const bad = good ? v < 0 : v > 0;
-  const color = !Math.round(v) ? C.muted : bad ? C.neg : '#1A7340';
+  const color = !Math.round(v) ? C.muted : bad ? C.neg : C.inc;
   return (
     <span style={{ color: muted ? C.muted : color, fontWeight: 700 }}>
       {v > 0 ? '+' : v < 0 ? '−' : ''}
@@ -190,7 +190,7 @@ export function PlanActualView({ mobile }: { mobile?: boolean }) {
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 7,
-                borderLeft: `4px solid ${r.ym > ix.cur || dp === null || r.ym === ix.cur ? C.line2 : dp < 0 ? '#E36B57' : '#1A7340'}`,
+                borderLeft: `4px solid ${r.ym > ix.cur || dp === null || r.ym === ix.cur ? C.line2 : dp < 0 ? '#E36B57' : C.inc}`,
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -282,7 +282,7 @@ export function PlanActualView({ mobile }: { mobile?: boolean }) {
             {rows.map((r) => {
               const p = prof(r);
               return (
-                <tr key={r.ym} style={{ background: r.ym === ix.cur ? '#F7FAFD' : undefined }}>
+                <tr key={r.ym} style={{ background: r.ym === ix.cur ? C.bg3 : undefined }}>
                   {td(<b style={{ color: C.navy }}>{monthLong(r.ym)}</b>, { left: true })}
                   {td(<span style={{ font: `600 11.5px ${FONT}`, color: r.ym === ix.cur ? C.blue : C.muted }}>{status(r)}</span>, { left: true })}
                   {td(n(r.planIn, r.hasPlan), { sep: true })}

@@ -4,7 +4,7 @@ import { normalizeText } from '../../shared/categories';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
-import { C, FONT, Pill, Seg, card, inputStyle, relTime } from './ui';
+import { C, FONT, Pill, Seg, card, inputStyle, relTime, R } from './ui';
 
 interface TrashRow {
   rid: number;
@@ -83,12 +83,12 @@ export function TrashTab() {
             <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>
               {r.name || r.leaf_label || 'Tétel'}
               {r.tentative ? (
-                <span style={{ marginLeft: 8, font: `600 11px ${FONT}`, color: C.blueDark, background: C.bg2, borderRadius: 6, padding: '2px 6px' }}>
+                <span style={{ marginLeft: 8, font: `600 11px ${FONT}`, color: C.blueDark, background: C.bg2, borderRadius: R.md, padding: '2px 6px' }}>
                   ajánlat
                 </span>
               ) : null}
               {r.kind === 'actual' ? (
-                <span style={{ marginLeft: 8, font: `600 11px ${FONT}`, color: C.muted, background: C.bg, borderRadius: 6, padding: '2px 6px' }}>tény</span>
+                <span style={{ marginLeft: 8, font: `600 11px ${FONT}`, color: C.muted, background: C.bg, borderRadius: R.md, padding: '2px 6px' }}>tény</span>
               ) : null}
             </span>
             <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>

@@ -5,15 +5,14 @@ import { fmt, monthLong } from '../../shared/model';
 import type { Entry, Section } from '../../shared/types';
 import { CalendarSheet } from './DatePicker';
 import { itemLabel } from './MonthList';
-import { C, FONT, FONT_H } from './ui';
+import { C, FONT, FONT_H, R } from './ui';
 
 export type SchedKind = 'actual' | 'plan' | 'offer' | 'est';
 const WD = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
 const KIND_LABEL: Record<SchedKind, string> = { actual: 'Tény', plan: 'Terv', offer: 'Ajánlat', est: 'Becslés' };
 
 /** a sor fajtája: tény (vagy késznek jelölt terv), nyitott terv, ajánlat, becslés */
-export const schedKind = (e: Entry): SchedKind =>
-  e.source === 'estimate' ? 'est' : e.kind === 'actual' || e.done ? 'actual' : e.tentative ? 'offer' : 'plan';
+export const schedKind = (e: Entry): SchedKind => (e.source === 'estimate' ? 'est' : e.kind === 'actual' || e.done ? 'actual' : e.tentative ? 'offer' : 'plan');
 
 export function MonthSchedule(p: {
   m: string;
@@ -56,9 +55,9 @@ export function MonthSchedule(p: {
   const badge = (e: Entry): [string, string, string] => {
     const k = schedKind(e);
     if (k === 'est') return ['BECSLÉS', '#6B5BA8', '#F1EEFA'];
-    if (k === 'offer') return ['AJÁNLAT', '#8A6D1C', '#FFF6DE'];
+    if (k === 'offer') return ['AJÁNLAT', C.offer, C.offerBg];
     if (k === 'actual') return [e.kind === 'plan' ? '✓ KÉSZ' : 'TÉNY', C.blueDark, C.bg2];
-    return e.date < p.today ? ['LEJÁRT', C.neg, C.negBg] : ['TERV', C.muted, '#EEF2F7'];
+    return e.date < p.today ? ['LEJÁRT', C.neg, C.negBg] : ['TERV', C.muted, C.bg2];
   };
   return (
     <div
@@ -113,11 +112,13 @@ export function MonthSchedule(p: {
         ))}
       </div>
       <div style={{ font: `600 13px ${FONT}`, color: C.muted }}>
-        {rows.length} tétel · be <b style={{ color: '#1A7340' }}>+{fmt(sum('in'))}</b> · ki <b style={{ color: C.neg }}>−{fmt(Math.abs(sum('out')))}</b> · egyenleg{' '}
+        {rows.length} tétel · be <b style={{ color: C.inc }}>+{fmt(sum('in'))}</b> · ki <b style={{ color: C.neg }}>−{fmt(Math.abs(sum('out')))}</b> · egyenleg{' '}
         <b style={{ color: sum('in') + sum('out') < 0 ? C.neg : C.navy }}>{fmt(sum('in') + sum('out'))}</b>
       </div>
       {!rows.length && (
-        <div style={{ background: '#fff', border: `1px dashed ${C.line2}`, borderRadius: 14, padding: '20px 14px', font: `500 13.5px ${FONT}`, color: C.muted }}>
+        <div
+          style={{ background: '#fff', border: `1px dashed ${C.line2}`, borderRadius: R.lg, padding: '20px 14px', font: `500 13.5px ${FONT}`, color: C.muted }}
+        >
           Ebben a hónapban nincs (a szűrőknek megfelelő) tétel.
         </div>
       )}
@@ -128,11 +129,9 @@ export function MonthSchedule(p: {
               {d.slice(5).replace('-', '.')}. {WD[new Date(d + 'T12:00:00').getDay()]}
             </b>
             <span style={{ flex: 1 }} />
-            <span style={{ font: `600 12px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>
-              {fmt(es.reduce((a, e) => a + e.amount, 0))}
-            </span>
+            <span style={{ font: `600 12px ${FONT}`, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>{fmt(es.reduce((a, e) => a + e.amount, 0))}</span>
           </div>
-          <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
+          <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden' }}>
             {es.map((e, i) => {
               const sec = p.sectionOf(e.leaf_id);
               const partner = p.leafLabel(e.leaf_id);
@@ -167,7 +166,7 @@ export function MonthSchedule(p: {
                       flex: 'none',
                       textAlign: 'center',
                       padding: '4px 0',
-                      borderRadius: 8,
+                      borderRadius: R.md,
                       outline: canDate ? `1px dashed ${C.line2}` : undefined,
                       font: `800 14px ${FONT_H}`,
                       color: bl === 'LEJÁRT' ? C.neg : C.navy,
@@ -176,7 +175,9 @@ export function MonthSchedule(p: {
                     {Number(e.date.slice(8))}.
                   </span>
                   <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ font: `600 14px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{partner}</span>
+                    <span style={{ font: `600 14px ${FONT}`, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {partner}
+                    </span>
                     <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
                       <span
                         style={{
@@ -193,14 +194,16 @@ export function MonthSchedule(p: {
                         {bl}
                       </span>
                       {item && (
-                        <span style={{ font: `500 12px ${FONT}`, color: C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item}</span>
+                        <span style={{ font: `500 12px ${FONT}`, color: C.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {item}
+                        </span>
                       )}
                     </span>
                   </span>
                   <b
                     style={{
                       font: `700 14px ${FONT}`,
-                      color: sec === 'in' ? '#1A7340' : C.neg,
+                      color: sec === 'in' ? C.inc : C.neg,
                       fontVariantNumeric: 'tabular-nums',
                       whiteSpace: 'nowrap',
                       opacity: e.tentative || est ? 0.65 : 1,
