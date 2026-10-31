@@ -110,7 +110,7 @@ export async function promoteOfferLeaves(env: Env): Promise<number> {
     env.DB.prepare('SELECT id, label, section FROM groups'),
     env.DB.prepare(
       `SELECT e.id, e.leaf_id FROM entries e JOIN leaves l ON l.id = e.leaf_id JOIN groups g ON g.id = l.group_id
-       WHERE g.section = 'in' AND (lower(g.label) LIKE '%ajánlat%' OR lower(g.label) LIKE '%ajanlat%') AND COALESCE(e.tentative, 0) = 0
+       WHERE e.date >= date('now', '-400 days') AND g.section = 'in' AND (lower(g.label) LIKE '%ajánlat%' OR lower(g.label) LIKE '%ajanlat%') AND COALESCE(e.tentative, 0) = 0
          AND (e.kind = 'actual' OR e.ext_ref LIKE 'billingo:%' OR e.accepted_at IS NOT NULL)`,
     ),
   ]);

@@ -244,7 +244,7 @@ export async function fillPartnerKind(env: Env): Promise<number> {
     env.DB.prepare(
       `SELECT l.label, g.section, max(CASE WHEN e.source IN ('billingo', 'nav') OR e.ext_ref LIKE 'billingo:%' OR e.ext_ref LIKE 'bpaid:%' THEN 1 ELSE 0 END) AS inv
        FROM entries e JOIN leaves l ON l.id = e.leaf_id JOIN groups g ON g.id = l.group_id
-       WHERE COALESCE(e.tentative, 0) = 0 AND (e.kind = 'actual' OR e.source IN ('billingo', 'nav')) GROUP BY l.label, g.section`,
+       WHERE e.date >= date('now', '-400 days') AND COALESCE(e.tentative, 0) = 0 AND (e.kind = 'actual' OR e.source IN ('billingo', 'nav')) GROUP BY l.label, g.section`,
     ),
     env.DB.prepare('SELECT key, kind FROM partners'),
   ]);

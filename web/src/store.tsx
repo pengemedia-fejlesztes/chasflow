@@ -90,10 +90,27 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
     }
   }, [showToast]);
 
+  // változásfigyelés: percenként egyetlen sor (adat-verzió); a teljes adat csak akkor töltődik újra, ha változott
+  // (a teljes újratöltés sok sort olvas – a Cloudflare D1 napi olvasási kerete ezt nem bírja, ha percenként fut)
+  const rev = useRef<string | null>(null);
   useEffect(() => {
-    const onFocus = () => document.visibilityState === 'visible' && reload();
+    let busy = false;
+    const check = async () => {
+      if (busy || document.visibilityState !== 'visible') return;
+      busy = true;
+      try {
+        const r = await api<{ rev: string }>('/api/version');
+        if (rev.current !== null && r.rev !== rev.current) await reload();
+        rev.current = r.rev;
+      } catch {
+        // csendben: a következő ellenőrzés újra próbálja
+      } finally {
+        busy = false;
+      }
+    };
+    const onFocus = () => check();
     document.addEventListener('visibilitychange', onFocus);
-    const iv = window.setInterval(() => document.visibilityState === 'visible' && reload(), 120_000);
+    const iv = window.setInterval(check, 60_000);
     return () => {
       document.removeEventListener('visibilitychange', onFocus);
       window.clearInterval(iv);

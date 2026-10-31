@@ -399,7 +399,14 @@ export async function syncAll(env: Env) {
     res.linkedSameMonthError = e.message;
   }
   try {
-    res.monthNames = (await env.DB.prepare(RECURRING_MONTH_SQL).run()).meta?.changes ?? 0;
+    // csak a tegnap óta módosult tervekre (a teljes tábla végigolvasása drága a D1 napi olvasási keretéhez képest)
+    // csak a mostani időszak tervei (a dátum-indexen – a teljes tábla végigolvasása drága a D1 napi olvasási keretéhez képest)
+    res.monthNames =
+      (
+        await env.DB.prepare(
+          RECURRING_MONTH_SQL.replace("WHERE kind = 'plan'", "WHERE date >= date('now', '-45 days') AND date <= date('now', '+400 days') AND kind = 'plan'"),
+        ).run()
+      ).meta?.changes ?? 0;
   } catch (e: any) {
     res.monthNamesError = e.message;
   }

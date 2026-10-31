@@ -75,6 +75,9 @@ async function route(req: Request, env: Env): Promise<Response> {
     throw new HttpError(401, 'Bejelentkezés szükséges.');
   }
 
+  // olcsó változásfigyelés: az oldal csak ezt az egy sort kérdezi percenként, és csak változáskor tölti újra az adatokat
+  if (path === '/api/version' && req.method === 'GET') return json({ rev: (await getSetting(env, 'data_rev')) || '0' });
+
   const acc = await handleAccount(env, req, path, u);
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
@@ -92,10 +95,18 @@ async function route(req: Request, env: Env): Promise<Response> {
   throw new HttpError(404, 'Nincs ilyen végpont.');
 }
 
+const bumpRev = (env: Env) =>
+  env.DB.prepare("INSERT INTO settings (key, value) VALUES ('data_rev', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .bind(String(Date.now()))
+    .run();
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     try {
-      return withSecurityHeaders(await route(req, env));
+      const res = await route(req, env);
+      // minden sikeres módosítás után új adat-verzió (a megnyitott oldalak ebből tudják, hogy újra kell tölteni)
+      if (req.method !== 'GET' && res.status < 400) await bumpRev(env).catch(() => null);
+      return withSecurityHeaders(res);
     } catch (e: any) {
       if (e instanceof HttpError) return withSecurityHeaders(json({ error: e.message }, e.status));
       console.error(e);
@@ -104,7 +115,13 @@ export default {
         const u = new URL(req.url);
         const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'server_errors'").first<{ value: string }>();
         const list: unknown[] = JSON.parse(row?.value || '[]');
-        list.unshift({ at: new Date().toISOString(), m: req.method, p: u.pathname, e: String(e?.message || e).slice(0, 300), s: String(e?.stack || '').slice(0, 400) });
+        list.unshift({
+          at: new Date().toISOString(),
+          m: req.method,
+          p: u.pathname,
+          e: String(e?.message || e).slice(0, 300),
+          s: String(e?.stack || '').slice(0, 400),
+        });
         await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('server_errors', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
           .bind(JSON.stringify(list.slice(0, 20)))
           .run();
@@ -133,7 +150,7 @@ export default {
     ctx.waitUntil(
       syncAll(env)
         .then(
-          (r) => console.log('sync', JSON.stringify(r)),
+          (r) => (console.log('sync', JSON.stringify(r)), bumpRev(env)),
           (e) => console.error('sync failed', e),
         )
         // új, terv nélküli tételek (NAV-számla, banki tétel) → e-mail az adminoknak (ha van levélküldő)
