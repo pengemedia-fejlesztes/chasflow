@@ -73,6 +73,9 @@ export function PartnerSheet({
     if (!e) return fb;
     const sn = e.series_id && seriesName.get(e.series_id);
     if (sn && !hasMonth(sn)) return `${sn} – ${monthLong(e.period || ymOf(e.date)).replace(/^\d+\.\s*/, '')}`;
+    // Billingo-számlából jött terv: a név „Cégnév · Penge / 2026-000001 …” – ebből nincs tételnév, csak „Számla – hónap”
+    const raw = (e.name || '').replace(/\s*·\s*\S+\s*\/\s*\d{4}-\d+.*$/, '').trim();
+    if (!raw || raw !== e.name?.trim()) return `Számla – ${monthLong(e.period || ymOf(e.date)).replace(/^\d+\.\s*/, '')}`;
     return itemLabel(e.name, p.name) || sn || fb;
   };
   const planOfActual = usePlanOfActual();

@@ -700,16 +700,29 @@ function TermRow({ leafId, sec, avgLate }: { leafId: string; sec: Section; avgLa
           ? `számla + ${L?.pay_days ?? payDefaults(data.settings, sec).payDays} nap (alapértelmezett)`
           : payRuleLabel(rule)}
       </span>
-      <Seg
-        small
+      <select
         value={mode}
-        onChange={(v: string) => {
-          if (!canEdit) return;
-          setMode(v);
-          save(v);
+        disabled={!canEdit}
+        onChange={(e) => {
+          setMode(e.target.value);
+          save(e.target.value);
         }}
-        options={TERM_MODES as any}
-      />
+        style={{
+          ...inputStyle,
+          height: 42,
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          border: `1.5px solid ${C.blue}`,
+          font: `600 14px ${FONT}`,
+          color: C.navy,
+        }}
+      >
+        {TERM_MODES.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
       {(mode === 'inv' || mode === 'day') && (
         <label style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13.5px ${FONT}`, color: C.ink }}>
           {mode === 'inv' ? 'Fizetési határidő:' : 'A hónap napja:'}
