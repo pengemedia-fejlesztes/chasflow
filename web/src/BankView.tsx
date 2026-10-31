@@ -1,10 +1,10 @@
 // Bankszinkron: számlák egyenlege, beérkezett banki tételek jóváhagyása (kategória + terv párosítás).
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
-import { TxCard } from './TxCard';
+import { BANK_COLS, TxCard } from './TxCard';
 import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
@@ -24,17 +24,46 @@ export function BankView({ mobile }: { mobile?: boolean }) {
   const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
   const ready = inbox.filter((t) => t.leaf_id || (t.amount < 0 && unforeseen));
   const [freqIn, freqOut] = useFrequentLeaves();
+  // asztalon táblázat: egy sor van lenyitva (alapból az első); Enter = jóváhagy, K = kihagy, ↓/↑ = következő/előző
+  const [openId, setOpenId] = useState<string | null>(null);
+  const curOpen = openId === 'none' ? null : openId && inbox.some((t) => t.id === openId) ? openId : inbox[0]?.id || null;
+  const acts = useRef<{ approve: () => void; skip: () => void } | null>(null);
+  acts.current = null; // a lenyitott sor a saját renderelésekor tölti ki
+  useEffect(() => {
+    if (mobile || !canEdit) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || e.metaKey || e.ctrlKey) return;
+      const i = inbox.findIndex((t) => t.id === curOpen);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const n = inbox[i + (e.key === 'ArrowDown' ? 1 : -1)];
+        if (n) {
+          e.preventDefault();
+          setOpenId(n.id);
+        }
+      } else if (e.key === 'Enter' && acts.current) {
+        e.preventDefault();
+        acts.current.approve();
+      } else if ((e.key === 'k' || e.key === 'K') && acts.current) {
+        e.preventDefault();
+        acts.current.skip();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inbox, curOpen, mobile, canEdit]);
+  const inboxSum = inbox.reduce((a, t) => a + t.amount, 0);
 
   return (
-    <div style={{ padding: mobile ? '14px 16px 120px' : '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1180 }}>
+    <div style={{ padding: mobile ? '14px 16px 120px' : '24px 28px 120px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {!mobile && (
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.blue, marginBottom: 8 }}>Bankszinkron</div>
             <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Beérkezett banki tételek</h1>
-            <p style={{ margin: '10px 0 0', font: `400 15px/1.5 ${FONT}`, color: C.muted, maxWidth: '62ch' }}>
-              A rendszer kategóriát javasol és párosítja a tervvel (pl. Billingo számlával). A tény mindig a banki dátumra kerül; ha ismétlődő, a következő
-              hónapoktól terv is készül belőle.
+            <p style={{ margin: '8px 0 0', font: `400 14px/1.5 ${FONT}`, color: C.muted }}>
+              Kategóriát javaslunk és tervvel (pl. Billingo-számlával) párosítunk · a tény a banki dátumra kerül · ismétlődőnél a következő hónapoktól terv is
+              készül
             </p>
           </div>
           {canEdit && (
@@ -72,6 +101,21 @@ export function BankView({ mobile }: { mobile?: boolean }) {
             Nincs bekötött bankszámla. Beállítások › Bankkapcsolat (BiNX, Magnet – PSD2), vagy kivonat (CSV) import.
           </span>
         )}
+        {accounts.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              paddingRight: mobile ? 0 : 28,
+              marginRight: mobile ? 0 : 4,
+              borderRight: mobile ? 0 : `1px solid ${C.navy3}`,
+            }}
+          >
+            <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {stamp(lastSync)}</span>
+            <span style={{ font: `800 28px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ix.bankBalance != null ? fmt(ix.bankBalance) + ' Ft' : '—'}</span>
+            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan: 5, 9, 13, 17, 21 órakor</span>
+          </div>
+        )}
         {accounts.map((a) => (
           <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
             <div
@@ -105,13 +149,6 @@ export function BankView({ mobile }: { mobile?: boolean }) {
             </div>
           </div>
         ))}
-        {accounts.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', marginLeft: 'auto' }}>
-            <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {stamp(lastSync)}</span>
-            <span style={{ font: `800 20px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ix.bankBalance != null ? fmt(ix.bankBalance) + ' Ft' : '—'}</span>
-            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan: 5, 9, 13, 17, 21 órakor</span>
-          </div>
-        )}
       </div>
 
       {inbox.length === 0 && (
@@ -121,9 +158,50 @@ export function BankView({ mobile }: { mobile?: boolean }) {
         </div>
       )}
 
-      {inbox.map((t) => (
-        <TxCard key={t.id} t={t} frequent={t.amount >= 0 ? freqIn : freqOut} unforeseen={unforeseen} mobile={mobile} />
-      ))}
+      {mobile && inbox.map((t) => <TxCard key={t.id} t={t} frequent={t.amount >= 0 ? freqIn : freqOut} unforeseen={unforeseen} mobile />)}
+      {!mobile && inbox.length > 0 && (
+        <>
+          <div style={{ display: 'flex', gap: 22, alignItems: 'baseline', flexWrap: 'wrap', font: `400 14px ${FONT}`, color: C.muted, padding: '0 4px' }}>
+            <span>
+              <b style={{ color: C.navy }}>{inbox.length} tétel</b> vár jóváhagyásra
+            </span>
+            <span>
+              összesen{' '}
+              <b style={{ color: C.navy }}>
+                {inboxSum > 0 ? '+' : inboxSum < 0 ? '−' : ''}
+                {fmt(Math.abs(inboxSum))} Ft
+              </b>
+            </span>
+            <span>
+              <b style={{ color: C.blueDark }}>{inbox.filter((t) => t.leaf_id).length}</b> kategória javasolva
+            </span>
+            <span>
+              <b style={{ color: C.navy }}>{inbox.filter((t) => t.plan_id).length}</b> tervhez párosítva
+            </span>
+            {canEdit && <span style={{ marginLeft: 'auto', font: `400 12.5px ${FONT}` }}>Enter = jóváhagy · K = kihagy · ↓ = következő</span>}
+          </div>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: BANK_COLS, gap: 12, padding: '12px 18px 12px 21px' }}>
+              {['Dátum', 'Bank', 'Partner · közlemény', 'Kategória', 'Terv', 'Ismétlődik', 'Összeg', ''].map((h, i) => (
+                <span key={i} style={{ ...eyebrow, textAlign: i === 6 ? 'right' : 'left' }}>
+                  {h}
+                </span>
+              ))}
+            </div>
+            {inbox.map((t) => (
+              <TxCard
+                key={t.id}
+                t={t}
+                frequent={t.amount >= 0 ? freqIn : freqOut}
+                unforeseen={unforeseen}
+                open={t.id === curOpen}
+                onToggle={() => setOpenId(t.id === curOpen ? 'none' : t.id)}
+                actions={t.id === curOpen ? acts : undefined}
+              />
+            ))}
+          </div>
+        </>
+      )}
       {mobile && canEdit && ready.length > 1 && (
         <Pill kind="primary" onClick={() => approve(ready.map((t) => t.id))} style={{ height: 50 }}>
           Mind jóváhagyása ({ready.length})

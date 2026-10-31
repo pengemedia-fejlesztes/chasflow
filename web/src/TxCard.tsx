@@ -32,9 +32,29 @@ const labelBase: React.CSSProperties = {
   paddingTop: 8,
 };
 const row: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' };
+/** az asztali tábla oszlopai (fejléc és sorok közösen) */
+export const BANK_COLS = '62px 76px minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 100px 110px 196px';
 const chips: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 0 };
 
-export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequent: string[]; unforeseen: string | null; mobile?: boolean }) {
+export function TxCard({
+  t,
+  frequent,
+  unforeseen,
+  mobile,
+  open,
+  onToggle,
+  actions,
+}: {
+  t: BankTx;
+  frequent: string[];
+  unforeseen: string | null;
+  mobile?: boolean;
+  /** asztali táblasor: lenyitva látszik a teljes szerkesztő */
+  open?: boolean;
+  onToggle?: () => void;
+  /** a lenyitott sor műveletei a billentyűkhöz (Enter = jóváhagy, K = kihagy) */
+  actions?: { current: { approve: () => void; skip: () => void } | null };
+}) {
   // telefonon a címke a gombok fölé kerül
   const label: React.CSSProperties = mobile ? { ...labelBase, minWidth: 0, width: '100%', paddingTop: 0 } : labelBase;
   const { ix, data, run, canEdit, showToast } = useStore();
@@ -128,6 +148,363 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
     );
   };
 
+  const skip = () =>
+    run(
+      () => api('/api/bank/ignore', { body: { ids: [t.id] } }),
+      'Tétel kihagyva',
+      () => api('/api/bank/ignore', { body: { ids: [t.id], undo: true } }),
+    );
+  if (open && actions) actions.current = { approve, skip };
+
+  if (!mobile) {
+    // asztali táblasor (látványterv): összefoglaló sor, lenyitva a szerkesztő két oszlopban
+    const L = leaf ? ix.leafById[leaf] : null;
+    const repLabel = { once: 'Egyszeri', monthly: 'Havonta', quarterly: 'Negyedévente', yearly: 'Évente' }[rep as string] || 'Egyszeri';
+    const groupsSec = ix.groups.filter((g) => g.section === section);
+    const curG = openG || L?.group_id || groupsSec[0]?.id || null;
+    const sub: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted };
+    return (
+      <div style={{ borderTop: `1px solid ${C.line}`, borderLeft: `3px solid ${open ? C.blue : 'transparent'}`, background: '#fff' }}>
+        <div
+          onClick={onToggle}
+          style={{ display: 'grid', gridTemplateColumns: BANK_COLS, gap: 12, alignItems: 'center', padding: '14px 18px', cursor: 'pointer' }}
+        >
+          <b style={{ font: `600 14.5px ${FONT}`, color: C.navy }}>{t.date.slice(5).replace('-', '.')}.</b>
+          <span>
+            <span style={{ padding: '3px 9px', borderRadius: 6, background: C.bg, font: `500 12px ${FONT}`, color: C.muted }}>{acc?.bank_name || '—'}</span>
+          </span>
+          <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {name || t.partner || '(ismeretlen partner)'}
+            </b>
+            <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {[acc?.bank_name, t.memo].filter(Boolean).join(' · ')}
+            </span>
+          </span>
+          <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+            {L ? (
+              <>
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    background: C.bg2,
+                    color: C.blueDark,
+                    font: `600 13px ${FONT}`,
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  ✓ {L.label}
+                </span>
+                <span style={{ font: `400 11.5px ${FONT}`, color: C.faint }}>{displayGroup(ix.groupById[L.group_id]?.label || '')}</span>
+              </>
+            ) : (
+              <span style={{ font: `500 13px ${FONT}`, color: C.neg }}>nincs kategória</span>
+            )}
+          </span>
+          <span style={{ font: `400 13.5px ${FONT}`, color: planE ? C.navy : C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {planE ? planE.name || 'terv' : 'Nincs terv – új tény'}
+          </span>
+          <span style={{ font: `400 13.5px ${FONT}`, color: C.ink }}>{repLabel}</span>
+          <b
+            style={{
+              font: `700 17px ${FONT_H}`,
+              color: t.amount > 0 ? C.blueDark : C.navy,
+              fontVariantNumeric: 'tabular-nums',
+              textAlign: 'right',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t.amount > 0 ? '+' : '−'}
+            {fmt(Math.abs(t.amount))}
+          </b>
+          {canEdit ? (
+            <span style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+              <Pill small onClick={skip}>
+                Kihagy
+              </Pill>
+              <Pill small kind="dark" disabled={!leaf} onClick={approve}>
+                Jóváhagy ✓
+              </Pill>
+            </span>
+          ) : (
+            <span />
+          )}
+        </div>
+
+        {open && canEdit && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.25fr) minmax(0,1fr)', gap: 24, padding: '0 18px 18px 230px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+              <span style={sub}>Megnevezés</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Mi volt ez?"
+                style={{ ...inputStyle, height: 42, font: `500 15px ${FONT}` }}
+              />
+              <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflowWrap: 'anywhere' }}>
+                Teljes közlemény: {[acc?.bank_name, t.partner, t.memo].filter(Boolean).join(' · ')}
+              </span>
+              <span style={{ ...sub, marginTop: 6 }}>Kategória</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {leafChips.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    title={displayGroup(ix.groupById[l.group_id]?.label || '')}
+                    onClick={() => pickLeaf(l.id)}
+                    style={chip(leaf === l.id)}
+                  >
+                    {leaf === l.id ? '✓ ' : ''}
+                    {l.label}
+                  </button>
+                ))}
+                <input
+                  value={catQ}
+                  onChange={(e) => {
+                    setCatQ(e.target.value);
+                    setNewGroupFor(null);
+                  }}
+                  placeholder="🔍 keresés vagy új…"
+                  style={{ ...inputStyle, height: 32, width: 170, borderRadius: 999, fontSize: 12.5 }}
+                />
+                {q && !exact && (
+                  <button type="button" onClick={() => setNewGroupFor(catQ.trim())} style={{ ...chip(false), borderStyle: 'dashed', color: C.blueDark }}>
+                    + Új: „{catQ.trim()}”
+                  </button>
+                )}
+              </div>
+              {newGroupFor && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', background: C.bg2, borderRadius: 10, padding: '8px 10px' }}>
+                  <span style={{ font: `600 12px ${FONT}`, color: C.muted }}>Melyik csoport?</span>
+                  {groupsSec.map((g) => (
+                    <button key={g.id} type="button" onClick={() => createLeaf(g.id)} style={chip(false)}>
+                      {displayGroup(g.label)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(180px,.8fr) minmax(0,1.6fr)',
+                  border: `1px solid ${C.line}`,
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    borderRight: `1px solid ${C.line}`,
+                    padding: 6,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 1,
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {groupsSec.map((g) => {
+                    const cnt = sectionLeaves.filter((l) => l.group_id === g.id).length;
+                    const on = curG === g.id;
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => setOpenG(g.id)}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          border: 0,
+                          borderRadius: 8,
+                          padding: '7px 10px',
+                          background: on ? C.bg : 'transparent',
+                          font: `${on ? 700 : 500} 13.5px ${FONT}`,
+                          color: C.navy,
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <span>{displayGroup(g.label)}</span>
+                        <span style={{ font: `500 11.5px ${FONT}`, color: C.faint }}>{cnt}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ padding: 10, display: 'flex', gap: 7, flexWrap: 'wrap', alignContent: 'flex-start', maxHeight: 260, overflowY: 'auto' }}>
+                  {sectionLeaves
+                    .filter((l) => l.group_id === curG)
+                    .sort((a, b) => a.label.localeCompare(b.label, 'hu'))
+                    .map((l) => (
+                      <button key={l.id} type="button" onClick={() => pickLeaf(l.id)} style={chip(leaf === l.id)}>
+                        {leaf === l.id ? '✓ ' : ''}
+                        {l.label}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ ...sub, flex: 1 }}>Terv · melyik tervet teljesíti?</span>
+                <input
+                  value={planQ}
+                  onChange={(e) => setPlanQ(e.target.value)}
+                  placeholder="🔍 terv keresése…"
+                  style={{ border: 0, outline: 'none', font: `500 13px ${FONT}`, color: C.ink, width: 150, background: 'transparent' }}
+                />
+              </div>
+              <div style={{ border: `1px solid ${C.line}`, borderRadius: 12, overflow: 'hidden' }}>
+                {[null, ...planChips].map((e, i) => {
+                  const on = e ? plan === e.id : !plan;
+                  const d = e ? Math.abs(t.amount) - Math.abs(e.amount) : 0;
+                  return (
+                    <button
+                      key={e?.id || 'none'}
+                      type="button"
+                      onClick={() => {
+                        if (!e) return setPlan(null);
+                        setPlan(e.id);
+                        setLeaf(e.leaf_id);
+                        setOpenG(ix.leafById[e.leaf_id]?.group_id || null);
+                      }}
+                      style={{
+                        width: '100%',
+                        display: 'grid',
+                        gridTemplateColumns: e ? '18px minmax(0,1fr) 64px 84px 76px' : '18px 1fr',
+                        gap: 10,
+                        alignItems: 'center',
+                        border: 0,
+                        borderTop: i ? `1px solid ${C.line3}` : 0,
+                        background: on ? C.bg2 : '#fff',
+                        padding: '10px 12px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 999,
+                          border: `${on ? 4.5 : 1.5}px solid ${on ? C.blue : C.line2}`,
+                          boxSizing: 'border-box',
+                          background: '#fff',
+                        }}
+                      />
+                      <span
+                        style={{ font: `${on ? 600 : 500} 14px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={e ? ix.leafById[e.leaf_id]?.label : undefined}
+                      >
+                        {e ? e.name || ix.leafById[e.leaf_id]?.label : 'Nincs terv – új tény'}
+                      </span>
+                      {e && (
+                        <>
+                          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
+                            {monthLabel(ymOf(e.date))} {Number(e.date.slice(8))}.
+                          </span>
+                          <span style={{ font: `500 13.5px ${FONT}`, color: C.ink, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {fmt(Math.abs(e.amount))}
+                          </span>
+                          <span
+                            style={{
+                              font: `500 12.5px ${FONT}`,
+                              color: Math.abs(d) < Math.abs(t.amount) * 0.05 ? C.blueDark : C.faint,
+                              textAlign: 'right',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {d > 0 ? '+' : d < 0 ? '−' : '±'}
+                            {fmt(Math.abs(d))}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {!pq && !planChips.some((e) => ymOf(e.date) === ymOf(t.date)) && (
+                <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                  {monthLabel(ymOf(t.date))}-ban/-ben nincs nyitott terv – a szomszédos hónapok tervei látszanak
+                </span>
+              )}
+              <span style={{ ...sub, marginTop: 6 }}>Ismétlődik?</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: 999, padding: 3, gap: 2 }}>
+                  {(
+                    [
+                      ['once', 'Egyszeri'],
+                      ['monthly', 'Havonta'],
+                      ['quarterly', 'Negyedévente'],
+                      ['yearly', 'Évente'],
+                    ] as [Rep, string][]
+                  ).map(([v, l]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => {
+                        setRep(v);
+                        if (v === 'yearly') setCount(36);
+                      }}
+                      style={{
+                        border: 0,
+                        borderRadius: 999,
+                        padding: '7px 16px',
+                        font: `600 13.5px ${FONT}`,
+                        cursor: 'pointer',
+                        background: rep === v ? C.navy : 'transparent',
+                        color: rep === v ? '#fff' : C.muted,
+                      }}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {rep !== 'once' &&
+                  (rep === 'yearly' ? [12, 24, 36] : [6, 12, 24]).map((c) => (
+                    <button key={c} type="button" onClick={() => setCount(c)} style={chip(count === c, C.navy)}>
+                      {rep === 'yearly' ? `${c / 12} év` : `${c} hó`}
+                    </button>
+                  ))}
+              </div>
+              <div style={{ marginTop: 6, background: C.bg3, borderRadius: 10, padding: '12px 14px', font: `500 13.5px/1.5 ${FONT}`, color: C.ink }}>
+                Tény: <b style={{ color: C.navy }}>{t.date.replace(/-/g, '.')}.</b> (banki dátum)
+                {L ? (
+                  <>
+                    {' → '}
+                    <b>
+                      <PartnerLink leaf={L.id}>{L.label}</PartnerLink>
+                    </b>
+                  </>
+                ) : null}
+                {planE ? ` · lezárja: ${planE.name || 'terv'}` : ''}
+                {n
+                  ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}`
+                  : ''}
+                {planE && diff !== 0 && (
+                  <span style={{ display: 'block', color: '#8A6D1C' }}>
+                    Eltérés a tervtől: {diff > 0 ? '+' : '−'}
+                    {fmt(Math.abs(diff))} Ft
+                  </span>
+                )}
+                {dup && (
+                  <span style={{ display: 'block', color: C.neg }}>
+                    Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ ...card, padding: mobile ? 14 : '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -204,7 +581,9 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
 
           <div style={row}>
             <span style={label}>Mappa</span>
-            <div style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 12, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <div
+              style={{ flex: 1, minWidth: 0, border: `1px solid ${C.line2}`, borderRadius: 12, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}
+            >
               {ix.groups
                 .filter((g) => g.section === section)
                 .map((g) => {
@@ -340,7 +719,9 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                 ''
               )}
               {planE ? ` · lezárja: ${planE.name || 'terv'}` : ''}
-              {n ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}` : ''}
+              {n
+                ? ` · + ${n} terv: ${nextDates.map((d) => (rep === 'yearly' ? d.replace(/-/g, '.') + '.' : `${monthLabel(ymOf(d))} ${Number(d.slice(8))}.`)).join(', ')}${n > 3 ? ' …' : ''}`
+                : ''}
               {planE && diff !== 0 && (
                 <span style={{ display: 'block', color: '#8A6D1C' }}>
                   Eltérés a tervtől: {diff > 0 ? '+' : '−'}
@@ -353,16 +734,7 @@ export function TxCard({ t, frequent, unforeseen, mobile }: { t: BankTx; frequen
                 </span>
               )}
             </span>
-            <Pill
-              small
-              onClick={() =>
-                run(
-                  () => api('/api/bank/ignore', { body: { ids: [t.id] } }),
-                  'Tétel kihagyva',
-                  () => api('/api/bank/ignore', { body: { ids: [t.id], undo: true } }),
-                )
-              }
-            >
+            <Pill small onClick={skip}>
               Kihagy
             </Pill>
             <Pill kind="dark" disabled={!leaf} onClick={approve} style={mobile ? { flex: 1 } : undefined}>
