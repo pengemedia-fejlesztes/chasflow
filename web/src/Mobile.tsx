@@ -46,7 +46,20 @@ type Sheet =
       p2d?: string;
     }
   | { kind: 'detail'; planId: string | null; actualId: string | null }
-  | { kind: 'item'; id: string; amount: string; date: string; name: string; leaf: string; section: Section; pick: boolean; all: boolean; back?: Sheet }
+  | {
+      kind: 'item';
+      id: string;
+      amount: string;
+      date: string;
+      name: string;
+      leaf: string;
+      section: Section;
+      pick: boolean;
+      all: boolean;
+      back?: Sheet;
+      /** az adatlapról melyik mezőre koppintott – a szerkesztő oda ugrik */
+      focus?: 'amount' | 'date' | 'name';
+    }
   | { kind: 'filters' };
 
 export function Mobile({ onLogout }: { onLogout: () => void }) {
@@ -117,6 +130,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   // a hónap tételei (ütemezés): ugyanaz a láthatóság, mint a kategóriáknál
   const monthEntries = data.entries.filter((e) => inM(e) && visibleEntry(e) && (filters.section === 'all' || filters.section === ix.sectionOf(e.leaf_id)));
   const [expSec, setExpSec] = useState<Section | null>(null);
+  const moveDate = (e: Entry, date: string) =>
+    commit({ upsert: [{ ...e, date }] }, `${e.name || ix.leafById[e.leaf_id]?.label || 'Tétel'}: dátum ${date.replace(/-/g, '.')}.`);
   const openEntry = (e: Entry) =>
     setSheet(e.kind === 'plan' ? { kind: 'detail', planId: e.id, actualId: null } : { kind: 'detail', planId: null, actualId: e.id });
   const sections = (['in', 'out'] as Section[])
@@ -451,6 +466,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   scrollToMonth(nm, true);
                 }}
                 onOpen={openEntry}
+                onDate={moveDate}
+                collapsible="home"
               />
               {sections.map(({ s, tot, groups }) => (
                 <div key={s} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -489,6 +506,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                         scrollToMonth(nm, true);
                       }}
                       onOpen={openEntry}
+                      onDate={moveDate}
                     />
                   )}
                   <div style={{ background: '#fff', border: `1px solid ${C.line}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -918,7 +936,7 @@ function SheetView({
   onSaved: (ym: string) => void;
   onPartner: (leaf: string) => void;
 }) {
-  const { ix, data, commit: storeCommit } = useStore();
+  const { ix, data, commit: storeCommit, canEdit } = useStore();
   const [snapshot] = useState(data);
   const saving = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -1293,6 +1311,7 @@ function SheetView({
             {series ? REP[series.rep] : e.source === 'billingo' ? 'Billingo számla' : e.tentative ? 'Ajánlat' : 'Terv'}
           </span>
           <input
+            autoFocus={sheet.focus === 'name'}
             value={sheet.name}
             onChange={(ev) => set({ name: ev.target.value })}
             placeholder={leafLabel || 'Megnevezés'}
@@ -1319,10 +1338,19 @@ function SheetView({
             }}
           >
             <input
-              value={sheet.amount}
+              autoFocus={sheet.focus === 'amount'}
+              // ezres tagolással jelenik meg (125 000), a tárolt érték csak számjegy
+              value={sheet.amount && /^\d+$/.test(sheet.amount) ? fmt(Number(sheet.amount)) : sheet.amount}
               aria-invalid={!!sheet.amount && parseWholeForint(sheet.amount) === null}
               aria-label="Összeg egész forintban"
-              onChange={(ev) => set({ amount: ev.target.value })}
+              onChange={(ev) =>
+                set({
+                  amount: ev.target.value
+                    .replace(/\D/g, '')
+                    .replace(/^0+(?=\d)/, '')
+                    .slice(0, 12),
+                })
+              }
               inputMode="numeric"
               placeholder="0"
               style={{ flex: 1, minWidth: 0, height: 58, border: 0, outline: 0, background: 'transparent', font: `800 26px ${FONT_H}`, color: C.navy }}
@@ -1334,7 +1362,7 @@ function SheetView({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={lbl}>Dátum</span>
-            <DateField big value={sheet.date} onChange={(v) => set({ date: v })} />
+            <DateField big autoOpen={sheet.focus === 'date'} value={sheet.date} onChange={(v) => set({ date: v })} />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
               {quick.map(([label, d]) => (
                 <button
@@ -1495,9 +1523,42 @@ function SheetView({
       const tx = actual?.ext_ref?.startsWith('bank:') ? data.bankTx.find((t) => t.id === actual.ext_ref!.slice(5)) : undefined;
       const dd = (d: string) => d.replace(/-/g, '.') + '.';
       const lbl: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
-      const cell = (label: string, value: React.ReactNode, color?: string) => (
-        <div style={{ background: C.bg, borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={lbl}>{label}</span>
+      // a mezőre koppintva a szerkesztő nyílik, rögtön azon a mezőn (összeg / dátum / név)
+      const editPlan =
+        plan && canEdit
+          ? (focus?: 'amount' | 'date' | 'name') =>
+              setSheet({
+                back: sheet,
+                kind: 'item',
+                id: plan.id,
+                amount: String(Math.abs(plan.amount)),
+                date: plan.date,
+                name: plan.name,
+                leaf: plan.leaf_id,
+                section: ix.sectionOf(plan.leaf_id),
+                pick: false,
+                all: false,
+                focus,
+              })
+          : null;
+      const cell = (label: string, value: React.ReactNode, color?: string, focus?: 'amount' | 'date') => (
+        <div
+          onClick={focus && editPlan ? () => editPlan(focus) : undefined}
+          style={{
+            background: C.bg,
+            borderRadius: 12,
+            padding: '10px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            cursor: focus && editPlan ? 'pointer' : undefined,
+            outline: focus && editPlan ? `1px dashed ${C.line2}` : undefined,
+          }}
+        >
+          <span style={lbl}>
+            {label}
+            {focus && editPlan ? ' ✎' : ''}
+          </span>
           <b style={{ font: `700 16px ${FONT_H}`, color: color || C.navy, fontVariantNumeric: 'tabular-nums' }}>{value}</b>
         </div>
       );
@@ -1529,7 +1590,13 @@ function SheetView({
                         ? 'Billingo számla (nyitott)'
                         : 'Nyitott terv'}
             </span>
-            <span style={{ font: `700 19px ${FONT_H}`, color: C.navy }}>{plan?.name || actual?.name || ix.leafById[base.leaf_id]?.label}</span>
+            <span
+              onClick={editPlan ? () => editPlan('name') : undefined}
+              style={{ font: `700 19px ${FONT_H}`, color: C.navy, cursor: editPlan ? 'pointer' : undefined }}
+            >
+              {plan?.name || actual?.name || ix.leafById[base.leaf_id]?.label}
+              {editPlan ? <small style={{ color: C.muted, fontWeight: 500 }}> ✎</small> : null}
+            </span>
             <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
               {ix.sectionOf(base.leaf_id) === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(ix.groupById[ix.leafById[base.leaf_id]?.group_id]?.label || '')} ·{' '}
               {ix.leafById[base.leaf_id]?.label}
@@ -1542,9 +1609,9 @@ function SheetView({
             </button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–')}
+            {cell('Terv', plan ? `${fmt(plan.amount * sign)} Ft` : '–', undefined, 'amount')}
             {cell('Tény', actual ? `${fmt(actual.amount * sign)} Ft` : '–', dev ? C.neg : C.blueDark)}
-            {cell('Tervezett dátum', plan ? dd(plan.date) : '–')}
+            {cell('Tervezett dátum', plan ? dd(plan.date) : '–', undefined, 'date')}
             {cell('Teljesült', actual ? dd(actual.date) : plan?.done ? 'késznek jelölve' : 'még nyitott', !actual && plan && !plan.done ? C.muted : undefined)}
             {cell('Különbség', plan && actual ? `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${fmt(Math.abs(diff))} Ft` : '–', dev ? C.neg : undefined)}
             {cell(

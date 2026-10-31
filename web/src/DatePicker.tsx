@@ -14,8 +14,16 @@ const todayIso = () => {
   return iso(t.getFullYear(), t.getMonth() + 1, t.getDate());
 };
 
-export function DateField(props: { value: string; onChange: (v: string) => void; min?: string; big?: boolean; style?: CSSProperties }) {
-  const [open, setOpenS] = useState(false);
+export function DateField(props: {
+  value: string;
+  onChange: (v: string) => void;
+  min?: string;
+  big?: boolean;
+  style?: CSSProperties;
+  /** megjelenéskor rögtön nyitott naptárral (pl. az adatlap „Tervezett dátum” mezőjéről érkezve) */
+  autoOpen?: boolean;
+}) {
+  const [open, setOpenS] = useState(!!props.autoOpen);
   // mobilon a napra koppintás után a böngésző ugyanazt az érintést a naptár alatt lévő mezőre is „átkattintja” –
   // a bezárás utáni rövid időben a mező nem nyitja újra a naptárt
   const closedAt = useRef(0);
