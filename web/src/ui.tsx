@@ -188,17 +188,38 @@ export function ToastView(props: { msg: string; undo?: () => void; error?: boole
   );
 }
 
+/** Az oldal (alkalmazás) rögzítése felugró ablak alatt; egymásba nyíló ablakoknál csak az első rögzít, az utolsó old fel. */
+let pageLocks = 0;
+let savedY = 0;
+function lockPage(): () => void {
+  const root = typeof document !== 'undefined' ? document.getElementById('root') : null;
+  if (!root) return () => {};
+  if (pageLocks++ === 0) {
+    savedY = window.scrollY;
+    // a látható rész marad (a gyökér saját görgetése = az eddigi oldalgörgetés)
+    Object.assign(root.style, { position: 'fixed', top: '0', left: '0', right: '0', overflow: 'hidden', height: '100vh' });
+    root.scrollTop = savedY;
+    window.scrollTo({ top: 0 });
+  }
+  return () => {
+    if (--pageLocks > 0) return;
+    Object.assign(root.style, { position: '', top: '', left: '', right: '', overflow: '', height: '' });
+    window.scrollTo({ top: savedY });
+  };
+}
+
 export function Modal(props: { onClose: () => void; children: ReactNode; width?: number; title?: ReactNode; label?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const close = useRef(props.onClose);
   close.current = props.onClose;
-  // a felugró ablak a dokumentumban van (nem a böngésző „felső rétegében”), így az oldal görgetése görgeti –
-  // a görgetős képernyőkép / felvétel így az előtérben lévő ablakot rögzíti
-  const [top] = useState(() => (typeof window !== 'undefined' ? window.scrollY : 0));
+  // a felugró ablak a dokumentumban van, a mögötte lévő oldal közben rögzítve (nem görget, nem nyúlik) – így a görgetés
+  // és a görgetős képernyőkép / felvétel csak a felugró ablakot veszi, elejétől a végéig
+  const top = 0;
   useEffect(() => {
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
+    const unlock = lockPage();
     dialog.show();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) {
@@ -210,10 +231,10 @@ export function Modal(props: { onClose: () => void; children: ReactNode; width?:
     return () => {
       document.removeEventListener('keydown', onKey);
       dialog.close();
-      window.scrollTo({ top });
+      unlock();
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     };
-  }, [top]);
+  }, []);
   return createPortal(
     <>
       <div aria-hidden style={{ position: 'fixed', inset: 0, background: 'rgba(0,32,64,.38)', zIndex: 900 }} onClick={() => close.current()} />
