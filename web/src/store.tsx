@@ -49,8 +49,8 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
       if (raw) {
         const saved = JSON.parse(raw);
         // az időszakot nem őrizzük meg napokon át, ha az már a múltba csúszott;
-        // a v2 előtti mentésből (régi 8 hónapos alapidőszak) sem, így mindenki a 3 hónapos alapra áll
-        if (saved.savedFor === initial.today.slice(0, 7) && saved.v === 2) return { ...def, ...saved.f };
+        // a v3 előtti mentésből sem, így mindenki az alapidőszakra (következő 8 hónap) áll
+        if (saved.savedFor === initial.today.slice(0, 7) && saved.v === 3) return { ...def, ...saved.f };
         return { ...def, ...saved.f, from: def.from, to: def.to };
       }
     } catch {}
@@ -63,7 +63,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         const n = { ...f, ...p };
         if (n.from > n.to) n.to = n.from;
         try {
-          localStorage.setItem(FKEY + ':' + initial.me.id, JSON.stringify({ f: n, savedFor: initial.today.slice(0, 7), v: 2 }));
+          localStorage.setItem(FKEY + ':' + initial.me.id, JSON.stringify({ f: n, savedFor: initial.today.slice(0, 7), v: 3 }));
         } catch {}
         return n;
       }),

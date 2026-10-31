@@ -1,20 +1,21 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { addMonths, buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
+import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
-import { AlertsView, FlagBanner, useFlags } from './AlertsView';
+import { AlertsView, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
 import { BankView } from './BankView';
 import { BreakevenView } from './BreakevenView';
 import { CategoryView } from './CategoryView';
 import type { EditTarget } from './EntryModal';
-import { diffColor, diffText, planLinks } from './LinkChain';
+import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { FilterBar, periodLabel } from './Filters';
+import { PeriodPicker } from './PeriodPicker';
 import { IncomeView } from './IncomeView';
-import { planActual, setCellValue } from './logic';
+import { setCellValue } from './logic';
 import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
@@ -252,7 +253,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             goBank={() => setView('bank')}
             goAlerts={() => setView('alerts')}
             goGroup={goGroup}
-            openNew={(leaf) => setModal({ leaf })}
+            openNew={(leaf) => setModal(leaf ? { leaf } : {})}
           />
         )}
         {view === 'alerts' && <AlertsView />}
@@ -283,82 +284,6 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
  * Terv vs. tény eltérés: az előző és az aktuális hónap lezárt tervei (a tény hónapja szerint), partnerenként.
  * A terv összege nem változik a számla / tény miatt, így ez a valódi eltérés. Bevételnél + = több jött, kiadásnál + = többet fizettünk.
  */
-function DeviationCard() {
-  const { data, ix, openPartner } = useStore();
-  const months = [addMonths(ix.cur, -1), ix.cur];
-  const [ym, setYm] = useState(ix.cur);
-  const rows = useMemo(() => {
-    const links = planLinks(data.entries, () => true).filter((l) => l.actual && ymOf(l.actual.date) === ym && l.diff);
-    const by = new Map<string, { leaf: string; diff: number; plan: number; act: number; n: number }>();
-    for (const l of links) {
-      const r = by.get(l.plan.leaf_id) || { leaf: l.plan.leaf_id, diff: 0, plan: 0, act: 0, n: 0 };
-      r.diff += l.diff!;
-      r.plan += Math.abs(l.plan.amount);
-      r.act += Math.abs(l.actual!.amount);
-      r.n++;
-      by.set(l.plan.leaf_id, r);
-    }
-    return [...by.values()].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
-  }, [data.entries, ym]);
-  const tot = (sec: 'in' | 'out') => rows.filter((r) => ix.sectionOf(r.leaf) === sec).reduce((a, r) => a + r.diff, 0);
-  return (
-    <div style={{ ...card, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <b style={{ flex: 1, font: `700 16px ${FONT_H}`, color: C.navy }}>Terv vs. tény eltérés</b>
-        {months.map((m) => (
-          <Pill key={m} small kind={m === ym ? 'dark' : undefined} onClick={() => setYm(m)}>
-            {monthLong(m)}
-          </Pill>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', font: `500 13px ${FONT}`, color: C.muted }}>
-        <span>
-          Bevétel: <b style={{ color: diffColor('in', tot('in')) }}>{diffText(tot('in'))} Ft</b>
-        </span>
-        <span>
-          Kiadás: <b style={{ color: diffColor('out', tot('out')) }}>{diffText(tot('out'))} Ft</b>
-        </span>
-        <span>Lezárt, eltérő tételek: {rows.reduce((a, r) => a + r.n, 0)}</span>
-      </div>
-      {rows.length === 0 ? (
-        <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
-          Ebben a hónapban minden lezárt tétel pontosan a terv szerint teljesült (vagy még nincs lezárt tétel).
-        </span>
-      ) : (
-        rows.slice(0, 10).map((r) => {
-          const sec = ix.sectionOf(r.leaf);
-          return (
-            <button
-              key={r.leaf}
-              onClick={() => openPartner(r.leaf)}
-              className="hov-light"
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'baseline',
-                border: 0,
-                borderTop: `1px solid ${C.line3}`,
-                background: 'transparent',
-                padding: '7px 0',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, font: `600 13.5px ${FONT}`, color: C.navy }}>
-                {ix.leafById[r.leaf]?.label}{' '}
-                <span style={{ font: `500 11.5px ${FONT}`, color: C.muted }}>
-                  · {sec === 'in' ? 'bevétel' : 'kiadás'} · terv {fmt(r.plan)} → tény {fmt(r.act)}
-                </span>
-              </span>
-              <b style={{ font: `700 13.5px ${FONT}`, color: diffColor(sec, r.diff), fontVariantNumeric: 'tabular-nums' }}>{diffText(r.diff)} Ft</b>
-            </button>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
 /**
  * Egy oszlop profitja (bevétel − kiadás). A folyó hónap terv-oszlopa a tény-oszloppal együtt egy hónap:
  * tény + terv, a már teljesült (tényhez kötött) terv nélkül.
@@ -387,265 +312,253 @@ type ChartBar = {
 };
 
 /** Havi oszlopdiagram nulla-vonallal (a negatív érték lefelé, pirosan). */
-function BarChart({ title, sub, bars, signed, markMin }: { title: string; sub: string; bars: ChartBar[]; signed?: boolean; markMin?: boolean }) {
-  const H = 150;
-  const maxPos = Math.max(0, ...bars.map((b) => b.v));
-  const maxNeg = Math.max(0, ...bars.map((b) => -b.v));
-  const span = maxPos + maxNeg || 1;
-  const posH = Math.round((H * maxPos) / span);
-  const negH = H - posH;
-  const minIdx = bars.reduce((mi, b, i) => (b.v < bars[mi].v ? i : mi), 0);
-  const [hov, setHov] = useState<number | null>(null);
-  const hb = hov != null ? bars[hov] : null;
-  const sg = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + ' Ft';
-  const val = (b: ChartBar) => (signed && b.v > 0 ? '+' : '') + fmtM(b.v);
-  // szín: tény = kék, előrejelzés = világoskék; a legalacsonyabb egyenleg csak keretet kap (nem tény-színt)
-  const colorOf = (b: ChartBar) => (b.v < 0 ? C.neg : b.kind === 'actual' ? C.blue : '#BFD8E8');
-  return (
-    <div style={{ ...card, padding: '18px 20px 14px', minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
-        <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>{title}</span>
-        {/* súgó: az oszlop fölé víve – terv, tény (ezres tagolással) és az eltérés zöld / piros */}
-        {hb && (
-          <span
-            style={{
-              flexBasis: '100%',
-              order: 3,
-              padding: '6px 10px',
-              borderRadius: 8,
-              background: C.bg2,
-              font: `600 12.5px ${FONT}`,
-              color: C.ink,
-              fontVariantNumeric: 'tabular-nums',
-              display: 'flex',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <b style={{ color: C.navy }}>{hb.label}</b>
-            {hb.note ? (
-              <span>{hb.note}</span>
-            ) : hb.plan != null ? (
-              <>
-                <span>terv {signed ? sg(hb.plan) : fmt(hb.plan) + ' Ft'}</span>
-                <span>tény {hb.act == null ? '–' : signed ? sg(hb.act) : fmt(hb.act) + ' Ft'}</span>
-                {hb.act != null && (
-                  <b style={{ color: hb.act - hb.plan >= 0 ? '#1A7340' : C.neg }}>
-                    eltérés {sg(hb.act - hb.plan)} {hb.act - hb.plan >= 0 ? '▲' : '▼'}
-                  </b>
-                )}
-                {hb.kind === 'proj' && <span style={{ color: C.muted }}>várható: {signed ? sg(hb.v) : fmt(hb.v) + ' Ft'}</span>}
-              </>
-            ) : (
-              <span>
-                {hb.kind === 'actual' ? 'tény' : 'előrejelzés'}: {signed ? sg(hb.v) : fmt(hb.v) + ' Ft'}
-              </span>
-            )}
-          </span>
-        )}
-        <span style={{ display: 'flex', gap: 12, font: `400 12px ${FONT}`, color: C.muted, flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-            <i style={{ width: 10, height: 10, borderRadius: 3, background: C.blue }} />
-            tény
-          </span>
-          <span style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-            <i style={{ width: 10, height: 10, borderRadius: 3, background: '#BFD8E8' }} />
-            előrejelzés
-          </span>
-          {sub}
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${bars.length},minmax(0,1fr))`, gap: 6 }}>
-        {bars.map((b, i) => (
-          <div
-            key={i}
-            onMouseEnter={() => setHov(i)}
-            onMouseLeave={() => setHov(null)}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              minWidth: 0,
-              cursor: 'default',
-              opacity: hov != null && hov !== i ? 0.6 : 1,
-            }}
-          >
-            <div
-              style={{ height: posH + 16, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 3 }}
-            >
-              {b.v >= 0 && (
-                <>
-                  <span
-                    style={{
-                      font: `600 10.5px ${FONT}`,
-                      color: markMin && i === minIdx ? C.navy : C.muted,
-                      fontVariantNumeric: 'tabular-nums',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {val(b)}
-                  </span>
-                  <div
-                    style={{
-                      width: '100%',
-                      maxWidth: 48,
-                      height: Math.max(2, Math.round((b.v / span) * H)),
-                      background: colorOf(b),
-                      outline: markMin && i === minIdx ? `2px solid ${C.navy}` : undefined,
-                      borderRadius: '6px 6px 2px 2px',
-                      transition: 'height .4s',
-                    }}
-                  />
-                </>
-              )}
-            </div>
-            <div style={{ width: '100%', height: 1, background: maxNeg ? C.line2 : 'transparent' }} />
-            {maxNeg > 0 && (
-              <div style={{ height: negH + 16, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                {b.v < 0 && (
-                  <>
-                    <div
-                      style={{
-                        width: '100%',
-                        maxWidth: 48,
-                        height: Math.max(2, Math.round((-b.v / span) * H)),
-                        background: colorOf(b),
-                        outline: markMin && i === minIdx ? `2px solid ${C.navy}` : undefined,
-                        opacity: 0.85,
-                        borderRadius: '2px 2px 6px 6px',
-                        transition: 'height .4s',
-                      }}
-                    />
-                    <span style={{ font: `600 10.5px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{val(b)}</span>
-                  </>
-                )}
-              </div>
-            )}
-            <span style={{ marginTop: 6, font: `600 11.5px ${FONT}`, color: b.cur ? C.navy : C.muted, whiteSpace: 'nowrap' }}>{b.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+/** millió két tizedessel: 27,95 */
+const m2 = (n: number) => (n / 1e6).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sgnM = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + (Math.abs(n) / 1e6).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
 
-function PipelineCard({ cols, matrix, netAll, goGroup }: { cols: Matrix['columns']; matrix: Matrix; netAll: number[]; goGroup: (id: string) => void }) {
-  const { ix, data } = useStore();
-  const inGroups = ix.groups.filter((g) => g.section === 'in');
-  const offerG = inGroups.filter((g) => /aj[áa]nlat/i.test(g.label));
-  const projG = inGroups.filter((g) => /projekt/i.test(g.label));
-  const groupOf = (l: string) => ix.leafById[l]?.group_id;
-  const isOfferG = (l: string) => offerG.some((g) => g.id === groupOf(l));
-  const inProj = (l: string) => (projG.length ? projG.some((g) => g.id === groupOf(l)) : ix.sectionOf(l) === 'in' && !isOfferG(l));
-  const proj = useMemo(() => planActual(data.entries, inProj, 1), [data.entries, ix]); // eslint-disable-line react-hooks/exhaustive-deps
-  const offerAll = useMemo(() => planActual(data.entries, (l) => ix.sectionOf(l) === 'in', 1), [data.entries, ix]);
-  const offerGrp = useMemo(() => planActual(data.entries, isOfferG, 1), [data.entries, ix]); // eslint-disable-line react-hooks/exhaustive-deps
-  // az aktuális hónap tény + terv oszlopa egy oszlop itt
-  const cs = cols.filter((c, i) => !(c.current && c.kind === 'actual' && cols[i + 1]?.current));
-  const sum = (m: Map<string, number>, c: Matrix['columns'][number]) => c.months.reduce((a, ym) => a + (m.get(ym) || 0), 0);
-  // ajánlat = minden nyitott (nem biztos) bevételi terv + az Ajánlatok csoportban még ott álló tervek
-  const offer = (c: Matrix['columns'][number]) => sum(offerAll.offer, c) + sum(offerGrp.plan, c);
-  const past = (c: Matrix['columns'][number]) => c.months[0] <= ix.cur;
-  /**
-   * Profit = havi bevétel − kiadás (a fenti szűrők szerint: tény/terv, becslés, ajánlatok).
-   * A folyó hónap itt egy oszlop: tény + terv, a már teljesült (tényhez kötött) terv nélkül.
-   */
-  const profit = (c: Matrix['columns'][number]) => {
-    const i = matrix.columns.findIndex((x) => x.key === c.key);
-    return i < 0 ? null : colProfit(ix, matrix, netAll, i);
-  };
-  const rows: [string, (c: Matrix['columns'][number]) => number | null, string, (() => void) | undefined][] = [
-    ['Projektek – terv (biztos)', (c) => sum(proj.plan, c), C.navy, projG[0] ? () => goGroup(projG[0].id) : undefined],
-    ['Ajánlatok (nem biztos)', offer, '#8A6D1C', offerG[0] ? () => goGroup(offerG[0].id) : undefined],
-    ['Projektek + ajánlatok', (c) => sum(proj.plan, c) + offer(c), C.navy, undefined],
-    ['Projektek – tény (tervhez kötött)', (c) => (past(c) || sum(proj.linked, c) ? sum(proj.linked, c) : null), C.blue, undefined],
-    ['Teljesülés', (c) => (past(c) ? sum(proj.linked, c) - sum(proj.plan, c) : null), '', undefined],
-    ['Profit (bevétel − kiadás)', profit, '', undefined],
-  ];
-  const PROFIT_FROM = 5;
-  const BOLD = new Set(['Projektek + ajánlatok', 'Profit (bevétel − kiadás)']);
-  const SIGNED = new Set(['Teljesülés', 'Profit (bevétel − kiadás)']);
-  if (!cs.length) return null;
+/** Teendő-kártya az Áttekintés tetején: szám-pötty, cím, alcím, nyíl. */
+function TaskCard(p: { n: number; title: string; sub: string; tone: 'blue' | 'red' | 'light' | 'pale'; onClick: () => void }) {
+  const dot =
+    p.tone === 'blue'
+      ? { background: C.blue, color: '#fff' }
+      : p.tone === 'red'
+        ? { background: C.neg, color: '#fff' }
+        : p.tone === 'light'
+          ? { background: C.bg2, color: C.blueDark }
+          : { background: C.bg, color: C.blueDark };
   return (
-    <div style={{ ...card, padding: 0, overflow: 'auto' }}>
-      <div style={{ padding: '14px 18px 6px', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Bevétel és profit · Projektek és ajánlatok</span>
-        <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>terv = amivel terveztél · tény = a tervhez kötött számlamozgás (a terv hónapjában)</span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: `minmax(230px,1.7fr) repeat(${cs.length},minmax(96px,1fr))`, minWidth: 250 + cs.length * 100 }}>
-        <div />
-        {cs.map((c) => (
-          <div key={c.key} style={{ padding: '6px 8px', textAlign: 'right', font: `700 11.5px ${FONT}`, color: c.current ? C.blue : C.muted }}>
-            {c.label}
-          </div>
-        ))}
-        {rows.map(([label, f, col, go], ri) => (
-          <Fragment key={label}>
-            <div
-              onClick={go}
-              style={{
-                padding: '9px 18px',
-                font: `${BOLD.has(label) ? 700 : 600} 13px ${FONT}`,
-                color: C.navy,
-                borderTop: ri === PROFIT_FROM ? `2px solid ${C.line2}` : `1px solid ${ri === 3 ? C.line2 : C.line}`,
-                cursor: go ? 'pointer' : 'default',
-              }}
-            >
-              {label}
-              {go ? ' ›' : ''}
-            </div>
-            {cs.map((c) => {
-              const v = f(c);
-              const color = col || (v === null || !Math.round(v) ? C.muted : v >= 0 ? '#2E7D4F' : C.neg);
-              return (
-                <div
-                  key={c.key}
-                  style={{
-                    padding: '9px 8px',
-                    textAlign: 'right',
-                    borderTop: ri === PROFIT_FROM ? `2px solid ${C.line2}` : `1px solid ${ri === 3 ? C.line2 : C.line}`,
-                    font: `${BOLD.has(label) ? 700 : 600} 12.5px ${FONT}`,
-                    color,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {v === null ? '' : !Math.round(v) ? '–' : (SIGNED.has(label) && v > 0 ? '+' : '') + fmt(v)}
-                </div>
-              );
-            })}
-          </Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Kpi(p: { label: string; value: string; sub: string; dark?: boolean; color?: string; onClick?: () => void }) {
-  const style = p.dark
-    ? { background: C.navy2, border: 0 }
-    : p.onClick
-      ? { background: C.bg2, border: `1px solid ${C.line2}`, cursor: 'pointer' }
-      : { ...card };
-  const Tag = p.onClick ? 'button' : 'div';
-  return (
-    <Tag
+    <button
+      type="button"
+      className="hov-light"
       onClick={p.onClick}
-      style={{ ...style, textAlign: 'left', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}
+      style={{ ...card, display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer', textAlign: 'left', width: '100%' }}
     >
-      <span style={{ ...eyebrow, color: p.dark ? C.muted2 : p.onClick ? C.blueDark : C.muted }}>{p.label}</span>
-      <span
-        style={{
-          font: `800 24px/1 ${FONT_H}`,
-          color: p.color || (p.dark ? '#fff' : C.navy),
-          letterSpacing: '-.02em',
-          fontVariantNumeric: 'tabular-nums',
-          whiteSpace: 'nowrap',
-        }}
-      >
+      <span style={{ ...dot, width: 32, height: 32, flex: 'none', borderRadius: 999, display: 'grid', placeItems: 'center', font: `700 13px ${FONT_H}` }}>
+        {p.n}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+        <b style={{ font: `600 13.5px ${FONT}`, color: C.navy }}>{p.title}</b>
+        <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{p.sub}</span>
+      </span>
+      <span style={{ font: `600 16px ${FONT}`, color: C.navy }}>›</span>
+    </button>
+  );
+}
+
+function HeroKpi(p: { label: string; value: string; sub: string; color?: string; boxed?: boolean }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: p.boxed ? '10px 12px' : '10px 0',
+        borderRadius: 10,
+        background: p.boxed ? C.bg2 : 'transparent',
+        minWidth: 0,
+      }}
+    >
+      <span style={{ ...eyebrow, fontSize: 10.5, color: p.boxed ? C.blueDark : C.muted }}>{p.label}</span>
+      <span style={{ font: `800 ${p.boxed ? 26 : 24}px/1.1 ${FONT_H}`, color: p.color || C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
         {p.value}
       </span>
-      <span style={{ font: `${p.onClick ? 600 : 400} 12.5px ${FONT}`, color: p.dark ? C.muted2 : p.onClick ? C.blueDark : C.muted }}>{p.sub}</span>
-    </Tag>
+      {p.sub && <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{p.sub}</span>}
+    </div>
+  );
+}
+
+/** Egy grafikon: vonal = egyenleg hó végén, oszlop = havi eredmény (sötét = tény, világos = terv, piros = negatív). */
+function ComboChart({ bars, profit }: { bars: ChartBar[]; profit: ChartBar[] }) {
+  const n = bars.length;
+  const [hov, setHov] = useState<number | null>(null);
+  const LINE_H = 120;
+  const BAR_H = 70;
+  const vals = bars.map((b) => b.v);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.02 || 1;
+  const y = (v: number) => 100 - ((v - (lo - pad)) / (hi - lo + 2 * pad)) * 100;
+  const maxAbs = Math.max(1, ...profit.map((b) => Math.abs(b.v)));
+  const h = (v: number) => (Math.round(v) ? Math.max(4, Math.round((Math.abs(v) / maxAbs) * BAR_H)) : 0);
+  const negMax = Math.max(0, ...profit.map((b) => (b.v < 0 ? h(b.v) : 0)));
+  const pts = bars.map((b, i) => `${((i + 0.5) / n) * 100},${y(b.v)}`).join(' ');
+  const sg = (v: number, cur: boolean) =>
+    (v > 0 ? '+' : v < 0 ? '−' : '') + (Math.abs(v) / 1e6).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (cur ? ' M' : '');
+  const hb = hov != null ? { bal: bars[hov], pr: profit[hov] } : null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+      <div style={{ position: 'relative', height: LINE_H + BAR_H + negMax + 8 }} onMouseLeave={() => setHov(null)}>
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: LINE_H, overflow: 'visible' }}
+        >
+          <polyline points={pts} fill="none" stroke={C.navy} strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        </svg>
+        <div style={{ position: 'absolute', left: 0, right: 0, top: LINE_H + BAR_H, borderTop: `1px solid ${C.line}` }} />
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', gridTemplateColumns: `repeat(${n},1fr)` }}>
+          {profit.map((b, i) => {
+            const neg = b.v < 0;
+            const dark = b.cur || b.kind === 'actual';
+            const bg = neg ? '#E8A497' : dark ? C.blue : '#C3DAEA';
+            return (
+              <div
+                key={i}
+                onMouseEnter={() => setHov(i)}
+                style={{ position: 'relative', cursor: 'default', background: hov === i ? 'rgba(0,32,64,.03)' : undefined }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '22%',
+                    right: '22%',
+                    top: neg ? LINE_H + BAR_H : LINE_H + BAR_H - h(b.v),
+                    height: h(b.v),
+                    background: bg,
+                    borderRadius: neg ? '0 0 3px 3px' : '3px 3px 0 0',
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        {hb && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: `${Math.min(70, ((hov! + 0.5) / n) * 100)}%`,
+              transform: 'translateX(-50%)',
+              background: '#fff',
+              border: `1px solid ${C.line}`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              font: `500 12px ${FONT}`,
+              color: C.ink,
+              boxShadow: '0 4px 14px rgba(0,32,64,.12)',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            <b style={{ color: C.navy }}>{hb.bal.label}</b> · egyenleg hó végén {fmt(hb.bal.v)} Ft · havi eredmény {hb.pr.v > 0 ? '+' : ''}
+            {fmt(hb.pr.v)} Ft
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${n},1fr)`, textAlign: 'center' }}>
+        {profit.map((b, i) => (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+            <span style={{ font: `${b.cur ? 700 : 500} 12.5px ${FONT}`, color: b.cur ? C.navy : C.muted }}>{b.label}</span>
+            <span style={{ font: `500 12px ${FONT}`, color: b.v < 0 ? NEG_C : C.blueDark, fontVariantNumeric: 'tabular-nums' }}>{sg(b.v, i === 0)}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', font: `400 12px ${FONT}`, color: C.muted, marginTop: 4 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <i style={{ width: 18, height: 2.5, background: C.navy, display: 'inline-block' }} /> egyenleg hó végén
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <i style={{ width: 10, height: 10, borderRadius: 2, background: C.blue, display: 'inline-block' }} /> havi eredmény (tény)
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <i style={{ width: 10, height: 10, borderRadius: 2, background: '#C3DAEA', display: 'inline-block' }} /> terv
+        </span>
+      </div>
+    </div>
+  );
+}
+const NEG_C = C.neg;
+/** eltérés színe: kék = jó irány, piros = rosszabb a tervnél */
+const devColor = (sec: string | undefined, diff: number) => (!diff ? C.muted : diff > 0 === (sec !== 'out') ? C.blueDark : C.neg);
+
+/** Eltérés a tervtől az aktuális hónapban: lezárt (tényhez kötött) tervek, ahol a tény eltért. */
+function DeviationPanel() {
+  const { data, ix, openPartner } = useStore();
+  const [all, setAll] = useState(false);
+  const rows = useMemo(() => {
+    const links = planLinks(data.entries, () => true).filter((l) => l.actual && ymOf(l.actual.date) === ix.cur && l.diff);
+    const by = new Map<string, { leaf: string; diff: number; plan: number; act: number }>();
+    for (const l of links) {
+      const r = by.get(l.plan.leaf_id) || { leaf: l.plan.leaf_id, diff: 0, plan: 0, act: 0 };
+      r.diff += l.diff!;
+      r.plan += Math.abs(l.plan.amount);
+      r.act += Math.abs(l.actual!.amount);
+      by.set(l.plan.leaf_id, r);
+    }
+    return [...by.values()].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  }, [data.entries, ix.cur]);
+  const tot = (sec: 'in' | 'out') => rows.filter((r) => ix.sectionOf(r.leaf) === sec).reduce((a, r) => a + r.diff, 0);
+  return (
+    <div style={{ ...card, flex: '1 1 300px', minWidth: 0, padding: '18px 20px 14px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <b style={{ flex: 1, font: `700 16px ${FONT_H}`, color: C.navy }}>Eltérés a tervtől · {monthLabel(ix.cur).toLowerCase()}</b>
+        {rows.length > 4 && (
+          <button
+            onClick={() => setAll(!all)}
+            style={{ border: 0, background: 'transparent', color: C.blue, font: `600 12.5px ${FONT}`, cursor: 'pointer', padding: 0 }}
+          >
+            {all ? 'Kevesebb ‹' : `Mind (${rows.length}) ›`}
+          </button>
+        )}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 14,
+          font: `500 13px ${FONT}`,
+          color: C.muted,
+          margin: '8px 0 6px',
+          paddingBottom: 10,
+          borderBottom: `1px solid ${C.line}`,
+        }}
+      >
+        <span>
+          Bevétel <b style={{ color: devColor('in', tot('in')), marginLeft: 6 }}>{diffText(tot('in'))}</b>
+        </span>
+        <span>
+          Kiadás <b style={{ color: devColor('out', tot('out')), marginLeft: 6 }}>{diffText(tot('out'))}</b>
+        </span>
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {rows.length === 0 && (
+          <span style={{ font: `500 13px ${FONT}`, color: C.muted, padding: '10px 0' }}>Ebben a hónapban minden lezárt tétel a terv szerint teljesült.</span>
+        )}
+        {(all ? rows : rows.slice(0, 4)).map((r, i) => {
+          const sec = ix.sectionOf(r.leaf);
+          return (
+            <button
+              key={r.leaf}
+              onClick={() => openPartner(r.leaf)}
+              className="hov-light"
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'center',
+                border: 0,
+                borderTop: i ? `1px solid ${C.line3}` : 0,
+                background: 'transparent',
+                padding: '10px 0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+                <b style={{ font: `600 14px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {ix.leafById[r.leaf]?.label}
+                </b>
+                <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                  {sec === 'out' ? 'kiadás · ' : 'terv '}
+                  {fmt(r.plan)} → {fmt(r.act)}
+                </span>
+              </span>
+              <b style={{ font: `700 14px ${FONT}`, color: devColor(sec, r.diff), fontVariantNumeric: 'tabular-nums' }}>{diffText(r.diff)}</b>
+            </button>
+          );
+        })}
+      </div>
+      <span style={{ font: `400 11.5px ${FONT}`, color: C.muted, marginTop: 10 }}>kék = jó irány · piros = rosszabb a tervnél</span>
+    </div>
   );
 }
 
@@ -670,6 +583,8 @@ function Overview({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<{ leaf: string; col: number } | null>(null);
   const [dense, setDense] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+  const mc = useMergeCounts();
   const ol = useMemo(() => outlook(ix, filters), [ix, filters]);
   const flags = useFlags();
   const cols = matrix.columns;
@@ -725,22 +640,139 @@ function Overview({
 
   const cellText = (v: number, est: number, offer: number) => {
     if (!Math.round(v)) return '–';
-    return (est ? '≈ ' : '') + fmt(v) + (offer ? ' *' : '');
+    return fmt(v) + (offer ? ' *' : '');
   };
 
+  // a folyó hónap tény + terv oszlopai a táblázatban egy „2026. október” fül alatt
+  const curIdx = cols.map((c, i) => (c.current ? i : -1)).filter((i) => i >= 0);
+  const overdueN = flags.filter((f) => f.kind === 'overdue').length;
+  const uninvN = flags.filter((f) => f.kind === 'uninvoiced').length;
+  const dupN = mc.billingo + mc.bank + mc.names;
+  const curName = monthLong(ix.cur).replace(/^\d+\.\s*/, '');
+  const leafCount = useMemo(() => {
+    const m = new Map<string, number>();
+    matrix.rows.forEach((r) => r.type === 'leaf' && r.groupId && m.set(r.groupId, (m.get(r.groupId) || 0) + 1));
+    return m;
+  }, [matrix.rows]);
+  const nextBal = ol.next12.endBal;
+
   return (
-    <div style={{ padding: '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ font: `600 12px ${FONT}`, letterSpacing: '.18em', textTransform: 'uppercase', color: C.blue, marginBottom: 8 }}>
-            Áttekintés · {monthLong(ix.cur)}
-          </div>
-          <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy, letterSpacing: '-.01em' }}>Cashflow</h1>
-        </div>
+    <div style={{ padding: '24px 28px 120px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+        <h1 style={{ margin: 0, font: `800 30px/1.05 ${FONT_H}`, color: C.navy, letterSpacing: '-.01em' }}>
+          Cashflow <span style={{ font: `500 15px ${FONT}`, color: C.muted, letterSpacing: 0 }}>· {monthLong(ix.cur)}</span>
+        </h1>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {canEdit && <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>Terv cellára kattintva módosíthatsz · Enter = mentés</span>}
-          <Pill onClick={() => setDense(!dense)}>{dense ? 'Kényelmes' : 'Kompakt'}</Pill>
+          <PeriodPicker label={periodLabel(filters, ix.cur, ix.firstActual)} />
+          <button
+            type="button"
+            onClick={() => st.setFilters({ includeOffers: !filters.includeOffers })}
+            title="A még el nem fogadott ajánlatok beszámítása"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              border: `1px solid ${C.line2}`,
+              borderRadius: 999,
+              background: '#fff',
+              padding: '8px 14px 8px 10px',
+              font: `600 13px ${FONT}`,
+              color: C.navy,
+              cursor: 'pointer',
+            }}
+          >
+            <span
+              style={{
+                width: 30,
+                height: 18,
+                borderRadius: 999,
+                background: filters.includeOffers ? C.blue : C.line2,
+                position: 'relative',
+                transition: 'background .15s',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 2,
+                  left: filters.includeOffers ? 14 : 2,
+                  width: 14,
+                  height: 14,
+                  borderRadius: 999,
+                  background: '#fff',
+                  transition: 'left .15s',
+                }}
+              />
+            </span>
+            Ajánlatokkal
+          </button>
+          <input
+            value={filters.search}
+            onChange={(e) => st.setFilters({ search: e.target.value })}
+            placeholder="Keresés…"
+            style={{ border: `1px solid ${C.line2}`, borderRadius: 999, padding: '9px 16px', font: `500 13px ${FONT}`, width: 200, outline: 'none' }}
+          />
+          {canEdit && (
+            <button
+              type="button"
+              className="hov-primary"
+              onClick={() => openNew('')}
+              style={{ border: 0, borderRadius: 999, background: C.blue, color: '#fff', padding: '10px 18px', font: `600 13.5px ${FONT}`, cursor: 'pointer' }}
+            >
+              + Új tétel
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+        <TaskCard n={newTx} title="Banki tétel párosításra" sub="javaslat kész" tone="blue" onClick={goBank} />
+        <TaskCard n={overdueN} title="Elmaradt terv" sub="lejárt, nincs tény" tone="red" onClick={goAlerts} />
+        <TaskCard n={uninvN} title="Kiszámlázandó" sub={`${curName}i tervek`} tone="light" onClick={goAlerts} />
+        <TaskCard n={dupN} title="Lehetséges duplikáció" sub="összevonásra vár" tone="pale" onClick={goAlerts} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
+        <div style={{ ...card, flex: '3 1 620px', minWidth: 0, padding: '18px 22px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 12 }}>
+            <HeroKpi label="Ma · bankban" value={fmt(ix.anchor)} sub="" />
+            <HeroKpi
+              boxed
+              label={`Havi cashflow · ${monthLabel(ix.cur).toLowerCase()}`}
+              value={(curOl.net > 0 ? '+' : curOl.net < 0 ? '−' : '') + fmt(Math.abs(curOl.net))}
+              color={curOl.net < 0 ? NEG : C.blueDark}
+              sub={`hó vége: ${fmt(curOl.bal)}`}
+            />
+            <HeroKpi
+              label="Mélypont"
+              value={m2(ol.next12.minBal) + ' M'}
+              color={ol.next12.minBal < 0 ? NEG : undefined}
+              sub={`${monthLabel(ol.next12.minYm).toLowerCase()} vége`}
+            />
+            <HeroKpi label="12 hó múlva" value={m2(nextBal) + ' M'} color={nextBal < 0 ? NEG : undefined} sub={`nettó ${sgnM(nextBal - curOl.bal)} M`} />
+          </div>
+          {bars.length > 1 && <ComboChart bars={bars} profit={profitBars} />}
+        </div>
+        <DeviationPanel />
+      </div>
+
+      {showFilters && <FilterBar />}
+
+      <div style={{ ...card, overflowX: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 12px 0', flexWrap: 'wrap' }}>
+          {canEdit && (
+            <span style={{ font: `400 12px ${FONT}`, color: C.muted, alignSelf: 'center', marginRight: 'auto' }}>
+              Terv cellára kattintva módosíthatsz · Enter = mentés
+            </span>
+          )}
+          <Pill small onClick={() => setShowFilters(!showFilters)}>
+            {showFilters ? 'Szűrők elrejtése' : 'További szűrők'}
+          </Pill>
+          <Pill small onClick={() => setDense(!dense)}>
+            {dense ? 'Kényelmes' : 'Kompakt'}
+          </Pill>
           <Pill
+            small
             onClick={() => {
               if (anyCollapsed) setCollapsed({});
               else {
@@ -753,89 +785,6 @@ function Overview({
             {anyCollapsed ? 'Mind kibontása' : 'Csak kategóriák'}
           </Pill>
         </div>
-      </div>
-
-      {flags.length > 0 && <FlagBanner n={flags.length} kinds={flags.map((f) => f.kind)} onClick={goAlerts} />}
-
-      <FilterBar />
-
-      {bars.length > 1 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,460px),1fr))', gap: 14 }}>
-          <BarChart title={`Havi profit${filters.includeOffers ? ' – ajánlatokkal' : ''}`} sub="bevétel − kiadás" bars={profitBars} signed />
-          <BarChart
-            title={`Céges számlák egyenlege${bars.some((b) => b.kind === 'proj') ? ' – tény és előrejelzés' : ''}`}
-            sub="hónap végi záró · keretes = legalacsonyabb"
-            bars={bars}
-            markMin
-          />
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 14 }}>
-        <Kpi
-          dark
-          label={ix.anchorSource === 'bank' ? 'Banki egyenleg' : 'Számított egyenleg'}
-          value={fmt(ix.anchor) + ' Ft'}
-          sub={
-            ix.anchorSource === 'bank'
-              ? `${data.accounts
-                  .filter((a) => a.active && a.balance != null)
-                  .map((a) => a.bank_name)
-                  .join(' + ')} · ${relTime(Math.max(...data.accounts.map((a) => a.balance_at || 0)))}`
-              : 'nyitó egyenleg + tények'
-          }
-        />
-        <Kpi label={`${monthLabel(ix.cur)} várható záró`} value={fmt(curOl.bal) + ' Ft'} sub="nyitott tervezett tételekkel" />
-        <Kpi
-          label={`Havi cashflow · ${monthLabel(ix.cur)}`}
-          value={(curOl.net > 0 ? '+' : '') + fmt(curOl.net)}
-          color={curOl.net < 0 ? NEG : undefined}
-          sub="tény + nyitott terv"
-        />
-        <Kpi
-          label="Legalacsonyabb egyenleg"
-          value={fmt(ol.next12.minBal) + ' Ft'}
-          color={ol.next12.minBal < 0 ? NEG : undefined}
-          sub={`${monthLong(ol.next12.minYm)} végén (12 hó)`}
-        />
-        <Kpi label="Bankszinkron" value={`${newTx} új tétel`} sub="Jóváhagyás →" onClick={goBank} />
-      </div>
-
-      <PipelineCard cols={cols} matrix={matrix} netAll={netAll} goGroup={goGroup} />
-
-      <DeviationCard />
-
-      <div style={{ ...card, padding: '18px 22px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 18 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ font: `700 15px ${FONT_H}`, color: C.navy }}>Jövő 12 hónap becslése</span>
-          <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
-            tervek{filters.estimate ? ' + tényekből becsült rendszeres tételek' : ''}
-            {filters.includeOffers ? ' + ajánlatok' : ''}
-          </span>
-        </div>
-        {[
-          ['Bevétel', ol.next12.inc, ol.last12.inc],
-          ['Kiadás', ol.next12.exp, ol.last12.exp],
-          ['Nettó', ol.next12.net, ol.last12.net],
-        ].map(([l, v, p]) => (
-          <div key={l as string} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <span style={eyebrow}>{l}</span>
-            <span style={{ font: `800 20px ${FONT_H}`, color: (v as number) < 0 ? NEG : C.navy, fontVariantNumeric: 'tabular-nums' }}>
-              {fmt(v as number)} Ft
-            </span>
-            <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>elmúlt 12 hó tény: {fmt(p as number)} Ft</span>
-          </div>
-        ))}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={eyebrow}>Egyenleg 12 hó múlva</span>
-          <span style={{ font: `800 20px ${FONT_H}`, color: ol.next12.endBal < 0 ? NEG : C.navy, fontVariantNumeric: 'tabular-nums' }}>
-            {fmt(ol.next12.endBal)} Ft
-          </span>
-          <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{monthLong(ol.months[ol.months.length - 1].ym)} végén</span>
-        </div>
-      </div>
-
-      <div style={{ ...card, overflowX: 'auto' }}>
         <div
           style={{
             display: 'grid',
@@ -845,26 +794,56 @@ function Overview({
             position: 'sticky',
             top: 0,
             zIndex: 3,
-            borderBottom: `1px solid ${C.line}`,
+            paddingTop: 10,
           }}
         >
-          <div style={{ position: 'sticky', left: 0, zIndex: 2, background: '#fff', padding: '12px 14px', ...eyebrow, borderRight: `1px solid ${C.line}` }}>
+          <div
+            style={{
+              gridColumn: 1,
+              gridRow: '1 / span 2',
+              position: 'sticky',
+              left: 0,
+              zIndex: 2,
+              background: '#fff',
+              padding: '0 14px 10px',
+              display: 'flex',
+              alignItems: 'flex-end',
+              ...eyebrow,
+            }}
+          >
             Kategória
           </div>
-          {cols.map((c) => (
+          {curIdx.length > 0 && (
             <div
-              key={c.key}
               style={{
-                padding: '12px',
-                textAlign: 'right',
-                background: c.kind === 'actual' ? C.bg3 : '#fff',
-                display: 'flex',
-                flexDirection: 'column',
-                lineHeight: 1.2,
+                gridColumn: `${curIdx[0] + 2} / span ${curIdx.length}`,
+                gridRow: 1,
+                background: C.navy,
+                color: '#fff',
+                borderRadius: '8px 8px 0 0',
+                textAlign: 'center',
+                padding: '8px 0',
+                font: `700 13px ${FONT_H}`,
               }}
             >
-              <span style={{ font: `700 12.5px ${FONT_H}`, color: C.navy }}>{c.label}</span>
-              <span style={{ font: `500 11px ${FONT}`, color: C.muted }}>{c.sub}</span>
+              {filters.granularity === 'year' ? cols[curIdx[0]].label : monthLong(ix.cur)}
+            </div>
+          )}
+          {cols.map((c, i) => (
+            <div
+              key={c.key}
+              title={c.sub}
+              style={{
+                gridColumn: i + 2,
+                gridRow: 2,
+                padding: '10px 12px',
+                textAlign: 'right',
+                background: c.current ? '#EEF4F9' : '#fff',
+                font: `700 13px ${FONT_H}`,
+                color: C.navy,
+              }}
+            >
+              {c.current && curIdx.length > 1 ? (c.kind === 'actual' ? 'Tény' : 'Terv') : c.label}
             </div>
           ))}
         </div>
@@ -872,37 +851,44 @@ function Overview({
         <Row
           grid={grid}
           minW={minW}
-          bg={C.navy}
-          border={C.navy}
-          label="Összesített cashflow"
-          labelStyle={{ font: `700 13.5px ${FONT_H}`, color: '#fff' }}
-          h={rowH}
+          bg="#EEF4F9"
+          border={C.line}
+          label="Havi cashflow"
+          labelStyle={{ font: `700 15px ${FONT_H}`, color: C.navy, paddingLeft: 30 }}
+          h={rowH + 16}
         >
-          {matrix.balance.map((v, i) => (
+          {netAll.map((v, i) => (
             <Cell
               key={i}
-              h={rowH}
-              bg={cols[i].kind === 'actual' ? C.navy2 : 'transparent'}
-              fg={v < 0 ? C.negLight : '#fff'}
+              h={rowH + 16}
+              bg={cols[i].current ? '#E1ECF5' : 'transparent'}
+              fg={!Math.round(v) ? C.muted : v < 0 ? NEG : C.blueDark}
               fw={700}
-              title={matrix.balanceKind[i] === 'proj' ? 'előrejelzett záró egyenleg' : 'tényleges záró egyenleg'}
+              size={15}
             >
-              {fmt(v)}
+              {Math.round(v) > 0 ? '+' : Math.round(v) < 0 ? '−' : ''}
+              {fmt(Math.abs(v))}
             </Cell>
           ))}
         </Row>
         <Row
           grid={grid}
           minW={minW}
-          bg={C.bg2}
-          border={C.line2}
-          label="Havi cashflow (bevétel − kiadás)"
-          labelStyle={{ font: `600 13.5px ${FONT}`, color: C.navy }}
-          h={rowH}
+          bg={C.navy}
+          border={C.navy}
+          label="Egyenleg hó végén"
+          labelStyle={{ font: `700 14px ${FONT_H}`, color: '#fff', paddingLeft: 30 }}
+          h={rowH + 8}
         >
-          {netAll.map((v, i) => (
-            <Cell key={i} h={rowH} bg={cols[i].kind === 'actual' ? '#E1ECF5' : 'transparent'} fg={!Math.round(v) ? C.muted : v < 0 ? NEG : '#2E7D4F'} fw={700}>
-              {Math.round(v) > 0 ? '+' : ''}
+          {matrix.balance.map((v, i) => (
+            <Cell
+              key={i}
+              h={rowH + 8}
+              bg={cols[i].current ? C.navy2 : 'transparent'}
+              fg={v < 0 ? C.negLight : '#fff'}
+              fw={700}
+              title={matrix.balanceKind[i] === 'proj' ? 'előrejelzett záró egyenleg' : 'tényleges záró egyenleg'}
+            >
               {fmt(v)}
             </Cell>
           ))}
@@ -978,6 +964,9 @@ function Overview({
                   title={r.label}
                 >
                   {isGroup ? displayGroup(r.label) : r.label}
+                  {isGroup && (leafCount.get(r.id) || 0) > 0 && (
+                    <span style={{ font: `400 11.5px ${FONT}`, color: C.faint, marginLeft: 6 }}>{leafCount.get(r.id)} tétel</span>
+                  )}
                 </span>
                 {canEdit && r.type !== 'section' && (
                   <button
@@ -1005,7 +994,11 @@ function Overview({
                 const col = cols[i];
                 const editable = canEdit && r.type === 'leaf' && !r.offerOnly && col.kind === 'plan' && col.months.length === 1 && col.last >= ix.cur;
                 const isEd = editable && editing?.leaf === r.id && editing.col === i;
-                const fg = c.v < 0 ? NEG : c.est ? C.muted : Math.round(c.v) === 0 ? C.faint : isSec || isGroup ? C.navy : C.ink;
+                const fg = c.v < 0 ? NEG : c.est ? C.faint : Math.round(c.v) === 0 ? C.faint : isSec || isGroup ? C.navy : C.ink;
+                // folyó hónap tény-cellája: pötty, ha eltér a hónap tervétől (kék = jó irány, piros = rosszabb)
+                const planCell = col.current && col.kind === 'actual' && cols[i + 1]?.current ? r.cells[i + 1] : null;
+                const dev =
+                  planCell && !isSec && Math.round(c.v) && Math.round(Math.abs(c.v) - Math.abs(planCell.v)) ? Math.abs(c.v) - Math.abs(planCell.v) : 0;
                 return (
                   <div
                     key={i}
@@ -1017,10 +1010,9 @@ function Overview({
                       alignItems: 'center',
                       justifyContent: 'flex-end',
                       padding: '0 12px',
-                      background: isEd ? C.bg2 : col.kind === 'actual' ? (isSec ? '#EEF2F7' : C.bg3) : 'transparent',
+                      background: isEd ? C.bg2 : col.current ? (isSec ? '#EEF2F7' : '#F7FAFC') : 'transparent',
                       color: fg,
                       font: `${isSec ? 700 : isGroup ? 600 : 400} 13.5px ${FONT}`,
-                      fontStyle: c.est ? 'italic' : undefined,
                       fontVariantNumeric: 'tabular-nums',
                       cursor: editable ? 'text' : isGroup ? 'pointer' : 'default',
                       boxShadow: isEd ? `inset 0 0 0 2px ${C.blue}` : 'none',
@@ -1053,7 +1045,12 @@ function Overview({
                         }}
                       />
                     ) : (
-                      cellText(c.v, c.est, c.offer)
+                      <>
+                        {dev ? (
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: devColor(r.section, dev), marginRight: 7, flex: 'none' }} />
+                        ) : null}
+                        {cellText(c.v, c.est, c.offer)}
+                      </>
                     )}
                   </div>
                 );
@@ -1061,47 +1058,30 @@ function Overview({
             </div>
           );
         })}
-      </div>
-      {/* alapból 3 hónap; a „+” egy-egy hónappal bővíti az időszakot */}
-      {filters.granularity === 'month' && (
-        <button
-          type="button"
-          onClick={() => st.setFilters({ to: addMonths(filters.to, 1) })}
-          title="Még egy hónap betöltése"
+        <div
           style={{
-            alignSelf: 'center',
             display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            border: `1px dashed ${C.line2}`,
-            borderRadius: 999,
-            background: '#fff',
-            color: C.navy,
-            padding: '8px 18px 8px 8px',
-            font: `600 13.5px ${FONT}`,
-            cursor: 'pointer',
+            gap: 18,
+            flexWrap: 'wrap',
+            padding: '10px 14px',
+            borderTop: `1px solid ${C.line}`,
+            font: `400 12px ${FONT}`,
+            color: C.muted,
+            minWidth: minW,
           }}
         >
-          <span
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 999,
-              background: C.navy,
-              color: '#fff',
-              display: 'grid',
-              placeItems: 'center',
-              font: `700 20px/1 ${FONT_H}`,
-            }}
-          >
-            +
+          <span>
+            {monthLabel(ix.cur)}: <b style={{ color: C.navy }}>tény</b> = bankból · <b style={{ color: C.navy }}>terv</b> = rögzített
           </span>
-          {monthLong(addMonths(filters.to, 1))} betöltése
-        </button>
-      )}
-      <div style={{ font: `400 12px ${FONT}`, color: C.muted }}>
-        ≈ dőlt: becslés az elmúlt 12 hónap tényei alapján · * ajánlatot tartalmaz · szürke háttér: tény (megtörtént) · csak a szűrőknek megfelelő, nem üres
-        sorok látszanak
+          <span>
+            <b style={{ color: C.ink }}>fekete</b> = terv
+          </span>
+          <span style={{ color: C.faint }}>szürke = becslés (múlt 12 hó alapján)</span>
+          <span>
+            <span style={{ color: C.neg }}>●</span> eltérés a tervtől
+          </span>
+          <span>* ajánlatot tartalmaz · üres sorok elrejtve</span>
+        </div>
       </div>
     </div>
   );
@@ -1140,7 +1120,7 @@ function Row(p: {
   );
 }
 
-function Cell(p: { h: number; bg: string; fg: string; fw: number; children: React.ReactNode; title?: string }) {
+function Cell(p: { h: number; bg: string; fg: string; fw: number; children: React.ReactNode; title?: string; size?: number }) {
   return (
     <div
       title={p.title}
@@ -1152,7 +1132,7 @@ function Cell(p: { h: number; bg: string; fg: string; fw: number; children: Reac
         padding: '0 12px',
         background: p.bg,
         color: p.fg,
-        font: `${p.fw} 13.5px ${FONT}`,
+        font: `${p.fw} ${p.size || 13.5}px ${FONT}`,
         fontVariantNumeric: 'tabular-nums',
         whiteSpace: 'nowrap',
       }}
