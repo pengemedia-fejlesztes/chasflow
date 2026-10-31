@@ -1,8 +1,10 @@
-# Automatikus ellenőrzés és telepítés Cloudflare-re.
+# Automatikus ellenőrzés és telepítés a saját tárhelyre: https://pmdev.hu/Cashflow/
 # - Minden push / pull request: típusellenőrzés, tesztek, build.
-# - Push a main vagy a fejlesztési (claude/dreamy-johnson-9ejay9) ágra: adatbázis migráció + telepítés (élesítés).
-# Szükséges GitHub Secrets (Settings → Secrets and variables → Actions):
-#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (a D1_DATABASE_ID már a wrangler.toml-ban van)
+# - Push a main vagy a fejlesztési (claude/dreamy-johnson-9ejay9) ágra: telepítés SSH-n a pmdev.hu-ra (pengemed:~/cashflow).
+#   A Cloudflare (workers.dev) változatot ez a workflow NEM telepíti.
+# Szükséges GitHub Secret (Settings → Secrets and variables → Actions):
+#   PMDEV_SSH_KEY – a pengemed fiókba engedélyezett privát SSH-kulcs
+# Adatbázis: a szerver MySQL-t használ; új migrations/ fájl esetén a telepítés megáll, a sémát kézzel kell frissíteni.
 name: Ellenőrzés és telepítés
 
 on:
@@ -39,48 +41,72 @@ jobs:
     if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/dreamy-johnson-9ejay9') && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
+    env:
+      SSH_TARGET: pengemed@pmdev.hu
+      APP_DIR: cashflow
+      SITE: https://pmdev.hu/Cashflow
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # a verziószámhoz (v1.<commitok száma>)
+          fetch-depth: 0 # a verziószámhoz (v1.<commitok száma>) és a migráció-ellenőrzéshez
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx vite build
-      - name: D1 adatbázis azonosító beírása
-        env:
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+      - name: Build (felület /Cashflow/ alá + szerveroldali csomag)
         run: |
-          if [ -n "$D1_DATABASE_ID" ]; then
-            sed -i "s/00000000-0000-0000-0000-000000000000/$D1_DATABASE_ID/" wrangler.toml
-          fi
-      - name: Adatbázis migráció
-        # A kód csak sikeres migráció után települhet (a verzióvédelem sémát igényel).
+          npx vite build --base /Cashflow/
+          npm run build:server
+      - name: SSH beállítása
+        env:
+          PMDEV_SSH_KEY: ${{ secrets.PMDEV_SSH_KEY }}
         run: |
-          set +e
-          npx wrangler d1 migrations apply cashflow --remote > /tmp/cashflow-migration.log 2>&1
-          result=$?
-          cat /tmp/cashflow-migration.log
-          if [ "$result" -ne 0 ]; then
-            python3 - <<'PYERROR'
-          import pathlib, re
-          text = pathlib.Path('/tmp/cashflow-migration.log').read_text()
-          text = re.sub(r'\x1b\[[0-9;]*m', '', text)[-12000:]
-          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-          print(f'::error title=D1 migration failed::{text}')
-          PYERROR
+          test -n "$PMDEV_SSH_KEY" || { echo '::error title=Hiányzó titok::PMDEV_SSH_KEY nincs beállítva'; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PMDEV_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo 'pmdev.hu ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMewO64g5AcAv0lPIwWAu+dSSrnA8mtdMHhdMYr+pl0M' > ~/.ssh/known_hosts
+          printf 'Host pmdev.hu\n  IdentityFile ~/.ssh/id_deploy\n  IdentitiesOnly yes\n  BatchMode yes\n  ConnectTimeout 30\n' > ~/.ssh/config
+      - name: Migráció-ellenőrzés (MySQL-t nem módosítunk automatikusan)
+        run: |
+          PREV=$(ssh "$SSH_TARGET" "cat $APP_DIR/.deployed-sha 2>/dev/null" || true)
+          echo "Előző élesített commit: ${PREV:-ismeretlen}"
+          if [ -n "$PREV" ] && git cat-file -e "$PREV^{commit}" 2>/dev/null; then
+            CHANGED=$(git diff --name-only "$PREV" HEAD -- migrations)
+            if [ -n "$CHANGED" ]; then
+              echo "::error title=Új adatbázis-migráció::A MySQL sémát kézzel kell frissíteni a telepítés előtt: $CHANGED"
+              exit 1
+            fi
+          else
+            echo '::warning::Az előző élesített commit nem azonosítható, a migráció-ellenőrzés kimaradt.'
           fi
-          exit "$result"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Telepítés
-        run: npx wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Telepítés a pmdev.hu-ra
+        run: |
+          tar -czf "$RUNNER_TEMP/release.tgz" dist dist-worker/worker.mjs server/*.mjs
+          ssh "$SSH_TARGET" "cat > $APP_DIR/.release.tgz" < "$RUNNER_TEMP/release.tgz"
+          ssh "$SSH_TARGET" "APP_DIR=$APP_DIR SHA=$GITHUB_SHA bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/"$APP_DIR"
+          NEW=.deploy-new
+          rm -rf "$NEW" && mkdir "$NEW"
+          tar -xzf .release.tgz -C "$NEW" && rm -f .release.tgz
+          TS=$(date +%Y%m%d-%H%M%S)
+          BK=.backup/$TS
+          mkdir -p "$BK"
+          mv dist "$BK/dist"
+          cp -a dist-worker server "$BK/"
+          [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
+          mv "$NEW/dist" dist
+          cp "$NEW/dist-worker/worker.mjs" dist-worker/worker.mjs
+          cp "$NEW"/server/*.mjs server/
+          rm -rf "$NEW"
+          echo "$SHA" > .deployed-sha
+          mkdir -p tmp && touch tmp/restart.txt
+          # az utolsó 5 mentés marad meg
+          ls -1d .backup/*/ | sort | head -n -5 | xargs -r rm -rf
+          echo "Telepítve: $SHA (mentés: $BK)"
+          REMOTE
       - name: Éles felület és API ellenőrzése
         run: |
           python3 - <<'PYSMOKE'
@@ -92,27 +118,27 @@ jobs:
                   attrs = dict(attrs)
                   if tag == 'script' and attrs.get('type') == 'module' and attrs.get('src'):
                       self.paths.append(attrs['src'])
-          base = 'https://cashflow-tervezo.pengemedia.workers.dev'
-          def get(path):
-              # a Cloudflare a Python alapértelmezett User-Agentjét (Python-urllib) 403-mal tiltja
-              req = urllib.request.Request(base + path, headers={'Cache-Control': 'no-cache', 'User-Agent': 'cashflow-deploy-smoke/1.0 (+github-actions)'})
+          site = os.environ['SITE']
+          origin = site.split('/Cashflow')[0]
+          def get(url):
+              req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': 'cashflow-deploy-smoke/1.0 (+github-actions)'})
               with urllib.request.urlopen(req, timeout=30) as response:
                   return response.read()
           local = Scripts(); local.feed(pathlib.Path('dist/index.html').read_text())
           assert local.paths, 'No compiled application script in dist/index.html'
-          for attempt in range(6):
+          for attempt in range(8):
               try:
-                  remote = Scripts(); remote.feed(get('/?deployment=' + os.environ['GITHUB_SHA']).decode())
+                  remote = Scripts(); remote.feed(get(site + '/?deployment=' + os.environ['GITHUB_SHA']).decode())
                   assert remote.paths == local.paths, 'The live HTML still serves another application build'
                   for path in local.paths:
-                      assert path.startswith('/assets/'), 'Unexpected script location'
-                      assert hashlib.sha256(get(path)).digest() == hashlib.sha256(pathlib.Path('dist' + path).read_bytes()).digest(), 'Live script differs from deployed artifact'
-                  status = json.loads(get('/api/auth/status'))
+                      assert path.startswith('/Cashflow/assets/'), 'Unexpected script location'
+                      assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
+                  status = json.loads(get(site + '/api/auth/status'))
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
-                  print('Production HTML, compiled application assets and authentication API verified.')
+                  print('pmdev.hu/Cashflow: HTML, application assets and authentication API verified.')
                   break
               except Exception as error:
-                  if attempt == 5:
+                  if attempt == 7:
                       message = str(error).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                       print(f'::error title=Production smoke check failed::{message}')
                       raise

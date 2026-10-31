@@ -12,7 +12,8 @@
     "worker:dev": "wrangler dev",
     "db:migrate:local": "wrangler d1 migrations apply cashflow --local",
     "db:migrate:remote": "wrangler d1 migrations apply cashflow --remote",
-    "deploy": "npm run build && wrangler d1 migrations apply cashflow --remote && wrangler deploy"
+    "deploy": "echo 'Élesítés: push a GitHubra (claude/dreamy-johnson-9ejay9) – a GitHub Actions a pmdev.hu/Cashflow-ra telepít.' && exit 1",
+    "build:server": "esbuild worker/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist-worker/worker.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
