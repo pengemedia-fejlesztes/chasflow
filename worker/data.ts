@@ -14,7 +14,7 @@ import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from 
 /** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
 function cleanPayRule(v: unknown): string | null {
   const r = v == null ? '' : String(v);
-  return /^(first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r) ? r : null;
+  return /^(month_start|month_end|first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r) ? r : null;
 }
 
 /** Van-e már az entries.period oszlop (0016-os migráció). A telepítés a migráció hibája esetén is kirakja a kódot – addig nélküle fut. */
@@ -441,7 +441,10 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       setParts.push('pay_days = ?');
       setVals.push(n);
     }
-    if (setParts.length) await env.DB.prepare(`UPDATE leaves SET ${setParts.join(', ')} WHERE id = ?`).bind(...setVals, lm[1]).run();
+    if (setParts.length)
+      await env.DB.prepare(`UPDATE leaves SET ${setParts.join(', ')} WHERE id = ?`)
+        .bind(...setVals, lm[1])
+        .run();
     if (b.group_id !== undefined || b.pay_rule !== undefined || b.pay_days !== undefined) await audit(env, u.id, 'leaf_updated', { id: lm[1], ...b });
     const keys = ['label', 'archived', 'group_id', 'pay_rule', 'pay_days'].filter((k) => b[k] !== undefined);
     if (keys.length) {

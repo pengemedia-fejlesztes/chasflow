@@ -737,8 +737,10 @@ function DataTab() {
 
 const PAY_OPTS: [string, string][] = [
   ['', 'Nincs'],
+  ['month_start', 'Hónap eleje (1.)'],
   ['first_workday', 'Hónap 1. munkanapja'],
   ['last_workday', 'Hónap utolsó munkanapja'],
+  ['month_end', 'Hónap vége'],
 ];
 
 /** Fizetési nap szabály választó gombokkal (N-ig: szám mező). */
@@ -879,7 +881,15 @@ function Categories() {
                   <button
                     title="Adatlap: mappa (kategória) módosítása, összevonás, átnevezés"
                     onClick={() => openPartner(l.id)}
-                    style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit', textDecoration: 'underline dotted' }}
+                    style={{
+                      border: 0,
+                      background: 'transparent',
+                      padding: 0,
+                      cursor: 'pointer',
+                      font: 'inherit',
+                      color: 'inherit',
+                      textDecoration: 'underline dotted',
+                    }}
                   >
                     {l.label}
                   </button>

@@ -8,7 +8,7 @@ import { RejectedOffers } from './RejectedOffers';
 import { addMonths, fmt, monthLabel } from '../../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../../shared/partners';
 import type { Partner, Section } from '../../shared/types';
-import { payDate, payRuleLabel } from '../../shared/workdays';
+import { dayNameHu, payDate, payRuleLabel } from '../../shared/workdays';
 import { sheetIdOf } from '../../shared/worktime';
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
@@ -1134,8 +1134,10 @@ export function SecHead({ children }: { children: ReactNode }) {
 const TERM_MODES: [string, string][] = [
   ['inv', 'Számla a hónap 1. munkanapján + N nap'],
   ['day', 'Minden hónap adott napján'],
+  ['month_start', 'Hónap eleje (1.)'],
   ['first_workday', 'Hónap első munkanapja'],
   ['last_workday', 'Hónap utolsó munkanapja'],
+  ['month_end', 'Hónap vége'],
 ];
 
 /** Fizetési feltételek partnerenként (alkategóriánként): mikor esedékes a rendszeres tétel – a tervek ehhez igazodnak. */
@@ -1171,7 +1173,7 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
     if (inv) return ['inv', Number(inv[1])];
     const d = rule.match(/^day:(\d+)$/);
     if (d) return ['day', Number(d[1])];
-    if (rule === 'first_workday' || rule === 'last_workday') return [rule, 0];
+    if (['first_workday', 'last_workday', 'month_start', 'month_end'].includes(rule)) return [rule, 0];
     return ['inv', L?.pay_days ?? payDefaults(data.settings, sec).payDays];
   };
   const [mode, setMode] = useState(init()[0]);
@@ -1251,7 +1253,7 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
               <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>Következő esedékességek:</span>
               {next.map((d) => (
                 <span key={d} style={{ padding: '6px 14px', borderRadius: 999, background: C.bg, font: `600 14px ${FONT}`, color: C.navy }}>
-                  {d.replace(/-/g, '.')}.
+                  {d.replace(/-/g, '.')}. <span style={{ fontWeight: 500, color: C.muted }}>{dayNameHu(d)}</span>
                 </span>
               ))}
             </div>
@@ -1354,7 +1356,9 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
           {mode === 'inv' ? 'nap a számlától' : '. nap (hétvégén az előző munkanap)'}
         </label>
       )}
-      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>Következő esedékességek: {next.map((d) => d.replace(/-/g, '.') + '.').join(' · ')}</span>
+      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+        Következő esedékességek: {next.map((d) => d.replace(/-/g, '.') + '. ' + dayNameHu(d)).join(' · ')}
+      </span>
       {sec === 'out' && normalizeText(ix.groupById[L?.group_id || '']?.label || '').includes('alvallalkoz') && <SheetLink leafId={leafId} />}
       {sec === 'in' && avgLate != null && avgLate > 5 && (
         // a tényleges fizetési szokás: átlagos késés a határidőhöz képest → javasolt tervezési nap (10-re kerekítve)

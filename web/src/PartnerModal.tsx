@@ -8,7 +8,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
-import { addDays, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
+import { addDays, dayNameHu, invoiceDue, payDate, payRuleLabel } from '../../shared/workdays';
+
+/** a nap rövid neve: H, K, Sze, Cs, P, Szo, V */
+const dayShort = (d: string) => ({ hétfő: 'H', kedd: 'K', szerda: 'Sze', csütörtök: 'Cs', péntek: 'P', szombat: 'Szo', vasárnap: 'V' })[dayNameHu(d)] || '';
 import type { EditTarget } from './EntryModal';
 import { LeafPicker } from './LeafPicker';
 import { LinkChain, diffColor, diffText, planLinks } from './LinkChain';
@@ -428,9 +431,11 @@ function ClosedItems({ leaf, focusKey, keyOf }: { leaf: string; focusKey: string
 
 /** Fizetés napja: a hónap adott napja, vagy első / utolsó munkanap (a hétvégi nap az előző munkanapra kerül) */
 const DAY_OPTS: [string, string][] = [
+  ['month_start', 'Hónap eleje (1.)'],
   ['first_workday', 'Első munkanap'],
   ...Array.from({ length: 31 }, (_, i) => [`day:${i + 1}`, `${i + 1}.`] as [string, string]),
   ['last_workday', 'Utolsó munkanap'],
+  ['month_end', 'Hónap vége'],
 ];
 const MONTH_OPTS: [number, string][] = [
   [3, '3 hó'],
@@ -1894,7 +1899,7 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
 // fix oszlopszélességek (minden sor saját rács, így igazodnak egymáshoz); a hónap neve rövidül, ha kevés a hely
 const ROW: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(0,1fr) 96px 150px 150px 150px',
+  gridTemplateColumns: 'minmax(0,1fr) 124px 150px 150px 150px',
   alignItems: 'center',
   gap: '6px 12px',
   padding: '8px 14px',
@@ -2145,7 +2150,7 @@ function MonthList({
               {canEdit && !doc ? (
                 <button
                   type="button"
-                  title={`Fizetési határidő: ${dot(e.date)} – módosítás`}
+                  title={`Fizetési határidő: ${dot(e.date)} ${dayNameHu(e.date, true)} – módosítás`}
                   onClick={() => setDating(e)}
                   style={{
                     border: 0,
@@ -2157,10 +2162,12 @@ function MonthList({
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  📅 {md(e.date)} ✎
+                  📅 {md(e.date)} <span style={{ color: C.muted, fontWeight: 500 }}>{dayShort(e.date)}</span> ✎
                 </button>
               ) : (
-                <>{md(e.date)}</>
+                <>
+                  {md(e.date)} <span style={{ color: C.muted }}>{dayShort(e.date)}</span>
+                </>
               )}
               {shifted ? ' ↷' : ''}
             </span>

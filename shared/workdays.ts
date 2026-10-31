@@ -1,5 +1,5 @@
 // Magyar munkanapok és fizetési nap szabályok.
-//  pay_rule formátum: 'first_workday' | 'last_workday' | 'day:N' (N. nap; ha munkaszüneti nap, az előtte lévő munkanap)
+//  pay_rule formátum: 'month_start' | 'month_end' | 'first_workday' | 'last_workday' | 'day:N' (N. nap; ha munkaszüneti nap, az előtte lévő munkanap)
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const iso = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -23,21 +23,48 @@ function easter(y: number): Date {
   return new Date(Date.UTC(y, month - 1, day));
 }
 
+/**
+ * Munkarend-naptár: évente kihirdetett áthelyezések (NGM rendelet). `rest` = áthelyezett pihenőnap (hétköznap, de nem
+ * munkanap), `work` = ledolgozós szombat (munkanap). 2027-re a rendelet még nem jelent meg (2026. 10. 31.) – ha megjelenik,
+ * ide kell felvenni; addig 2027-ben csak a törvényes ünnepek számítanak.
+ */
+export const WORK_CALENDAR: Record<number, { rest: string[]; work: string[] }> = {
+  2024: { rest: ['2024-08-19', '2024-12-24', '2024-12-27'], work: ['2024-08-03', '2024-12-07', '2024-12-14'] },
+  2025: { rest: ['2025-05-02', '2025-10-24', '2025-12-24'], work: ['2025-05-17', '2025-10-18', '2025-12-13'] },
+  2026: { rest: ['2026-01-02', '2026-08-21', '2026-12-24'], work: ['2026-01-10', '2026-08-08', '2026-12-12'] },
+  2027: { rest: [], work: [] },
+};
+
 const cache = new Map<number, Set<string>>();
-/** Magyarországi munkaszüneti napok (áthelyezett munkanapok nélkül). */
+/** Magyarországi munkaszüneti napok: törvényes ünnepek (Mt. 102. §) + az évi áthelyezett pihenőnapok. */
 export function holidays(y: number): Set<string> {
   if (cache.has(y)) return cache.get(y)!;
-  const s = new Set([`${y}-01-01`, `${y}-03-15`, `${y}-05-01`, `${y}-08-20`, `${y}-10-23`, `${y}-11-01`, `${y}-12-24`, `${y}-12-25`, `${y}-12-26`]);
+  const s = new Set([`${y}-01-01`, `${y}-03-15`, `${y}-05-01`, `${y}-08-20`, `${y}-10-23`, `${y}-11-01`, `${y}-12-25`, `${y}-12-26`]);
   const e = easter(y).getTime();
   for (const off of [-2, 1, 50]) s.add(iso(new Date(e + off * 86400000))); // nagypéntek, húsvéthétfő, pünkösdhétfő
+  for (const d of WORK_CALENDAR[y]?.rest || []) s.add(d);
   cache.set(y, s);
   return s;
 }
 
 export function isWorkday(date: string): boolean {
   const d = new Date(date + 'T12:00:00Z');
+  const y = d.getUTCFullYear();
+  if (WORK_CALENDAR[y]?.work.includes(date)) return true; // ledolgozós szombat
   const wd = d.getUTCDay();
-  return wd !== 0 && wd !== 6 && !holidays(d.getUTCFullYear()).has(date);
+  return wd !== 0 && wd !== 6 && !holidays(y).has(date);
+}
+
+const DAYS_HU = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
+/** a nap neve: „hétfő” … ; munkaszüneti napnál „(munkaszüneti nap)”, ledolgozós szombatnál „(munkanap)” jelzéssel */
+export function dayNameHu(date: string, mark = false): string {
+  const d = new Date(date + 'T12:00:00Z');
+  const n = DAYS_HU[d.getUTCDay()];
+  if (!mark) return n;
+  const wd = d.getUTCDay();
+  if (WORK_CALENDAR[d.getUTCFullYear()]?.work.includes(date)) return `${n} (munkanap)`;
+  if (wd !== 0 && wd !== 6 && holidays(d.getUTCFullYear()).has(date)) return `${n} (munkaszüneti nap)`;
+  return n;
 }
 
 function step(date: string, dir: 1 | -1): string {
@@ -63,6 +90,8 @@ export type PayRule = string | null | undefined;
 export function payDate(ym: string, rule: PayRule, fallbackDay: number): string {
   const [y, m] = ym.split('-').map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  if (rule === 'month_start') return `${ym}-01`;
+  if (rule === 'month_end') return `${ym}-${pad(last)}`;
   if (rule === 'first_workday') return firstWorkday(ym);
   if (rule === 'last_workday') return lastWorkday(ym);
   // számlázás a hónap első munkanapján, fizetés N nappal később
@@ -78,6 +107,8 @@ export function payDate(ym: string, rule: PayRule, fallbackDay: number): string 
 }
 
 export function payRuleLabel(rule: PayRule): string {
+  if (rule === 'month_start') return 'hónap eleje (1.)';
+  if (rule === 'month_end') return 'hónap vége (utolsó nap)';
   if (rule === 'first_workday') return 'hónap első munkanapja';
   if (rule === 'last_workday') return 'hónap utolsó munkanapja';
   const m = rule && rule.match(/^day:(\d{1,2})$/);
