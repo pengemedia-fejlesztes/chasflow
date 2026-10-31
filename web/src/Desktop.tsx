@@ -490,7 +490,7 @@ function DeviationPanel() {
   }, [data.entries, ix.cur]);
   const tot = (sec: 'in' | 'out') => rows.filter((r) => ix.sectionOf(r.leaf) === sec).reduce((a, r) => a + r.diff, 0);
   return (
-    <div style={{ ...card, flex: '1 1 300px', minWidth: 0, padding: '18px 20px 14px', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ ...card, minWidth: 0, padding: '18px 20px 14px', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
         <b style={{ flex: 1, font: `700 16px ${FONT_H}`, color: C.navy }}>Eltérés a tervtől · {monthLabel(ix.cur).toLowerCase()}</b>
         {rows.length > 4 && (
@@ -725,15 +725,15 @@ function Overview({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 12 }}>
         <TaskCard n={newTx} title="Banki tétel párosításra" sub="javaslat kész" tone="blue" onClick={goBank} />
         <TaskCard n={overdueN} title="Elmaradt terv" sub="lejárt, nincs tény" tone="red" onClick={goAlerts} />
         <TaskCard n={uninvN} title="Kiszámlázandó" sub={`${curName}i tervek`} tone="light" onClick={goAlerts} />
         <TaskCard n={dupN} title="Lehetséges duplikáció" sub="összevonásra vár" tone="pale" onClick={goAlerts} />
       </div>
 
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        <div style={{ ...card, flex: '3 1 620px', minWidth: 0, padding: '18px 22px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,330px)', gap: 14, alignItems: 'stretch' }}>
+        <div style={{ ...card, minWidth: 0, padding: '18px 22px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 12 }}>
             <HeroKpi label="Ma · bankban" value={fmt(ix.anchor)} sub="" />
             <HeroKpi
