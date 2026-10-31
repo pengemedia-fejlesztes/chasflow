@@ -1,5 +1,5 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
-import { MONTHLY_RX, withMonth } from '../shared/monthname';
+import { withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
@@ -125,9 +125,9 @@ function cleanEntry(e: Entry): Entry {
   // ismétlődő tétel (havidíj, munkabér, bérleti díj…): a név a hónappal („Munkabér – 2026. október”); a hónap (period) rögzül,
   // így a fizetés napja szabadon mozgatható, a név (melyik hónapé) marad
   const ym = ent.period || ent.date.slice(0, 7);
-  const recurring = !!ent.series_id || MONTHLY_RX.test(ent.name);
-  const name = withMonth(ent.name, ym, recurring);
-  return name !== ent.name || (recurring && !ent.period) ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
+  // minden tervtétel (egyszeri, ütemezett, havi…) a hónapjával – egy adat, egyformán kezelve
+  const name = withMonth(ent.name, ym, true);
+  return name !== ent.name || !ent.period ? { ...ent, name: name.slice(0, 200), period: ym } : ent;
 }
 
 function cleanEntryRaw(e: Entry): Entry {
