@@ -4,7 +4,7 @@ import { VAT_RATE } from '../../shared/vat';
 // Partner (ügyfél / szállító) tételei egy helyen: a partner neve a fejléc, alatta a tételek (pl. Marketing tanácsadás, SEO, PPC),
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
@@ -16,7 +16,7 @@ import { REP, acceptOffer, genSeries, planNameOf, offerLeafFor, openBillingoDoc,
 import { CalendarSheet } from './DatePicker';
 import { RejectedOffers } from './RejectedOffers';
 import { useStore } from './store';
-import { C, DateField, FONT, FONT_H, Modal, NetBox, Pill, Seg, card, eyebrow, inputStyle } from './ui';
+import { C, DateField, FONT, FONT_H, Modal, Pill, Seg, card, eyebrow, inputStyle } from './ui';
 
 /** Ütemezés: a „Részletekben” (twice) egyszeri tétel 2–4 külön fizetéssel (saját összeg és dátum), sorozat nélkül */
 type Mode = Rep | 'twice';
@@ -451,10 +451,13 @@ function MonthSelect({ value, from, n, onChange }: { value: string; from: string
     </select>
   );
 }
-function DaySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function DaySelect({ value, onChange, rule }: { value: string; onChange: (v: string) => void; rule?: string | null }) {
+  // a partner „számlázás + N nap” feltétele is választható (ha az a partneré, vagy már ez van beállítva)
+  const extra = [rule, value].filter((v, i, a): v is string => !!v && /^inv:\d+$/.test(v) && a.indexOf(v) === i);
+  const opts: [string, string][] = [...DAY_OPTS, ...extra.map((v) => [v, `Számlázás + ${v.slice(4)} nap`] as [string, string])];
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, height: 36, width: 170, padding: '0 10px' }}>
-      {DAY_OPTS.map(([v, l]) => (
+      {opts.map(([v, l]) => (
         <option key={v} value={v}>
           {l}
         </option>
@@ -508,8 +511,9 @@ function ItemRow({
       if (ds.every((d) => d === payDate(ymOf(d), 'last_workday', 1))) return 'last_workday';
       if (ds.every((d) => d === payDate(ymOf(d), 'first_workday', 1))) return 'first_workday';
     }
+    // a partner fizetési feltétele (hónap eleje / vége / N. nap / számlázás + N nap), ha a tervek ehhez igazodnak, vagy még nincs terv
     const r = ix.leafById[curLeaf]?.pay_rule || '';
-    if (!ds.length && (r === 'first_workday' || r === 'last_workday')) return r;
+    if (r && (!ds.length || ds.every((d) => d === payDate(ymOf(d), r, 1)))) return r;
     // a sorozat beállított napja (a hétvégére eső fizetés az előző munkanapra kerül, ezért nem a dátumból olvassuk)
     return `day:${series?.day || Number((firstOpen?.date || '').slice(8)) || 1}`;
   })();
@@ -841,14 +845,12 @@ function ItemRow({
               <span
                 title={modeLock || undefined}
                 style={{
-                  alignSelf: 'flex-start',
                   maxWidth: '100%',
-                  overflowX: 'auto',
                   opacity: modeLock ? 0.55 : 1,
                   pointerEvents: modeLock ? 'none' : undefined,
                 }}
               >
-                <Seg value={mode} onChange={saveRep} options={NEW_REP_OPTS} />
+                <WrapSeg value={mode} onChange={saveRep} options={NEW_REP_OPTS} />
               </span>
               {modeLock && <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{modeLock}</span>}
               {it.parts && <PartsPicker n={pe.length} split={split} minN={minN} onN={changeN} onSplit={changeSplit} />}
@@ -866,6 +868,7 @@ function ItemRow({
                     ? 'a várható fizetés napja'
                     : 'a fizetés napja és a tervezés hossza'}
               </span>
+              <RuleHint rule={ix.leafById[curLeaf]?.pay_rule} />
             </span>
             <div style={formBox}>
               {it.parts ? (
@@ -900,7 +903,7 @@ function ItemRow({
                   <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end', padding: '12px 16px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <span style={eyebrow}>Fizetés napja</span>
-                      <DaySelect value={day} onChange={saveDay} />
+                      <DaySelect value={day} onChange={saveDay} rule={ix.leafById[curLeaf]?.pay_rule} />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <span style={eyebrow}>Tervezés</span>
@@ -1068,6 +1071,119 @@ const chipStyle = (active: boolean, disabled = false): React.CSSProperties => ({
   opacity: disabled ? 0.4 : 1,
 });
 
+/** „1635000” → „1 635 000” (magyar ezres tagolás szóközzel) */
+const groupDigits = (d: string) => d.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+/**
+ * Forint-összeg mező: gépelés közben ezres tagolással mutat („1 635 000”), a kurzor a beírt számjegy mögött marad;
+ * az onChange a tagolás nélküli egész számot adja („1635000”).
+ */
+function MoneyInput({
+  value,
+  onChange,
+  ...rest
+}: { value: string; onChange: (digits: string) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const ref = useRef<HTMLInputElement>(null);
+  /** hány számjegy áll a kurzor előtt (a tagolás utáni visszaállításhoz) */
+  const caret = useRef<number | null>(null);
+  const digits = String(value ?? '').replace(/\D/g, '');
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (caret.current === null || !el) return;
+    let n = caret.current,
+      i = 0;
+    while (i < el.value.length && n > 0) {
+      if (/\d/.test(el.value[i])) n--;
+      i++;
+    }
+    el.setSelectionRange(i, i);
+    caret.current = null;
+  });
+  return (
+    <input
+      {...rest}
+      ref={ref}
+      inputMode="numeric"
+      autoComplete="off"
+      value={groupDigits(digits)}
+      onChange={(ev) => {
+        const raw = ev.target.value;
+        const before = raw.slice(0, ev.target.selectionStart ?? raw.length).replace(/\D/g, '');
+        const d = raw
+          .replace(/\D/g, '')
+          .replace(/^0+(?=\d)/, '')
+          .slice(0, 12);
+        caret.current = Math.min(before.replace(/^0+(?=\d)/, '').length, d.length);
+        onChange(d);
+      }}
+    />
+  );
+}
+
+/** Szegmentált választó, amely keskeny helyen több sorba tördel (a „Hogyan fizet?”-hez) */
+function WrapSeg<T extends string | number>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+        background: C.bg,
+        border: `1px solid ${C.line}`,
+        borderRadius: 22,
+        padding: 3,
+        gap: 2,
+      }}
+    >
+      {options.map(([v, l]) => (
+        <button
+          key={String(v)}
+          type="button"
+          onClick={() => onChange(v)}
+          style={{
+            border: 0,
+            borderRadius: 999,
+            padding: '8px 16px',
+            font: `600 13.5px ${FONT}`,
+            cursor: 'pointer',
+            background: value === v ? C.navy : 'transparent',
+            color: value === v ? '#fff' : C.muted,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** a partner fizetési feltétele a „Mikor?” mellett */
+function RuleHint({ rule }: { rule?: string | null }) {
+  if (!rule) return null;
+  return (
+    <span style={{ display: 'block', marginTop: 3, font: `500 12.5px ${FONT}`, color: C.blueDark }}>a partner fizetési feltétele: {payRuleLabel(rule)}</span>
+  );
+}
+
+/**
+ * A partner fizetési feltétele szerinti első fizetési nap `from` napon vagy utána: hónap eleje / vége / N. nap
+ * (ha már elmúlt, a következő hónapé); „számlázás + N nap” egyszeri tételnél = a felvitel (számlázás) + N nap.
+ * Szabály nélkül: `from` + az egyszeri határidő.
+ */
+function ruleDue(rule: string | null | undefined, from: string, fallbackDays: number): string {
+  if (!rule) return addDays(from, fallbackDays);
+  const inv = rule.match(/^inv:(\d{1,3})$/);
+  if (inv) return addDays(from, Number(inv[1]));
+  const d = payDate(ymOf(from), rule, 1);
+  return d >= from ? d : payDate(addMonths(ymOf(from), 1), rule, 1);
+}
+/** a részletek javasolt dátumai: az első a megadott nap, a többi havonta a partner szabálya szerinti napon (különben 30 naponként) */
+function partDates(rule: string | null | undefined, first: string): string[] {
+  return [0, 1, 2, 3].map((i) => (i === 0 ? first : rule && !/^inv:/.test(rule) ? payDate(addMonths(ymOf(first), i), rule, 1) : addDays(first, 30 * i)));
+}
+
 /** „Mennyi? teljes díj”: nagy összegmező + Nettó / Bruttó */
 function AmountBox({
   value,
@@ -1102,12 +1218,10 @@ function AmountBox({
           background: C.bg2,
         }}
       >
-        <input
-          inputMode="numeric"
+        <MoneyInput
           value={value}
-          aria-invalid={!!value && parseWholeForint(value) === null}
           aria-label="Teljes díj egész forintban"
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange}
           onBlur={onCommit}
           onKeyDown={onCommit ? (e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur() : undefined}
           placeholder="0"
@@ -1206,13 +1320,11 @@ function PartsTable({
               background: r.lock ? C.bg3 : '#fff',
             }}
           >
-            <input
-              inputMode="numeric"
+            <MoneyInput
               value={r.shown}
               disabled={!!r.lock}
               aria-label={`${i + 1}. részlet összege`}
-              aria-invalid={!!r.shown && parseWholeForint(r.shown) === null}
-              onChange={(e) => onAmt(i, e.target.value)}
+              onChange={(v) => onAmt(i, v)}
               onBlur={onAmtCommit ? () => onAmtCommit(i) : undefined}
               onKeyDown={onAmtCommit ? (e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur() : undefined}
               style={{
@@ -1320,21 +1432,24 @@ function NewItem({
   /** a beírt összeg nettó (a mentéskor +27% ÁFA) vagy bruttó – egyszer, az egész tételre */
   const [vat, setVat] = useState<'net' | 'gross'>('gross');
   const [rep, setRep] = useState<Mode>(initYm ? 'once' : 'monthly');
+  // javasolt fizetési nap: a partner fizetési feltétele szerint, különben a felvitel + az egyszeri határidő
   const [date, setDate] = useState(() =>
-    initYm ? `${initYm}-${String(Math.min(28, Number(addDays(today, oneoffDays).slice(8)))).padStart(2, '0')}` : addDays(today, oneoffDays),
+    initYm
+      ? rule
+        ? payDate(initYm, rule, 10)
+        : `${initYm}-${String(Math.min(28, Number(addDays(today, oneoffDays).slice(8)))).padStart(2, '0')}`
+      : ruleDue(rule, today, oneoffDays),
   );
   // részletek: darabszám, felosztás, egyedi összegek, dátumok (alapból 30 naponként)
   const [nParts, setNParts] = useState(2);
   const [split, setSplit] = useState<Split>('50/50');
   const [customAmts, setCustomAmts] = useState<string[]>(['', '', '', '']);
-  const [dates, setDates] = useState<string[]>(() => [0, 1, 2, 3].map((i) => addDays(addDays(today, oneoffDays), 30 * i)));
+  const [dates, setDates] = useState<string[]>(() => partDates(rule, date));
   const [startYm, setStartYm] = useState(initYm || addMonths(cur, 1));
   const [count, setCount] = useState(12);
   const [tentative, setTentative] = useState(false);
-  // fizetés napja: a partner szabálya (hónap napja / első-utolsó munkanap), különben a számlázás + határidő szerinti nap
-  const [day, setDay] = useState(() =>
-    rule && /^(day:\d+|first_workday|last_workday)$/.test(rule) ? rule : `day:${Number(invoiceDue(addMonths(cur, 1), payDays).slice(8)) || 10}`,
-  );
+  // fizetés napja: a partner szabálya (hónap napja / első-utolsó munkanap / számlázás + N nap), különben a számlázás + határidő szerinti nap
+  const [day, setDay] = useState(() => rule || `day:${Number(invoiceDue(addMonths(cur, 1), payDays).slice(8)) || 10}`);
   const amt = num(amount);
   const gross = (x: number) => (vat === 'net' ? Math.round(x * (1 + VAT_RATE)) : x);
   const step = repStep(rep === 'twice' ? 'once' : rep);
@@ -1482,17 +1597,15 @@ function NewItem({
         <AmountBox value={amount} onChange={setAmount} vat={vat} onVat={setVat} gross={gross(amt)} />
         <div style={{ flex: '2 1 340px', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
           <span style={labelStrong}>Hogyan fizet?</span>
-          <span style={{ alignSelf: 'flex-start', maxWidth: '100%', overflowX: 'auto' }}>
-            <Seg
-              value={rep}
-              onChange={(v) => {
-                setRep(v);
-                setCount(v === 'yearly' ? 36 : 12);
-                if (v === 'twice') setDates((ds) => [date, ...ds.slice(1).map((_, i) => addDays(date, 30 * (i + 1)))]);
-              }}
-              options={NEW_REP_OPTS}
-            />
-          </span>
+          <WrapSeg
+            value={rep}
+            onChange={(v) => {
+              setRep(v);
+              setCount(v === 'yearly' ? 36 : 12);
+              if (v === 'twice') setDates(partDates(rule, date));
+            }}
+            options={NEW_REP_OPTS}
+          />
           {rep === 'twice' && <PartsPicker n={nParts} split={split} onN={changeN} onSplit={changeSplit} />}
         </div>
       </div>
@@ -1505,9 +1618,10 @@ function NewItem({
             {rep === 'twice'
               ? 'a várható fizetés napja (pl. előleg, majd átadáskor a végteljesítés)'
               : rep === 'once'
-                ? `a várható fizetés napja (felvitel + ${oneoffDays} nap)`
+                ? `a várható fizetés napja${rule ? '' : ` (felvitel + ${oneoffDays} nap)`}`
                 : 'a fizetés napja és a tervezés hossza'}
           </span>
+          <RuleHint rule={rule} />
         </span>
         <div style={formBox}>
           {rep === 'twice' ? (
@@ -1541,7 +1655,7 @@ function NewItem({
               <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end', padding: '12px 16px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={eyebrow}>Fizetés napja</span>
-                  <DaySelect value={day} onChange={setDay} />
+                  <DaySelect value={day} onChange={setDay} rule={rule} />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={eyebrow}>Első fizetés hónapja</span>
@@ -1762,14 +1876,39 @@ function MonthStatus({ all, name, onPick }: { all: Entry[]; name: string; onPick
 }
 
 /** a hónaplista sorai egységes oszlopokkal: hónap · fizetés · összeg · állapot · műveletek */
+// fix oszlopszélességek (minden sor saját rács, így igazodnak egymáshoz); a hónap neve rövidül, ha kevés a hely
 const ROW: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(170px,1.1fr) minmax(150px,.9fr) minmax(190px,1fr) minmax(130px,.9fr) auto',
+  gridTemplateColumns: 'minmax(0,1fr) 96px 150px 150px 150px',
   alignItems: 'center',
-  gap: '6px 14px',
-  padding: '9px 14px',
+  gap: '6px 12px',
+  padding: '8px 14px',
+  minWidth: 660,
 };
-const ACTS: React.CSSProperties = { display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' };
+const ACTS: React.CSSProperties = { display: 'flex', gap: 5, justifyContent: 'flex-end', flexWrap: 'nowrap', whiteSpace: 'nowrap' };
+const ellip: React.CSSProperties = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+/** állapot-címke a hónap sorában */
+const statusPill = (fg: string, bg: string): React.CSSProperties => ({
+  ...ellip,
+  justifySelf: 'start',
+  maxWidth: '100%',
+  padding: '3px 9px',
+  borderRadius: 999,
+  background: bg,
+  color: fg,
+  font: `600 11.5px ${FONT}`,
+});
+/** kicsi gomb a hónap sorában */
+const mini = (danger?: boolean): React.CSSProperties => ({
+  border: `1px solid ${danger ? C.line : C.line2}`,
+  background: '#fff',
+  color: danger ? C.neg : C.navy,
+  borderRadius: 999,
+  padding: '4px 9px',
+  font: `600 12px ${FONT}`,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+});
 
 function MonthList({
   it,
@@ -1794,9 +1933,9 @@ function MonthList({
   const base = planNameOf(it.name);
   /** havidíjas tételnél a sor neve a hónappal: „Havi díj – 2026. szeptember” */
   const title = (ym: string) => (
-    <b style={{ color: C.navy }}>
-      {base} – {monthName(ym)}
-    </b>
+    <span style={ellip} title={`${base} – ${monthName(ym)}`}>
+      <b style={{ color: C.navy }}>{monthName(ym)}</b> <span style={{ color: C.muted }}>· {base}</span>
+    </span>
   );
   const hl = (ym: string) => (focusYm === ym ? { boxShadow: `inset 4px 0 0 ${C.blue}` } : {});
   const [adding, setAdding] = useState(false);
@@ -1835,7 +1974,9 @@ function MonthList({
   const addMonth = (ym: string) => {
     if (!tpl) return;
     const day = Math.min(28, Number(tpl.date.slice(8)) || 10);
-    const date = `${ym}-${String(day).padStart(2, '0')}`;
+    // a partner fizetési feltétele szerinti nap (hónap eleje / vége / N. nap / számlázás + N nap), különben a minta napja
+    const rule = ix.leafById[tpl.leaf_id]?.pay_rule;
+    const date = rule ? payDate(ym, rule, day) : `${ym}-${String(day).padStart(2, '0')}`;
     setAdding(false);
     onApply(
       {
@@ -1866,7 +2007,7 @@ function MonthList({
     onApply({ upsert: [{ ...e, date: nd, period: periodOf(e) }] }, `${it.name} – ${monthName(periodOf(e))}: később számlázzuk, fizetés ${dot(nd)}`);
   };
   return (
-    <div ref={boxRef} style={{ display: 'flex', flexDirection: 'column', borderRadius: 12, border: `1px solid ${C.line3}`, overflow: 'hidden' }}>
+    <div ref={boxRef} style={{ display: 'flex', flexDirection: 'column', borderRadius: 12, border: `1px solid ${C.line3}`, overflowX: 'auto' }}>
       {dating && (
         <CalendarSheet
           value={dating.date}
@@ -1897,12 +2038,12 @@ function MonthList({
               }}
             >
               {title(e.gap)}
-              <span style={{ gridColumn: '2 / span 3', color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
+              <span style={{ ...ellip, gridColumn: '2 / span 3', color: '#B3261E', fontWeight: 600 }}>nincs felvéve (se terv, se befizetés)</span>
               <span style={ACTS}>
                 {tpl && editable.length + closed.length > 0 && (
-                  <Pill small onClick={() => addMonth(e.gap)}>
-                    + Felvétel ({fmt(Math.abs(tpl.amount))} Ft)
-                  </Pill>
+                  <button type="button" style={mini()} title={`Felvétel: ${fmt(Math.abs(tpl.amount))} Ft`} onClick={() => addMonth(e.gap)}>
+                    + Felvétel
+                  </button>
                 )}
               </span>
             </div>
@@ -1923,39 +2064,46 @@ function MonthList({
               }}
             >
               {title(periodOf(e))}
-              <span style={{ color: C.muted }}>{act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}</span>
-              {/* terv · tény · eltérés (bevételnél a több, kiadásnál a kevesebb a jó) */}
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {e.kind === 'plan' && act ? (
-                  (() => {
-                    const pl = Math.abs(e.plan_amount ?? e.amount),
-                      ac = Math.abs(act.amount),
-                      d = ac - pl;
-                    const good = ix.sectionOf(e.leaf_id) === 'in' ? d > 0 : d < 0;
-                    return (
-                      <>
-                        terv {fmt(pl)} · tény <b>{fmt(ac)}</b>
-                        {d !== 0 && (
-                          <b style={{ marginLeft: 6, color: good ? '#1A7340' : C.neg }}>
-                            {d > 0 ? '▲' : '▼'} {fmt(Math.abs(d))}
-                          </b>
-                        )}
-                      </>
-                    );
-                  })()
-                ) : (
-                  <>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</>
-                )}
+              <span style={{ ...ellip, color: C.muted }} title={act ? `befizetve ${dot(act.date)}` : `fizetés ${dot(e.date)}`}>
+                {act ? '✓ ' : ''}
+                {md(act?.date || e.date)}
               </span>
-              <span style={{ color: '#2E7D4F', fontWeight: 700 }}>
-                ✓ {e.kind === 'actual' ? 'befizetve (terv nélkül)' : act ? 'fizetve' : 'kész'}
+              {/* tény (és az eltérés a tervtől: bevételnél a több, kiadásnál a kevesebb a jó) */}
+              {e.kind === 'plan' && act ? (
+                (() => {
+                  const pl = Math.abs(e.plan_amount ?? e.amount),
+                    ac = Math.abs(act.amount),
+                    d = ac - pl;
+                  const good = ix.sectionOf(e.leaf_id) === 'in' ? d > 0 : d < 0;
+                  return (
+                    <span style={{ ...ellip, fontVariantNumeric: 'tabular-nums' }} title={`terv ${fmt(pl)} Ft · tény ${fmt(ac)} Ft`}>
+                      <b>{fmt(ac)} Ft</b>
+                      {d !== 0 && (
+                        <b style={{ marginLeft: 6, font: `700 11.5px ${FONT}`, color: good ? '#1A7340' : C.neg }}>
+                          {d > 0 ? '▲' : '▼'} {fmt(Math.abs(d))}
+                        </b>
+                      )}
+                    </span>
+                  );
+                })()
+              ) : (
+                <span style={{ ...ellip, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(act?.amount ?? e.amount))} Ft</span>
+              )}
+              <span style={statusPill('#2E7D4F', '#E3F2E9')} title={e.kind === 'actual' ? 'befizetve, terv nélkül' : undefined}>
+                ✓ {e.kind === 'actual' ? 'terv nélkül' : act ? 'fizetve' : 'kész'}
+              </span>
+              <span style={ACTS}>
                 {doc && (
-                  <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, marginLeft: 8 }}>
-                    számla {doc.number || ''} ↗
+                  <a
+                    href="#"
+                    title={`számla ${doc.number || ''}`}
+                    onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))}
+                    style={{ color: C.blueDark, font: `600 12px ${FONT}` }}
+                  >
+                    számla ↗
                   </a>
                 )}
               </span>
-              <span />
             </div>
           );
         }
@@ -1978,11 +2126,11 @@ function MonthList({
             }}
           >
             {title(p)}
-            <span style={{ color: C.muted }}>
+            <span style={{ ...ellip, color: C.muted }} title={`fizetés ${dot(e.date)}${shifted ? ' · később számlázva' : ''}`}>
               {canEdit && !doc ? (
                 <button
                   type="button"
-                  title="Fizetési határidő módosítása"
+                  title={`Fizetési határidő: ${dot(e.date)} – módosítás`}
                   onClick={() => setDating(e)}
                   style={{
                     border: 0,
@@ -1991,15 +2139,15 @@ function MonthList({
                     font: 'inherit',
                     color: C.blueDark,
                     cursor: 'pointer',
-                    textDecoration: 'underline dotted',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  📅 fizetés {dot(e.date)} ✎
+                  📅 {md(e.date)} ✎
                 </button>
               ) : (
-                <>fizetés {dot(e.date)}</>
+                <>{md(e.date)}</>
               )}
-              {shifted ? ' · később számlázva' : ''}
+              {shifted ? ' ↷' : ''}
             </span>
             {canEdit && !doc ? (
               <MonthAmount
@@ -2007,19 +2155,26 @@ function MonthList({
                 onSave={(v) => onApply({ upsert: [{ ...e, amount: signed(ix.sectionOf(e.leaf_id), v) }] }, `${it.name} – ${monthName(p)}: ${fmt(v)} Ft`)}
               />
             ) : (
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(e.amount))} Ft</span>
+              <span style={{ ...ellip, fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(e.amount))} Ft</span>
             )}
-            <span>
-              {doc ? (
-                <a href="#" onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))} style={{ color: C.blueDark, fontWeight: 700 }}>
-                  számla {doc.number || ''} {doc.payment_status === 'paid' ? '· fizetve' : '· nyitott'} ↗
-                </a>
-              ) : nav ? (
-                <span style={{ color: C.blueDark, fontWeight: 600 }}>NAV-számla {nav.invoice_number}</span>
-              ) : (
-                <span style={{ color: late ? '#B3261E' : '#8A6D1C', fontWeight: late ? 700 : 500 }}>{late ? 'még nincs kiszámlázva' : 'terv'}</span>
-              )}
-            </span>
+            {doc ? (
+              <a
+                href="#"
+                title={`számla ${doc.number || ''}`}
+                onClick={(ev) => (ev.preventDefault(), openBillingoDoc(doc.id))}
+                style={{ ...statusPill(C.blueDark, C.bg2), textDecoration: 'none' }}
+              >
+                számla · {doc.payment_status === 'paid' ? 'fizetve' : 'nyitott'} ↗
+              </a>
+            ) : nav ? (
+              <span style={statusPill(C.blueDark, C.bg2)} title={`NAV-számla ${nav.invoice_number}`}>
+                NAV-számla
+              </span>
+            ) : late ? (
+              <span style={statusPill('#B3261E', C.negBg)}>még nincs kiszámlázva</span>
+            ) : (
+              <span style={statusPill('#8A6D1C', '#FBF3DC')}>terv</span>
+            )}
             {canEdit && !doc ? (
               <span style={moving === e.id ? { ...ACTS, gridColumn: '1 / -1', justifyContent: 'flex-start', flexWrap: 'wrap' } : ACTS}>
                 {moving === e.id ? (
@@ -2036,19 +2191,20 @@ function MonthList({
                   </>
                 ) : (
                   <>
-                    <Pill small onClick={() => setMoving(e.id)}>
-                      Később számlázzuk…
-                    </Pill>
-                    <Pill
-                      small
-                      kind="danger"
+                    <button type="button" style={mini()} title="Később számlázzuk – a fizetés egy későbbi hónapra kerül" onClick={() => setMoving(e.id)}>
+                      Később…
+                    </button>
+                    <button
+                      type="button"
+                      style={mini(true)}
+                      title="Ezt a hónapot nem számlázzuk (a terv törlődik)"
                       onClick={() =>
                         confirm(`${it.name} – ${monthName(p)}: ezt a hónapot nem számlázzuk (a terv törlődik)?`) &&
                         onApply({ delete: [e.id] }, `${it.name} – ${monthName(p)}: kihagyva`)
                       }
                     >
                       Kihagyjuk
-                    </Pill>
+                    </button>
                   </>
                 )}
               </span>
@@ -2094,18 +2250,17 @@ function MonthAmount({ e, onSave }: { e: Entry; onSave: (v: number) => void }) {
     else setV(fmt(Math.abs(e.amount)));
   };
   return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 90 }} title="Az adott hónap összege – írd át, Enter = mentés">
-      <input
+    <label style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }} title="Az adott hónap összege (bruttó) – írd át, Enter = mentés">
+      <MoneyInput
         value={v}
-        inputMode="numeric"
-        onChange={(ev) => setV(ev.target.value)}
+        aria-label="A hónap összege"
+        onChange={setV}
         onFocus={(ev) => ev.target.select()}
         onBlur={save}
         onKeyDown={(ev) => ev.key === 'Enter' && (ev.target as HTMLInputElement).blur()}
-        style={{ ...inputStyle, width: 110, height: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums', padding: '0 8px' }}
+        style={{ ...inputStyle, width: 122, height: 32, textAlign: 'right', fontVariantNumeric: 'tabular-nums', padding: '0 8px' }}
       />
       Ft
-      <NetBox value={v} onChange={(g) => (setV(fmt(Number(g))), onSave(Number(g)))} small />
     </label>
   );
 }
