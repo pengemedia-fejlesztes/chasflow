@@ -21,7 +21,7 @@ const BSTATUS: Record<string, [string, string]> = {
 };
 
 export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: Entry) => void }) {
-  const { ix, data, filters, commit, run, canEdit } = useStore();
+  const { ix, data, commit, run, canEdit } = useStore();
   const [showOffers, setShowOffers] = useState(true);
   const [side, setSide] = useState<Section | 'all'>('all');
   const inSide = (e: Entry) => side === 'all' || ix.sectionOf(e.leaf_id) === side;
@@ -44,7 +44,10 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
     if (f === 'offers') setShowOffers(true);
     setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
-  const horizon = endOfMonth(filters.to > ix.cur ? filters.to : addMonths(ix.cur, 3));
+  // alapból 3 hónap (az aktuális és a következő kettő); a lista alján a „+” gomb egy-egy hónappal bővít
+  const [more, setMore] = useState(0);
+  const lastMonth = addMonths(ix.cur, 2 + more);
+  const horizon = endOfMonth(lastMonth);
   const docByPlan = new Map(data.billingo.filter((d) => d.plan_id).map((d) => [d.plan_id!, d]));
   const income = data.entries.filter((e) => e.kind === 'plan' && inSide(e));
   const open = income.filter(
@@ -319,6 +322,40 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
           Nincs nyitott tervezett {side === 'out' ? 'kiadás' : side === 'in' ? 'bevétel' : 'tétel'}.
         </div>
       )}
+      <button
+        type="button"
+        onClick={() => setMore(more + 1)}
+        title="Még egy hónap betöltése"
+        style={{
+          alignSelf: 'center',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          border: `1px dashed ${C.line2}`,
+          borderRadius: 999,
+          background: '#fff',
+          color: C.navy,
+          padding: '8px 18px 8px 8px',
+          font: `600 13.5px ${FONT}`,
+          cursor: 'pointer',
+        }}
+      >
+        <span
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 999,
+            background: C.navy,
+            color: '#fff',
+            display: 'grid',
+            placeItems: 'center',
+            font: `700 20px/1 ${FONT_H}`,
+          }}
+        >
+          +
+        </span>
+        {monthLong(addMonths(lastMonth, 1))} betöltése
+      </button>
 
       <div style={{ ...card, overflow: 'hidden', display: focus === 'all' ? undefined : 'none' }}>
         <div style={{ padding: '14px 16px', font: `700 15px ${FONT_H}`, color: C.navy, borderBottom: `1px solid ${C.line}` }}>
