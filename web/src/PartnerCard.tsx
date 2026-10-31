@@ -44,15 +44,19 @@ export function PartnerEditor({
   onSaved,
   compact,
   part = 'all',
+  onPick,
 }: {
   p: PartnerStat;
   onSaved?: (key: string) => void;
+  /** Partnertörzs: másik partner kiválasztása a mappa-listából */
+  onPick?: (key: string) => void;
   compact?: boolean;
   /** basic = név + típus (adatlap 1. fül), company = cégadatok + mappák (2. fül), all = minden (partnertörzs) */
-  part?: 'basic' | 'company' | 'all' | 'settings';
+  part?: 'basic' | 'company' | 'all' | 'settings' | 'panel';
 }) {
   const { ix, data, run, canEdit } = useStore();
   const [browse, setBrowse] = useState(false);
+  const [browseG, setBrowseG] = useState<string | null>(null);
   const [name, setName] = useState(p.name);
   // a típus mindig egyértelmű: ha a partnertörzsben nincs megadva, a mappák szerint (bevétel / projekt = vevő, kiadás = szállító)
   const [kind, setKind] = useState<Kind>(p.info?.kind || kindOf(p, ix.sectionOf));
@@ -147,6 +151,255 @@ export function PartnerEditor({
   };
   const moveLeaf = (leafId: string, group_id: string) => run(() => api(`/api/leaves/${leafId}`, { method: 'PATCH', body: { group_id } }), 'Projekt módosítva');
   const addRole = (group_id: string) => run(() => api('/api/leaves', { body: { group_id, label: p.name } }), 'Hozzáadva');
+
+  if (part === 'panel') {
+    // Partnertörzs jobb oldali gyors szerkesztője (látványterv): név, típus, felismert nevek, adószám, megjegyzés, hova tartozik
+    const k = kind === 'auto' ? kindOf(p, ix.sectionOf) : kind;
+    const mainLeaf = p.leaves[0];
+    const sec: Section = k === 'szallito' ? 'out' : k === 'vevo' ? 'in' : mainLeaf ? ix.sectionOf(mainLeaf.id) : 'in';
+    const groups = ix.groups.filter((g) => g.section === sec);
+    const curG = browseG || mainLeaf?.group_id || groups[0]?.id;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <PanelRow title="Név">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => persist()}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            disabled={!canEdit}
+            style={{ ...inputStyle, height: 44, font: `500 15px ${FONT}` }}
+          />
+        </PanelRow>
+        <PanelRow title="Típus">
+          <div style={{ alignSelf: 'flex-start' }}>
+            <Seg
+              value={kind}
+              onChange={(v) => {
+                if (!canEdit) return;
+                setKind(v);
+                persist({ kind: v });
+              }}
+              options={[
+                ['vevo', 'Vevő'],
+                ['szallito', 'Szállító'],
+                ['mindketto', 'Mindkettő'],
+              ]}
+            />
+          </div>
+        </PanelRow>
+        <PanelRow title="Felismert nevek" sub="cégnév, Billingo-, banki név, üzlet/kút neve">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', border: `1px solid ${C.line2}`, borderRadius: 10, padding: 6 }}>
+            {aliases.map((a) => (
+              <span
+                key={a}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '5px 6px 5px 12px',
+                  borderRadius: 999,
+                  background: C.bg2,
+                  font: `600 13px ${FONT}`,
+                  color: C.navy,
+                }}
+              >
+                {a}
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      const next = aliases.filter((x) => x !== a);
+                      setAliases(next);
+                      persist({ aliases: next });
+                    }}
+                    title="Eltávolítás"
+                    style={{ border: 0, background: 'transparent', cursor: 'pointer', color: C.muted, font: `700 13px ${FONT}`, padding: '0 4px' }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+            {canEdit && (
+              <input
+                value={alias}
+                list={listId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (known.includes(v)) addAlias(v);
+                  else setAlias(v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    addAlias(alias);
+                  }
+                }}
+                onBlur={() => alias.trim() && addAlias(alias)}
+                placeholder="Kezdd gépelni (pl. SZIGNETTA)…"
+                style={{ flex: '1 1 160px', minWidth: 120, border: 0, outline: 'none', font: `500 14px ${FONT}`, color: C.ink, padding: '6px 8px' }}
+              />
+            )}
+            <datalist id={listId}>
+              {known.slice(0, 400).map((x) => (
+                <option key={x} value={x} />
+              ))}
+            </datalist>
+          </div>
+          <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>Ezek alapján párosít és összevon · válassz a listából, vagy új név + Enter</span>
+          {canEdit && suggest.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>Lehet, hogy ez is ő:</span>
+              {suggest.slice(0, 4).map((b) => (
+                <button
+                  key={b.source + b.name}
+                  onClick={() => addAlias(b.name)}
+                  style={{
+                    border: `1.5px dashed ${C.blue}`,
+                    background: '#fff',
+                    borderRadius: 999,
+                    padding: '4px 10px',
+                    font: `600 12px ${FONT}`,
+                    color: C.blueDark,
+                    cursor: 'pointer',
+                  }}
+                >
+                  + {b.name} · {b.source}
+                </button>
+              ))}
+            </div>
+          )}
+        </PanelRow>
+        <PanelRow title="Adószám">
+          <input
+            value={tax}
+            onChange={(e) => setTax(e.target.value)}
+            onBlur={() => persist()}
+            disabled={!canEdit}
+            placeholder="12345678-2-13"
+            style={{ ...inputStyle, height: 44, maxWidth: 240 }}
+          />
+          {canEdit && navTax && navTax !== tax && (
+            <button
+              type="button"
+              onClick={() => {
+                setTax(navTax);
+                persist({ tax: navTax });
+              }}
+              style={{
+                alignSelf: 'flex-start',
+                border: 0,
+                background: 'transparent',
+                padding: 0,
+                color: C.blueDark,
+                font: `600 12px ${FONT}`,
+                cursor: 'pointer',
+              }}
+            >
+              NAV-számla szerint: {navTax} – beírom
+            </button>
+          )}
+        </PanelRow>
+        <PanelRow title="Megjegyzés">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onBlur={() => persist()}
+            disabled={!canEdit}
+            placeholder="kapcsolattartó, szerződés, egyéb"
+            style={{ ...inputStyle, height: 44 }}
+          />
+        </PanelRow>
+        <PanelRow title="Hova tartozik" sub={sec === 'in' ? 'Bevétel (vevőként)' : 'Kiadás (szállítóként)'}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(150px,1fr) minmax(0,1fr)',
+              border: `1px solid ${C.line}`,
+              borderRadius: 12,
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ borderRight: `1px solid ${C.line}`, padding: 6, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {groups.map((g) => {
+                const on = curG === g.id;
+                const mine = mainLeaf?.group_id === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    title={mine ? 'Itt van' : 'Kattints a mappára a tartalmáért; a „Áthelyezés ide” gombbal kerül át'}
+                    onClick={() => setBrowseG(g.id)}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      border: 0,
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                      background: on ? C.bg : 'transparent',
+                      font: `${mine ? 700 : 500} 13.5px ${FONT}`,
+                      color: C.navy,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span>{displayGroup(g.label)}</span>
+                    <span style={{ font: `500 11.5px ${FONT}`, color: C.faint }}>{ix.leaves.filter((l) => l.group_id === g.id && !l.archived).length}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ padding: 10, display: 'flex', flexWrap: 'wrap', gap: 6, alignContent: 'flex-start', maxHeight: 280, overflowY: 'auto' }}>
+              {ix.leaves
+                .filter((l) => l.group_id === curG && !l.archived)
+                .sort((a, b) => a.label.localeCompare(b.label, 'hu'))
+                .map((l) => {
+                  const me = p.leaves.some((x) => x.id === l.id);
+                  return (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => !me && onPick?.(partnerIdOf(l.label))}
+                      title={me ? 'ez a partner' : 'partner kiválasztása'}
+                      style={{
+                        border: `1px solid ${me ? C.navy : C.line2}`,
+                        borderRadius: 999,
+                        padding: '5px 12px',
+                        background: me ? C.navy : '#fff',
+                        color: me ? '#fff' : C.blueDark,
+                        font: `600 12.5px ${FONT}`,
+                        cursor: me ? 'default' : 'pointer',
+                      }}
+                    >
+                      {me ? '● ' : ''}
+                      {l.label}
+                    </button>
+                  );
+                })}
+              {canEdit && mainLeaf && curG && curG !== mainLeaf.group_id && (
+                <button
+                  type="button"
+                  onClick={() => moveLeaf(mainLeaf.id, curG)}
+                  style={{
+                    border: `1.5px dashed ${C.blue}`,
+                    borderRadius: 999,
+                    padding: '5px 12px',
+                    background: '#fff',
+                    color: C.blueDark,
+                    font: `600 12.5px ${FONT}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  + Áthelyezés ide
+                </button>
+              )}
+            </div>
+          </div>
+        </PanelRow>
+      </div>
+    );
+  }
 
   if (part === 'settings') {
     // adatlap › Beállítások (látványterv): soronként felirat + mező
@@ -832,6 +1085,19 @@ function FolderTree({
   );
 }
 
+/** Partnertörzs gyors-szerkesztő sora: balra felirat, jobbra mező. */
+function PanelRow({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '150px minmax(0,1fr)', gap: 18, padding: '14px 0', borderBottom: `1px solid ${C.line3}` }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingTop: 10 }}>
+        <b style={{ font: `600 14px ${FONT}`, color: C.navy }}>{title}</b>
+        {sub && <span style={{ font: `400 12px/1.4 ${FONT}`, color: C.muted }}>{sub}</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>{children}</div>
+    </div>
+  );
+}
+
 /** Beállítás-sor: balra felirat + magyarázat, jobbra a mező (adatlap › Beállítások). */
 export function SettingRow({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
@@ -1481,8 +1747,8 @@ export function PartnerLink({ leaf, children, style }: { leaf: string; children:
 }
 
 /** Partnertörzs: az összes partner (vevő, szállító) egy helyen – név, típus, alternatív nevek, projektek szerkesztése. */
-export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
-  const { ix, data, openPartner } = useStore();
+export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boolean }) {
+  const { ix, data, openPartner, canEdit } = useStore();
   const all = useAllPartners();
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<'all' | 'vevo' | 'szallito'>('all');
@@ -1490,27 +1756,31 @@ export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
   // aktív partnerek: volt tranzakciója a választott időszakban, vagy van nyitott jövőbeli terve (alapból az elmúlt 3 hónap)
   const [period, setPeriod] = useState(3);
   const [sortBy, setSortBy] = useState<'name' | 'amount'>('name');
+  const [sel, setSel] = useState<string | null>(null);
+  const [how, setHow] = useState(false);
+  const [newP, setNewP] = useState(false);
   const nq = normalizeText(q);
   const activity = useMemo(() => {
     const since = period ? addMonths(data.today.slice(0, 7), -period) + '-01' : '';
-    const m = new Map<string, { sum: number; n: number; open: boolean }>();
+    const m = new Map<string, { sum: number; signed: number; n: number; open: boolean }>();
     for (const e of data.entries) {
-      const x = m.get(e.leaf_id) || { sum: 0, n: 0, open: false };
+      const x = m.get(e.leaf_id) || { sum: 0, signed: 0, n: 0, open: false };
       if (e.kind === 'actual' && e.date >= since && e.date <= data.today) {
         x.sum += Math.abs(e.amount);
+        x.signed += ix.sectionOf(e.leaf_id) === 'in' ? Math.abs(e.amount) : -Math.abs(e.amount);
         x.n++;
       } else if (e.kind === 'plan' && !e.done && e.date >= data.today) x.open = true;
       m.set(e.leaf_id, x);
     }
     return m;
-  }, [data.entries, data.today, period]);
+  }, [data.entries, data.today, period, ix]);
   const actOf = (p: (typeof all)[number]) =>
     p.leaves.reduce(
       (a, l) => {
         const x = activity.get(l.id);
-        return x ? { sum: a.sum + x.sum, n: a.n + x.n, open: a.open || x.open } : a;
+        return x ? { sum: a.sum + x.sum, signed: a.signed + x.signed, n: a.n + x.n, open: a.open || x.open } : a;
       },
-      { sum: 0, n: 0, open: false },
+      { sum: 0, signed: 0, n: 0, open: false },
     );
   const list = all
     .filter((p) => !p.leaves.every((l) => l.archived))
@@ -1525,6 +1795,272 @@ export function PartnerRegistry({ mobile }: { mobile?: boolean }) {
     })
     .filter((p) => !nq || normalizeText([p.name, ...(p.info?.aliases || []), ...p.billingNames.map((b) => b.name)].join(' ')).includes(nq))
     .sort((a, b) => (sortBy === 'amount' ? actOf(b).sum - actOf(a).sum : 0) || a.name.localeCompare(b.name, 'hu'));
+  // asztali Partnertörzs oldal (látványterv): táblázat + jobb oldali gyors szerkesztő, ↑/↓ = előző / következő partner
+  const selKey = sel && list.some((p) => p.key === sel) ? sel : list[0]?.key || null;
+  const selP = list.find((p) => p.key === selKey) || null;
+  useEffect(() => {
+    if (!page || mobile) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+      const i = list.findIndex((p) => p.key === selKey);
+      const n = list[i + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (n) {
+        e.preventDefault();
+        setSel(n.key);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+  if (page && !mobile) {
+    const signed12 = (p: (typeof all)[number]) => (p.sides.in?.last12 || 0) - (p.sides.out?.last12 || 0);
+    const money = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v));
+    const COLS = 'minmax(0,1.7fr) 96px minmax(0,1.2fr) 110px 100px 60px';
+    const th: CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
+    const subOf = (p: (typeof all)[number]) => [...new Set([...(p.info?.aliases || []), ...p.billingNames.map((b) => b.name)])].filter((x) => x !== p.name);
+    const selK = selP ? kindOf(selP, ix.sectionOf) : null;
+    const selA = selP ? actOf(selP) : null;
+    return (
+      <div style={{ padding: '24px 28px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ margin: 0, font: `800 32px/1.05 ${FONT_H}`, color: C.navy }}>Partnertörzs</h1>
+            <p style={{ margin: '8px 0 0', font: `400 14px/1.5 ${FONT}`, color: C.muted }}>
+              Minden vevő és szállító egy helyen · a felismert nevek alapján párosítjuk és összevonjuk a banki, NAV- és Billingo-tételeket ·{' '}
+              <button
+                onClick={() => setHow(!how)}
+                style={{ border: 0, background: 'transparent', padding: 0, color: C.blueDark, font: `600 14px ${FONT}`, cursor: 'pointer' }}
+              >
+                Hogyan működik?
+              </button>
+            </p>
+            {how && (
+              <p style={{ margin: '8px 0 0', font: `400 13px/1.5 ${FONT}`, color: C.muted, maxWidth: '90ch' }}>
+                A felismert nevek (cégnév, Billingo-számlanév, banki név, üzlet/kút neve) alapján a rendszer a banki, NAV- és Billingo-tételeket a partnerhez
+                párosítja és összevonja (pl. „Tankolás”: OMV 135, Shell 27, OMV 85). A partner nevére kattintva bárhol ugyanez az adatlap nyílik meg.
+              </p>
+            )}
+          </div>
+          {canEdit && (
+            <button
+              type="button"
+              className="hov-primary"
+              onClick={() => setNewP(true)}
+              style={{ border: 0, borderRadius: 999, background: C.blue, color: '#fff', padding: '12px 22px', font: `600 14.5px ${FONT}`, cursor: 'pointer' }}
+            >
+              + Új partner
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Seg
+            value={kind}
+            onChange={setKind}
+            options={[
+              ['all', 'Mind'],
+              ['vevo', 'Vevők'],
+              ['szallito', 'Szállítók'],
+            ]}
+          />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Keresés névben, felismert névben…"
+            style={{ ...inputStyle, height: 42, width: 380, borderRadius: 999, padding: '0 18px' }}
+          />
+          <select
+            value={period}
+            onChange={(e) => setPeriod(Number(e.target.value))}
+            style={{ ...inputStyle, height: 42, width: 220, borderRadius: 999, font: `600 14px ${FONT}`, color: C.navy }}
+          >
+            <option value={1}>Aktív: elmúlt 1 hónap</option>
+            <option value={3}>Aktív: elmúlt 3 hónap</option>
+            <option value={6}>Aktív: elmúlt 6 hónap</option>
+            <option value={12}>Aktív: elmúlt 12 hónap</option>
+            <option value={0}>Mind (inaktívak is)</option>
+          </select>
+          <span style={{ marginLeft: 'auto', font: `400 13.5px ${FONT}`, color: C.muted }}>
+            {list.length} partner{period ? ` · tranzakció az elmúlt ${period} hónapban vagy nyitott terv` : ''}
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.65fr) minmax(360px,1fr)', gap: 16, alignItems: 'start' }}>
+          <div style={{ ...card, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '12px 18px', borderBottom: `1px solid ${C.line}` }}>
+              <button
+                onClick={() => setSortBy('name')}
+                style={{
+                  ...th,
+                  border: 0,
+                  background: 'transparent',
+                  padding: 0,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  color: sortBy === 'name' ? C.navy : C.muted,
+                }}
+              >
+                Partner {sortBy === 'name' ? '↓' : ''}
+              </button>
+              <span style={th}>Típus</span>
+              <span style={th}>Kategória</span>
+              <button
+                onClick={() => setSortBy('amount')}
+                style={{
+                  ...th,
+                  border: 0,
+                  background: 'transparent',
+                  padding: 0,
+                  textAlign: 'right',
+                  cursor: 'pointer',
+                  color: sortBy === 'amount' ? C.navy : C.muted,
+                }}
+              >
+                12 hó {sortBy === 'amount' ? '↓' : ''}
+              </button>
+              <span style={{ ...th, textAlign: 'right' }}>{period || 12} hó</span>
+              <span style={{ ...th, textAlign: 'right' }}>Tétel</span>
+            </div>
+            <div style={{ maxHeight: 'calc(100vh - 250px)', overflowY: 'auto' }}>
+              {list.map((p) => {
+                const k = kindOf(p, ix.sectionOf);
+                const a = actOf(p);
+                const subs = subOf(p);
+                const on = p.key === selKey;
+                const v12 = signed12(p);
+                return (
+                  <div
+                    key={p.key}
+                    onClick={() => setSel(p.key)}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: COLS,
+                      gap: 12,
+                      alignItems: 'center',
+                      padding: '10px 18px 10px 15px',
+                      borderTop: `1px solid ${C.line3}`,
+                      borderLeft: `3px solid ${on ? C.blue : 'transparent'}`,
+                      background: on ? '#EEF4F9' : '#fff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</b>
+                        {!subs.length && (
+                          <span style={{ flex: 'none', padding: '1px 8px', borderRadius: 999, background: C.negBg, color: C.neg, font: `600 11px ${FONT}` }}>
+                            nincs felismert név
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {subs.join(' · ') || '—'}
+                      </span>
+                    </span>
+                    <span>
+                      <span
+                        style={{
+                          padding: '3px 10px',
+                          borderRadius: 999,
+                          background: k === 'szallito' ? C.bg : C.bg2,
+                          color: k === 'szallito' ? C.muted : C.blueDark,
+                          font: `600 12px ${FONT}`,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {KIND_LABEL[k]}
+                      </span>
+                    </span>
+                    <span style={{ font: `400 13.5px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[...new Set(p.leaves.map((l) => displayGroup(ix.groupById[l.group_id]?.label || '')))].join(', ')}
+                    </span>
+                    <b
+                      style={{
+                        textAlign: 'right',
+                        font: `700 14.5px ${FONT}`,
+                        color: v12 > 0 ? C.blueDark : v12 < 0 ? C.navy : C.faint,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {v12 ? money(v12) : '–'}
+                    </b>
+                    <span style={{ textAlign: 'right', font: `500 14px ${FONT}`, color: a.signed ? C.ink : C.faint, fontVariantNumeric: 'tabular-nums' }}>
+                      {a.signed ? money(a.signed) : '–'}
+                    </span>
+                    <span style={{ textAlign: 'right', font: `500 14px ${FONT}`, color: a.n ? C.ink : C.faint }}>{a.n || '–'}</span>
+                  </div>
+                );
+              })}
+              {!list.length && <div style={{ padding: 24, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs találat.</div>}
+            </div>
+          </div>
+
+          {selP && (
+            <div style={{ ...card, position: 'sticky', top: 16, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 32px)' }}>
+              <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b style={{ display: 'block', font: `800 24px/1.15 ${FONT_H}`, color: C.navy }}>{selP.name}</b>
+                    <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>
+                      {selK ? KIND_LABEL[selK] : ''} ·{' '}
+                      {selP.leaves
+                        .map((l) => `${ix.sectionOf(l.id) === 'in' ? 'Bevétel' : 'Kiadás'} › ${displayGroup(ix.groupById[l.group_id]?.label || '')}`)
+                        .join(', ')}
+                    </span>
+                  </div>
+                  <Pill small onClick={() => openPartner(selP.key)}>
+                    Teljes adatlap ›
+                  </Pill>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {(
+                    [
+                      ['12 hó', signed12(selP)],
+                      [`${period || 12} hó · ${selA?.n || 0} tétel`, selA?.signed || 0],
+                    ] as [string, number][]
+                  ).map(([l, v]) => (
+                    <div
+                      key={l}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        background: C.bg,
+                      }}
+                    >
+                      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>{l}</span>
+                      <b style={{ font: `800 19px ${FONT_H}`, color: v > 0 ? C.blueDark : C.navy, fontVariantNumeric: 'tabular-nums' }}>{v ? money(v) : '–'}</b>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ padding: '0 22px', overflowY: 'auto', flex: 1 }}>
+                <PartnerEditor key={selP.key + (selP.info?.updated_at || 0)} p={selP} part="panel" onSaved={(nk) => setSel(nk)} onPick={(k) => setSel(k)} />
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 22px',
+                  borderTop: `1px solid ${C.line}`,
+                  font: `400 12.5px ${FONT}`,
+                  color: C.muted,
+                }}
+              >
+                <i style={{ width: 8, height: 8, borderRadius: 999, background: C.blue, display: 'inline-block' }} />
+                Automatikusan mentve · ↑/↓ előző / következő partner
+              </div>
+            </div>
+          )}
+        </div>
+        {newP && <PartnerModal onClose={() => setNewP(false)} />}
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>

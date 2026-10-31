@@ -325,12 +325,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
         {view === 'income' && <IncomeView />}
         {view === 'bank' && <BankView />}
-        {view === 'partners' && (
-          <div style={{ padding: '28px 32px 120px', display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
-            <h1 style={{ margin: 0, font: `700 30px/1.05 ${FONT_H}`, color: C.navy }}>Partnertörzs</h1>
-            <PartnerRegistry />
-          </div>
-        )}
+        {view === 'partners' && <PartnerRegistry page />}
         {view === 'breakeven' && <BreakevenView />}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>
