@@ -4,7 +4,7 @@ import { normalizeText } from '../../shared/categories';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
-import { BANK_COLS, TxCard } from './TxCard';
+import { BANK_COLS, BANK_MINW, TxCard } from './TxCard';
 import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill, R } from './ui';
 
 export function BankView({ mobile }: { mobile?: boolean }) {
@@ -183,8 +183,8 @@ export function BankView({ mobile }: { mobile?: boolean }) {
             </span>
             {canEdit && <span style={{ marginLeft: 'auto', font: `400 12.5px ${FONT}` }}>Enter = jóváhagy · K = kihagy · ↓ = következő</span>}
           </div>
-          <div style={{ ...card, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: BANK_COLS, gap: 12, padding: '12px 18px 12px 21px' }}>
+          <div style={{ ...card, overflowX: 'auto' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: BANK_COLS, gap: 12, padding: '12px 18px 12px 21px', minWidth: BANK_MINW }}>
               {['Dátum', 'Bank', 'Partner · közlemény', 'Kategória', 'Terv', 'Ismétlődik', 'Összeg', ''].map((h, i) => (
                 <span key={i} style={{ ...eyebrow, textAlign: i === 6 ? 'right' : 'left' }}>
                   {h}

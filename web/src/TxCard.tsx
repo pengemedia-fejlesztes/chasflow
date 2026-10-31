@@ -33,7 +33,9 @@ const labelBase: React.CSSProperties = {
 };
 const row: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' };
 /** az asztali tábla oszlopai (fejléc és sorok közösen) */
-export const BANK_COLS = '62px 76px minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 100px 110px 196px';
+export const BANK_COLS = '58px 66px minmax(160px,1.5fr) minmax(130px,1fr) minmax(120px,1fr) 92px 104px 184px';
+/** a tábla legkisebb szélessége: ennél keskenyebb ablakban vízszintesen görget, nem csúszik egymásba */
+export const BANK_MINW = 1000;
 const chips: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 0 };
 
 export function TxCard({
@@ -164,7 +166,7 @@ export function TxCard({
     const curG = openG || L?.group_id || groupsSec[0]?.id || null;
     const sub: React.CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted };
     return (
-      <div style={{ borderTop: `1px solid ${C.line}`, borderLeft: `3px solid ${open ? C.blue : 'transparent'}`, background: '#fff' }}>
+      <div style={{ borderTop: `1px solid ${C.line}`, borderLeft: `3px solid ${open ? C.blue : 'transparent'}`, background: '#fff', minWidth: BANK_MINW }}>
         <div
           onClick={onToggle}
           role="button"

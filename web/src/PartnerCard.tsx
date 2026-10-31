@@ -1091,7 +1091,7 @@ function FolderTree({
 /** Partnertörzs gyors-szerkesztő sora: balra felirat, jobbra mező. */
 function PanelRow({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '150px minmax(0,1fr)', gap: 18, padding: '14px 0', borderBottom: `1px solid ${C.line3}` }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(96px,130px) minmax(0,1fr)', gap: 14, padding: '14px 0', borderBottom: `1px solid ${C.line3}` }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingTop: 10 }}>
         <b style={{ font: `600 14px ${FONT}`, color: C.navy }}>{title}</b>
         {sub && <span style={{ font: `400 12px/1.4 ${FONT}`, color: C.muted }}>{sub}</span>}
@@ -1831,7 +1831,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
   if (page && !mobile) {
     const signed12 = (p: (typeof all)[number]) => (p.sides.in?.last12 || 0) - (p.sides.out?.last12 || 0);
     const money = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v));
-    const COLS = 'minmax(0,1.7fr) 96px minmax(0,1.2fr) 110px 100px 60px';
+    const COLS = 'minmax(150px,1.7fr) 84px minmax(90px,1.1fr) 104px 96px 48px';
     const th: CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted };
     const subOf = (p: (typeof all)[number]) => [...new Set([...(p.info?.aliases || []), ...p.billingNames.map((b) => b.name)])].filter((x) => x !== p.name);
     const selK = selP ? kindOf(selP, ix.sectionOf) : null;
@@ -1901,7 +1901,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.65fr) minmax(360px,1fr)', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 560px), 1fr))', gap: 16, alignItems: 'start' }}>
           <div style={{ ...card, overflow: 'hidden' }}>
             <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '12px 18px', borderBottom: `1px solid ${C.line}` }}>
               <button
@@ -1966,16 +1966,17 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                     }}
                   >
                     <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                        <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</b>
-                        {!subs.length && (
-                          <span style={{ flex: 'none', padding: '1px 8px', borderRadius: 999, background: C.negBg, color: C.neg, font: `600 11px ${FONT}` }}>
-                            nincs felismert név
-                          </span>
-                        )}
-                      </span>
-                      <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {subs.join(' · ') || '—'}
+                      <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</b>
+                      <span
+                        style={{
+                          font: `400 12.5px ${FONT}`,
+                          color: subs.length ? C.muted : C.neg,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {subs.length ? subs.join(' · ') : 'nincs felismert név'}
                       </span>
                     </span>
                     <span>
