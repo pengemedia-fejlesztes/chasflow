@@ -99,13 +99,12 @@ export function StatsHub({
   const trend = useMemo(() => revenueTrend(ix, 24), [ix]);
   const costs = useMemo(() => costStructure(ix), [ix]);
   const conc = useMemo(() => concentration(partners.map((p) => ({ key: p.key, name: p.name, v: p.sides.in?.last12 || 0 }))), [partners]);
-  const aging = useMemo(
-    () => receivablesAging(data.entries, ix.sectionOf, data.today, data.billingo),
-    [data.entries, ix, data.today, data.billingo],
-  );
+  const aging = useMemo(() => receivablesAging(data.entries, ix.sectionOf, data.today, data.billingo), [data.entries, ix, data.today, data.billingo]);
   const target = Number(data.settings.profit_target || 0);
-  const tMonths = monthRange(addMonths(ix.cur, -12), ix.cur);
-  const tt = useMemo(() => targetTracking(ix, target, tMonths), [ix, target, tMonths.join()]);
+  // elmúlt 12 hónap ténye + a következő 12 hónap tervezett eredménye (terv + becsült rendszeres tételek)
+  const tMonths = monthRange(addMonths(ix.cur, -12), addMonths(ix.cur, 12));
+  const tt = useMemo(() => targetTracking(ix, target, tMonths, buildEstimates(ix, addMonths(ix.cur, 12))), [ix, target, tMonths.join()]);
+  const ttNext = tt.filter((t) => t.ym > ix.cur);
   const offers = useMemo(() => offerConversion(data.entries, data.lostOffers || [], data.today), [data.entries, data.lostOffers, data.today]);
   const taxMonths = monthRange(addMonths(ix.cur, 1), addMonths(ix.cur, 6));
   const tax = useMemo(() => taxForecast(ix, buildEstimates(ix, addMonths(ix.cur, 7)), taxMonths), [ix, taxMonths.join()]);
@@ -126,7 +125,7 @@ export function StatsHub({
           value: target
             ? `${tt.filter((t) => !t.forecast && t.ok).length} / ${tt.filter((t) => !t.forecast).length} hónap teljesült`
             : 'cél még nincs beállítva',
-          red: !!target && tt.some((t) => !t.ok),
+          red: !!target && tt.some((t) => t.ym <= ix.cur && !t.ok),
         },
         {
           id: 'season',
@@ -411,13 +410,57 @@ export function StatsHub({
                 <DivergingBars
                   title="Havi eredmény a célhoz képest"
                   markerLabel="cél"
-                  points={tt.map((t) => ({ ym: t.ym, v: t.net, plan: target, future: t.forecast, note: t.forecast ? 'várható' : undefined }))}
+                  points={tt.map((t) => ({
+                    ym: t.ym,
+                    v: t.net,
+                    plan: target,
+                    future: t.forecast,
+                    note: t.ym > ix.cur ? `terv${t.offer ? ` · + ajánlat ${fmt(t.offer)}` : ''}` : t.forecast ? 'várható' : undefined,
+                  }))}
                 />
+                {/* a következő 12 hónap tervezett eredménye: tény + nyitott biztos terv + a tényekből becsült rendszeres tételek */}
+                <div style={{ ...card, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <b style={{ font: `700 14px ${FONT_H}`, color: C.navy }}>Következő 12 hónap – tervezett eredmény</b>
+                  {(() => {
+                    const sum = ttNext.reduce((a, t) => a + t.net, 0);
+                    const offers = ttNext.reduce((a, t) => a + t.offer, 0);
+                    const okN = ttNext.filter((t) => t.ok).length;
+                    const goal = target * ttNext.length;
+                    return (
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', font: `500 13px ${FONT}`, color: C.ink }}>
+                        <span>
+                          Összesen: <b style={{ color: sum < 0 ? C.neg : C.navy }}>{fmt(sum)} Ft</b>
+                        </span>
+                        <span>
+                          Cél 12 hónapra: <b>{fmt(goal)} Ft</b> ·{' '}
+                          <b style={{ color: sum >= goal ? '#1A7340' : C.neg }}>
+                            {sum >= goal ? '+' : ''}
+                            {fmt(sum - goal)}
+                          </b>
+                        </span>
+                        <span>
+                          Célt elérő hónap:{' '}
+                          <b>
+                            {okN} / {ttNext.length}
+                          </b>
+                        </span>
+                        {offers !== 0 && (
+                          <span style={{ color: '#8A6D1C' }}>
+                            ajánlatokkal: <b>{fmt(sum + offers)} Ft</b>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>
+                    terv = nyitott biztos tervek + a tényekből becsült rendszeres (még nem tervezett) tételek; az ajánlatok nincsenek benne
+                  </span>
+                </div>
                 <div style={{ ...card, padding: '10px 14px' }}>
                   {[...tt].reverse().map((t) => (
                     <div key={t.ym} style={{ display: 'flex', gap: 10, padding: '7px 0', borderTop: `1px solid ${C.line3}`, alignItems: 'baseline' }}>
                       <span style={{ flex: 1, font: `600 13.5px ${FONT}`, color: C.ink }}>
-                        {monthLong(t.ym)} {t.forecast ? <span style={{ color: C.muted, fontWeight: 500 }}>(várható)</span> : null}
+                        {monthLong(t.ym)} {t.forecast ? <span style={{ color: C.muted, fontWeight: 500 }}>({t.ym > ix.cur ? 'terv' : 'várható'})</span> : null}
                       </span>
                       <b style={{ font: `700 13.5px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums' }}>{fmt(t.net)}</b>
                       <b style={{ font: `700 12.5px ${FONT}`, minWidth: 92, textAlign: 'right', color: t.ok ? '#1A7340' : C.neg }}>
@@ -546,8 +589,8 @@ export function StatsHub({
               </div>
             ))}
             <Note>
-              <b>Megnyert</b>: ajánlatból biztos terv lett (kivetted belőle az „ajánlat” jelölést) vagy késznek jelölted. <b>Elutasított</b>: amit az „Elutasítva” gombbal
-              lezártál (a sima törlés nem számít bele). Az arány ajánlatonként számol: egy több hónapos ajánlat egynek számít.
+              <b>Megnyert</b>: ajánlatból biztos terv lett (kivetted belőle az „ajánlat” jelölést) vagy késznek jelölted. <b>Elutasított</b>: amit az
+              „Elutasítva” gombbal lezártál (a sima törlés nem számít bele). Az arány ajánlatonként számol: egy több hónapos ajánlat egynek számít.
             </Note>
           </>
         )}

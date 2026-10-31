@@ -137,13 +137,24 @@ export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => 
 
 // ───────────── Havi eredmény-cél ─────────────
 /** Havi eredmény (tény; a folyó hónapban tény + nyitott terv) a célhoz képest. */
-export function targetTracking(ix: Index, target: number, months: string[]) {
+/**
+ * Havi eredmény (bevétel − kiadás) a célhoz képest: múlt = tény; folyó és jövőbeli hónap = tény + nyitott biztos terv
+ * (+ ha megadva, a tényekből becsült rendszeres, még nem tervezett tételek, + ajánlatok külön).
+ */
+export function targetTracking(ix: Index, target: number, months: string[], est?: Map<string, Map<string, number>>) {
   return months.map((ym) => {
     let net = 0;
     for (const [, mm] of ix.actual) net += mm.get(ym) || 0;
     const forecast = ym >= ix.cur;
-    if (forecast) for (const [, mm] of ix.openPlan) net += mm.get(ym) || 0;
-    return { ym, net, forecast, gap: net - target, ok: net >= target };
+    let estimate = 0,
+      offer = 0;
+    if (forecast) {
+      for (const [, mm] of ix.openPlan) net += mm.get(ym) || 0;
+      if (est && ym > ix.cur) for (const [, mm] of est) estimate += mm.get(ym) || 0;
+      for (const [, mm] of ix.offer) offer += mm.get(ym) || 0;
+      net += estimate;
+    }
+    return { ym, net, forecast, estimate, offer, gap: net - target, ok: net >= target };
   });
 }
 

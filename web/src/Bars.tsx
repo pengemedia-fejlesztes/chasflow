@@ -137,7 +137,16 @@ export function DivergingBars({
         {points.map((p, i) => (
           <span
             key={p.ym}
-            style={{ flex: 1, minWidth: 0, textAlign: 'center', font: `500 10px ${FONT}`, color: i === hi ? C.navy : C.muted, overflow: 'hidden' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              textAlign: 'center',
+              font: `500 10px ${FONT}`,
+              color: i === hi ? C.navy : C.muted,
+              // ritkított feliratnál (minden 3. hónap) a felirat túlnyúlhat a keskeny oszlopon
+              overflow: points.length > 13 ? 'visible' : 'hidden',
+              whiteSpace: 'nowrap',
+            }}
           >
             {points.length <= 13 || i % 3 === 0 ? monthLabel(p.ym).replace('.', '').slice(0, 3) : ''}
           </span>
@@ -163,7 +172,7 @@ export function DivergingBars({
             <i
               style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, border: `1.5px dashed ${C.muted}`, marginRight: 5, verticalAlign: -1 }}
             />
-            várható
+            várható / terv
           </span>
         )}
       </div>
