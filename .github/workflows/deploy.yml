@@ -94,7 +94,8 @@ jobs:
                       self.paths.append(attrs['src'])
           base = 'https://cashflow-tervezo.pengemedia.workers.dev'
           def get(path):
-              req = urllib.request.Request(base + path, headers={'Cache-Control': 'no-cache'})
+              # a Cloudflare a Python alapértelmezett User-Agentjét (Python-urllib) 403-mal tiltja
+              req = urllib.request.Request(base + path, headers={'Cache-Control': 'no-cache', 'User-Agent': 'cashflow-deploy-smoke/1.0 (+github-actions)'})
               with urllib.request.urlopen(req, timeout=30) as response:
                   return response.read()
           local = Scripts(); local.feed(pathlib.Path('dist/index.html').read_text())
