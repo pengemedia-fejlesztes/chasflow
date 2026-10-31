@@ -762,7 +762,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       {l}
     </button>
   );
-  const sugCols = 'minmax(0,1.3fr) 76px 76px 84px 76px auto';
+  const sugCols = 'minmax(96px,1.3fr) 70px 70px 80px 74px auto';
   const sugTh: React.CSSProperties = { font: `600 10px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted, textAlign: 'right' };
   const noPlanNames = [...new Set(fmNoPlan.map((e) => e.name || ix.leafById[e.leaf_id]?.label || '').filter(Boolean))].slice(0, 3);
 
@@ -808,7 +808,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: showSug ? 'minmax(240px,1fr) minmax(360px,1.55fr) minmax(220px,.95fr)' : 'repeat(2,minmax(0,1fr))',
+          gridTemplateColumns: showSug ? 'minmax(220px,1fr) minmax(470px,1.7fr) minmax(200px,.9fr)' : 'repeat(2,minmax(0,1fr))',
           gap: 16,
           alignItems: 'stretch',
         }}
