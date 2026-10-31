@@ -4,6 +4,7 @@ import { fmt, monthLabel } from '../../shared/model';
 import type { MonthRow } from '../../shared/monthrows';
 import type { Entry } from '../../shared/types';
 import { PartnerLink } from './PartnerCard';
+import { CalendarSheet } from './DatePicker';
 import { useStore } from './store';
 import { C, FONT, FONT_H } from './ui';
 
@@ -144,9 +145,12 @@ function Row(p: {
   onToggleDone: (e: Entry) => void;
   onPartner?: (leaf: string) => void;
 }) {
-  const { ix, canEdit } = useStore();
+  const { ix, canEdit, commit } = useStore();
   const { r, sign } = p;
   const planId = r.plan && !r.completed ? r.plan.id : null;
+  // a dátumra koppintva a megszokott naptár nyílik: a nyitott terv fizetési dátuma módosítható
+  const [pickDate, setPickDate] = useState(false);
+  const canPick = canEdit && !!planId && !p.selMode;
   const s = !!(planId && p.sel[planId]);
   const red = r.late || r.dev;
   const chip =
@@ -212,6 +216,13 @@ function Row(p: {
         </span>
       )}
       <span
+        role={canPick ? 'button' : undefined}
+        title={canPick ? 'Dátum módosítása' : undefined}
+        onClick={(ev) => {
+          if (!canPick) return;
+          ev.stopPropagation();
+          setPickDate(true);
+        }}
         style={{
           width: 46,
           flex: 'none',
@@ -222,6 +233,7 @@ function Row(p: {
           padding: '6px 0',
           borderRadius: 10,
           background: red ? C.negBg : r.completed ? C.bg2 : C.bg,
+          outline: canPick ? `1px dashed ${red ? C.negLight : C.line2}` : undefined,
         }}
       >
         <b style={{ font: `800 19px ${FONT_H}`, color: red ? C.neg : r.completed ? C.blueDark : C.navy }}>{Number(r.date.slice(8))}</b>
@@ -310,6 +322,18 @@ function Row(p: {
           )
         )}
       </span>
+      {pickDate && r.plan && (
+        <span onClick={(ev) => ev.stopPropagation()}>
+          <CalendarSheet
+            value={r.plan.date}
+            onClose={() => setPickDate(false)}
+            onPick={(v) => {
+              setPickDate(false);
+              if (v !== r.plan!.date) commit({ upsert: [{ ...r.plan!, date: v }] }, `${item || partner || 'Tétel'}: dátum ${v.replace(/-/g, '.')}.`);
+            }}
+          />
+        </span>
+      )}
     </div>
   );
 }

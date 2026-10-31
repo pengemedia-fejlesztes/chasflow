@@ -57,11 +57,17 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
   const openPartner = (leaf: string) => st.openPartner(leaf);
   const months = useMemo(() => monthRange(filters.from, filters.to).slice(0, 24), [filters.from, filters.to]);
   const [mSel, setM] = useState<string>(ix.cur);
-  // a fejléc grafikonja: 8 hónapos ablak, nyilakkal visszafelé (múlt) és előre lapozható; havi eredmény vagy bankszámla-egyenleg
-  const [chartFrom, setChartFrom] = useState<string | null>(null);
+  // a fejléc grafikonja: 2 év múlt + 1 év előre, vízszintesen húzható (egyszerre ~8 hónap látszik); havi eredmény vagy bankszámla-egyenleg
   const [chartKind, setChartKind] = useState<'net' | 'bal'>('net');
-  const cFrom = chartFrom ?? months[0] ?? ix.cur;
-  const chartMonths = useMemo(() => monthRange(cFrom, addMonths(cFrom, 7)), [cFrom]);
+  const chartMonths = useMemo(() => monthRange(addMonths(ix.cur, -24), addMonths(ix.cur, 12)), [ix.cur]);
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const scrollToMonth = (ym: string, smooth = false) => {
+    const el = chartRef.current;
+    const i = chartMonths.indexOf(ym);
+    if (!el || i < 0) return;
+    const col = el.scrollWidth / chartMonths.length;
+    el.scrollTo({ left: Math.max(0, i * col - col), behavior: smooth ? 'smooth' : 'auto' });
+  };
   const allMonths = useMemo(() => [...new Set([...months, ...chartMonths])].sort(), [months, chartMonths]);
   const m = allMonths.includes(mSel) ? mSel : months.includes(ix.cur) ? ix.cur : months[0];
   const [catId, setCatId] = useState<string>(ix.groups[0]?.id || '');
@@ -253,26 +259,34 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   </button>
                 ))}
                 <span style={{ flex: 1 }} />
-                {[-1, 1].map((n) => (
+                {m !== ix.cur && (
                   <button
-                    key={n}
-                    aria-label={n < 0 ? 'Korábbi hónapok' : 'Későbbi hónapok'}
-                    onClick={() => setChartFrom(addMonths(cFrom, n * 3))}
-                    style={{ width: 32, height: 30, border: 0, borderRadius: 999, background: C.navy3, color: '#fff', font: `700 16px ${FONT}` }}
-                  >
-                    {n < 0 ? '‹' : '›'}
-                  </button>
-                ))}
-                {chartFrom !== null && chartFrom !== months[0] && (
-                  <button
-                    onClick={() => (setChartFrom(null), setM(ix.cur))}
+                    onClick={() => (setM(ix.cur), scrollToMonth(ix.cur, true))}
                     style={{ height: 30, border: 0, borderRadius: 999, padding: '0 10px', background: C.navy3, color: C.blue2, font: `600 12px ${FONT}` }}
                   >
                     Ma
                   </button>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'stretch', height: 128 }}>
+              <div
+                ref={(el) => {
+                  // első megjelenéskor a folyó hónap (és az előtte lévő) látszik; korábbi hónapok balra húzva
+                  if (el && chartRef.current !== el) {
+                    chartRef.current = el;
+                    requestAnimationFrame(() => scrollToMonth(m));
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  gap: 0,
+                  alignItems: 'stretch',
+                  height: 128,
+                  overflowX: 'auto',
+                  scrollbarWidth: 'none',
+                  scrollSnapType: 'x proximity',
+                  WebkitOverflowScrolling: 'touch',
+                }}
+              >
                 {chartMonths.map((ym) => {
                   // havi eredmény (bevétel − kiadás): zöld plusz, piros mínusz; alatta az eredmény a bevétel %-ában
                   // egyenleg: a hónap végi bankszámla-egyenleg (múlt: tény, folyó és jövő: tervezett / előrejelzés)
@@ -291,8 +305,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                       key={ym}
                       onClick={() => setM(ym)}
                       style={{
-                        flex: '1 0 0px',
+                        flex: '0 0 12.5%',
                         minWidth: 0,
+                        scrollSnapAlign: 'start',
                         height: '100%',
                         border: 0,
                         borderRadius: 8,
