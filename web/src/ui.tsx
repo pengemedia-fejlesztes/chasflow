@@ -21,7 +21,7 @@ export const C = {
   ink: '#1D2430', // szöveg, kiadás
   muted: '#55606D',
   muted2: '#AFBCCB', // halvány szöveg sötét felületen
-  faint: '#6E7682', // nulla / üres érték (4.5:1 a papíron)
+  faint: '#626A75', // nulla / üres érték (4.8:1 a papíron is)
   line: '#E2DED5',
   line2: '#CCC7BB',
   line3: '#EEEBE4',

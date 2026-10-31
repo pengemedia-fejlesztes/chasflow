@@ -54,7 +54,7 @@ export function LinkChain({ plan }: { plan: Entry }) {
   const lab: React.CSSProperties = { font: `600 10px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted };
   const val: React.CSSProperties = { font: `600 13px ${FONT}`, color: C.navy, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' };
   const sub: React.CSSProperties = { font: `500 11.5px ${FONT}`, color: C.muted, overflowWrap: 'anywhere' };
-  const arrow = <span style={{ color: C.line2, alignSelf: 'center' }}>→</span>;
+  const arrow = <span style={{ color: C.faint, alignSelf: 'center' }}>→</span>;
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start', padding: '8px 10px', borderRadius: R.lg, background: C.bg }}>
       <span style={cell}>

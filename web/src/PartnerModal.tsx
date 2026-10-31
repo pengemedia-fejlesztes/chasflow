@@ -820,7 +820,7 @@ function ItemRow({
         <b style={{ font: `700 18px ${FONT_H}`, color: C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 110, textAlign: 'right' }}>
           {fmt(it.parts ? grossTotal : Math.abs(next?.amount || 0))} Ft
         </b>
-        <span style={{ color: C.muted2, font: `700 12px ${FONT}`, transform: expanded ? 'rotate(180deg)' : undefined }}>▼</span>
+        <span style={{ color: C.muted, font: `700 12px ${FONT}`, transform: expanded ? 'rotate(180deg)' : undefined }}>▼</span>
       </button>
       {expanded && (
         <fieldset
