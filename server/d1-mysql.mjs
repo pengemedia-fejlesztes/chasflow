@@ -57,6 +57,14 @@ function scalarMinMax(sql) {
   });
 }
 
+/** a függvényt csak a '…' szöveg-literálokon kívüli részekre alkalmazza */
+function outsideStrings(sql, fn) {
+  return sql
+    .split(/('(?:[^']|'')*')/)
+    .map((part, i) => (i % 2 ? part : fn(part)))
+    .join('');
+}
+
 export function translate(sqlIn) {
   let sql = sqlIn;
 
@@ -84,11 +92,16 @@ export function translate(sqlIn) {
   sql = scalarMinMax(sql);
 
   // SQLite datum-aritmetika
-  sql = sql.replace(/date\(\s*'now'\s*,\s*'([+-]?\d+)\s+days?'\s*\)/gi, (m, n) => {
+  sql = sql.replace(/date\(\s*'now'\s*,\s*'([+-]?\d+)\s+(days?|months?|years?)'\s*\)/gi, (m, n, unit) => {
     const v = parseInt(n, 10);
-    return v < 0 ? `DATE_SUB(CURDATE(), INTERVAL ${-v} DAY)` : `DATE_ADD(CURDATE(), INTERVAL ${v} DAY)`;
+    const u = unit.toLowerCase().startsWith('day') ? 'DAY' : unit.toLowerCase().startsWith('month') ? 'MONTH' : 'YEAR';
+    return v < 0 ? `DATE_SUB(CURDATE(), INTERVAL ${-v} ${u})` : `DATE_ADD(CURDATE(), INTERVAL ${v} ${u})`;
   });
   sql = sql.replace(/date\(\s*'now'\s*\)/gi, 'CURDATE()');
+  // SQLite CAST(x AS TEXT) -> MySQL CAST(x AS CHAR)
+  sql = sql.replace(/\bAS\s+TEXT\s*\)/gi, 'AS CHAR)');
+  // MySQL-ben foglalt oszlopnevek (pl. change_log.undo): azonosítóként idézőjelbe – a szöveg-literálokon kívül
+  sql = outsideStrings(sql, (code) => code.replace(/(?<![\w`])undo(?![\w`])/gi, '`undo`'));
 
   // SQLite sema-lekerdezes -> information_schema
   sql = sql.replace(

@@ -122,7 +122,7 @@ export async function handleRules(
     await env.DB.prepare("INSERT INTO match_rules (id, pattern, leaf_id, auto, merge, note, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)")
       .bind(id, pattern, b.leaf_id, b.auto ? 1 : 0, b.merge ? 1 : 0, b.note ? String(b.note).slice(0, 200) : null, now())
       .run();
-    await audit(env, u.id, 'rule_created', { pattern, leaf: b.leaf_id, auto: !!b.auto });
+    await audit(env, u.id, 'rule_created', { id, pattern, leaf: b.leaf_id, auto: !!b.auto, merge: !!b.merge });
     const r = await reapply();
     return json({ ok: true, id, ...r });
   }

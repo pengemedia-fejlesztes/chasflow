@@ -108,6 +108,45 @@ export function LogTab() {
   }, [range, n]);
 
   const leafName = (id: string) => ix.leafById[id]?.label || id;
+  /** a rendszer-bejegyzés részletei olvashatóan (pl. párosítási szabály: minta → kategória) */
+  const sysDetail = (s: SysRow): string => {
+    let d: any = null;
+    try {
+      d = s.detail ? JSON.parse(s.detail) : null;
+    } catch {
+      return s.detail || '';
+    }
+    if (!d || typeof d !== 'object') return s.detail || '';
+    if (s.action.startsWith('rule_')) {
+      const parts = [d.pattern ? `„${d.pattern}”` : '', d.leaf ? `→ ${leafName(d.leaf)}` : '', d.leaf_id ? `→ ${leafName(d.leaf_id)}` : ''].filter(Boolean);
+      if (d.auto !== undefined) parts.push(d.auto ? '· automatikus könyvelés' : '· jóváhagyással');
+      if (d.merge) parts.push('· havi összevonás');
+      return parts.join(' ');
+    }
+    return Object.entries(d)
+      .filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(' · ')
+      .slice(0, 240);
+  };
+  /** párosítási szabály létrehozásának visszavonása = a szabály törlése (régi bejegyzésnél minta + kategória alapján keresve) */
+  const undoRule = async (s: SysRow) => {
+    try {
+      const d = JSON.parse(s.detail || '{}');
+      let id: string | undefined = d.id;
+      if (!id) {
+        const r = await api<{ contains: { id: string; pattern: string; leaf_id: string }[] }>('/api/rules');
+        id = r.contains.find((x) => x.pattern === d.pattern && x.leaf_id === d.leaf)?.id;
+      }
+      if (!id) return showToast({ msg: 'A szabály már nincs meg (lehet, hogy korábban törölték).', error: true });
+      if (!confirm(`Törlöd a párosítási szabályt: „${d.pattern}” → ${leafName(d.leaf)}?`)) return;
+      await api(`/api/rules/${id}`, { method: 'DELETE' });
+      showToast({ msg: `Szabály törölve: „${d.pattern}”` });
+      setN((x) => x + 1);
+    } catch (e: any) {
+      showToast({ msg: e.message, error: true });
+    }
+  };
 
   const rows = useMemo(() => {
     if (!data) return null;
@@ -263,6 +302,7 @@ export function LogTab() {
               >
                 <span style={{ font: `600 13.5px ${FONT}`, color: C.ink, textDecoration: r?.undone_at ? 'line-through' : undefined }}>
                   {r ? r.summary : SYS_LABEL[x.sys!.action] || x.sys!.action}
+                  {!r && x.sys && sysDetail(x.sys) ? <span style={{ fontWeight: 500, color: C.muted }}> · {sysDetail(x.sys)}</span> : null}
                   {r && x.items.length ? <span style={{ color: C.blueDark, font: `600 12px ${FONT}` }}> {isOpen ? '▾' : '▸'} részletek</span> : null}
                 </span>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', font: `400 12px ${FONT}`, color: C.muted }}>
@@ -277,6 +317,11 @@ export function LogTab() {
                   ) : null}
                 </span>
               </div>
+              {canEdit && !r && x.sys?.action === 'rule_created' ? (
+                <Pill small kind="light" onClick={() => undoRule(x.sys!)}>
+                  ↶ Visszavonás
+                </Pill>
+              ) : null}
               {canEdit && r && r.undoable && !r.undone_at ? (
                 <Pill small kind="light" onClick={() => undo(r)}>
                   {busy === r.id ? '…' : '↶ Visszavonás'}
