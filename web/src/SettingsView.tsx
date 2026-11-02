@@ -646,8 +646,32 @@ function DataTab() {
     }
   };
 
+  // a legutóbbi szerverhibák (végpont, üzenet) – diagnosztika, adat nélkül
+  const errs: { at: string; m: string; p: string; e: string }[] = (() => {
+    try {
+      return JSON.parse(data.settings.server_errors || '[]');
+    } catch {
+      return [];
+    }
+  })();
   return (
     <>
+      <Section title={`Legutóbbi szerverhibák (${errs.length})`}>
+        {errs.length === 0 ? (
+          <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>Nincs rögzített szerverhiba.</span>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {errs.slice(0, 20).map((x, n) => (
+              <div key={n} style={{ font: `500 12.5px ${FONT}`, color: C.ink, borderTop: n ? `1px solid ${C.line3}` : 0, paddingTop: n ? 6 : 0 }}>
+                <b style={{ color: C.navy }}>
+                  {x.at.replace('T', ' ').slice(0, 16)} · {x.m} {x.p}
+                </b>
+                <div style={{ color: C.neg, overflowWrap: 'anywhere' }}>{x.e}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
       <Section
         title="Aktuális egyenleg (ha nincs bankkapcsolat)"
         sub={`Bankkapcsolat nélkül az egyenleg = nyitó egyenleg + összes tény. Add meg a mai valós egyenleget (a két bankszámla összegét), és a rendszer kiszámolja a nyitó egyenleget. Jelenleg: nyitó ${fmt(ix.opening)} Ft, számított mai egyenleg ${fmt(ix.computedBalance)} Ft${ix.bankBalance != null ? ', banki egyenleg ' + fmt(ix.bankBalance) + ' Ft (ez az irányadó)' : ''}.`}

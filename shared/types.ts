@@ -148,6 +148,8 @@ export interface Settings {
   opening_balance?: string; // nyitó egyenleg a legelső tény előtt
   billingo_last_sync?: string;
   billingo_autopay_last?: string;
+  /** a legutóbbi szerverhibák (JSON: at, m, p, e) – diagnosztika */
+  server_errors?: string;
   billingo_leaf_default?: string;
   bank_last_sync?: string;
   nav_last_sync?: string;
