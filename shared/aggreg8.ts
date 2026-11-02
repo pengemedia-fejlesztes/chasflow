@@ -62,7 +62,8 @@ export function bankOfAccount(account: string): string | null {
 }
 
 /** Banki szinkron órái (Budapest) – a szerver ekkor szinkronizál, a Mac-bot ekkor tölti fel az aggreg8 adatait. */
-export const SYNC_HOURS = [5, 9, 13, 17, 21];
+/** a szinkron órái (budapesti idő, csak munkanapokon – lásd workdays.isWorkday): NAV → Billingo → bankok */
+export const SYNC_HOURS = [5, 13, 17];
 
 // ---- aggreg8 backend JSON (standalone-backend.aggreg8.hu/transactions) – a Mac-bot ezt küldi feltöltéskor ----
 // A mezőneveket tűrően keressük (a backend formátuma nem publikus); a tételenként hiányzó saját számlát az `account`

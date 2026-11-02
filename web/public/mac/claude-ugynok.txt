@@ -5,11 +5,11 @@ frissít, letölt és feltölt a Cashflow tervezőbe. Neked NEM kell böngésző
 A feltöltési kulcsot a Mac Kulcskarikájából olvasd; soha ne írd ki, ne naplózd, ne küldd el senkinek.
 
 1. SZINKRON KÉRÉSE (a Mac fél percen belül elindítja):
-   curl -s -X POST https://cashflow-tervezo.pengemedia.workers.dev/api/ingest/request -H "X-Requested-With: cashflow" -H "Authorization: Bearer $(security find-generic-password -s cashflow-import -w)"
+   curl -s -X POST https://pmdev.hu/Cashflow/api/ingest/request -H "X-Requested-With: cashflow" -H "Authorization: Bearer $(security find-generic-password -s cashflow-import -w)"
    Válasz: {"ok":true}
 
 2. VÁRJ 3 PERCET, majd ELLENŐRZÉS:
-   curl -s https://cashflow-tervezo.pengemedia.workers.dev/api/ingest/status -H "Authorization: Bearer $(security find-generic-password -s cashflow-import -w)"
+   curl -s https://pmdev.hu/Cashflow/api/ingest/status -H "Authorization: Bearer $(security find-generic-password -s cashflow-import -w)"
    A válaszban:
    - "report": a Mac legutóbbi futása – at (időbélyeg ms), ok (true/false), msg (szöveges összefoglaló vagy hiba)
    - "last": az utolsó sikeres feltöltés – bankonként rows / inbox (új, jóváhagyásra) / duplicates / last_date

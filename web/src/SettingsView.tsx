@@ -1031,7 +1031,7 @@ function AutoUpload() {
   useEffect(() => {
     load();
   }, []);
-  const cmd = 'bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh)';
+  const cmd = 'bash <(curl -fsSL https://pmdev.hu/Cashflow/mac/aggreg8-install.sh)';
   const copy = (t: string) => navigator.clipboard?.writeText(t).then(() => showToast('Vágólapra másolva'));
   return (
     <Section

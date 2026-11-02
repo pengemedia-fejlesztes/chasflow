@@ -1,5 +1,6 @@
 // Automatikus kivonat-feltöltés (pl. a Mac Letöltések mappájából): személyes, visszavonható feltöltési kulccsal.
 // A kulcs csak az aggreg8 importra (XML vagy a Mac-bot JSON-ja) és az ütemezés lekérdezésére jó; a szerver csak a hash-ét tárolja.
+import { isWorkday } from '../shared/workdays';
 import { A8_LIMITS, SYNC_HOURS, bankOfAccount, parseAggreg8, parseAggreg8Json, type A8Account } from '../shared/aggreg8';
 import { requireRole, type User } from './auth';
 import { importManualRows, payBillingoFromBank } from './bank';
@@ -64,7 +65,8 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     const st = await ingestState(env);
     // pótlás: ha napközben 4,5 óránál régebben volt sikeres feltöltés (pl. aludt a Mac), a Mac magától újrafuttatja
     const h = budapestHour();
-    const due = h >= SYNC_HOURS[0] && h < 23 && (!st.last?.ok || now() - st.last.at > 4.5 * 3600_000);
+    const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest' }).format(new Date());
+    const due = isWorkday(day) && h >= SYNC_HOURS[0] && h < 20 && (!st.last?.ok || now() - st.last.at > 4.5 * 3600_000);
     return json({ sync_hours: SYNC_HOURS, timezone: 'Europe/Budapest', last_dates, since, ...st, requested_at: st.request?.at || 0, due });
   }
   // szinkron kérése a feltöltési kulccsal (pl. a Marveen robotból)

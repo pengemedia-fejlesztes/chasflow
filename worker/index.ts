@@ -11,8 +11,9 @@ import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { handleChangelog } from './changelog';
-import { Env, HttpError, getSetting, json, safeEqual, withSecurityHeaders } from './util';
+import { Env, HttpError, getSetting, json, safeEqual, setSetting, withSecurityHeaders } from './util';
 import { SYNC_HOURS } from '../shared/aggreg8';
+import { isWorkday } from '../shared/workdays';
 
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -137,7 +138,9 @@ export default {
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),
     );
-    if (!SYNC_HOURS.includes(hour)) {
+    const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest' }).format(new Date(ev.scheduledTime));
+    // csak munkanapokon (hétvége, ünnep, áthelyezett pihenőnap kimarad; ledolgozós szombaton fut)
+    if (!SYNC_HOURS.includes(hour) || !isWorkday(day)) {
       // a NAV első szinkronja nem vár a következő szinkron-órára
       if (navEnabled(env) && !(await getSetting(env, 'nav_last_sync')))
         ctx.waitUntil(
@@ -153,6 +156,10 @@ export default {
         .then(
           (r) => (console.log('sync', JSON.stringify(r)), bumpRev(env)),
           (e) => console.error('sync failed', e),
+        )
+        // a NAV és a Billingo után a bankok: a Mac 30 mp-en belül elindítja az aggreg8 letöltést
+        .then(() =>
+          setSetting(env, 'ingest_request', JSON.stringify({ at: Date.now(), by: 'ütemezett' })).catch((e) => console.error('bank request failed', e)),
         )
         // új, terv nélküli tételek (NAV-számla, banki tétel) → e-mail az adminoknak (ha van levélküldő)
         .then(() => notifyUnplanned(env).then((r) => console.log('notify', JSON.stringify(r))))

@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 
 const env = process.env;
 const STATE = env.CF_STATE || `${homedir()}/Library/Application Support/cashflow-aggreg8`;
-const CF_URL = env.CF_URL || 'https://cashflow-tervezo.pengemedia.workers.dev';
+const CF_URL = env.CF_URL || 'https://pmdev.hu/Cashflow';
 const TOKEN = env.CF_TOKEN || '';
 const AGG = env.AGG_ORIGIN || 'https://standalone.aggreg8.hu';
 const BACKEND = env.AGG_BACKEND || 'https://standalone-backend.aggreg8.hu';

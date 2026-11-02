@@ -1,6 +1,7 @@
 // Bankszinkron: számlák egyenlege, beérkezett banki tételek jóváhagyása (kategória + terv párosítás).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeText } from '../../shared/categories';
+import { SYNC_HOURS } from '../../shared/aggreg8';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
@@ -116,7 +117,9 @@ export function BankView({ mobile }: { mobile?: boolean }) {
           >
             <span style={{ ...eyebrow, color: C.muted2 }}>Összesen · {stamp(lastSync)}</span>
             <span style={{ font: `800 28px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ix.bankBalance != null ? fmt(ix.bankBalance) + ' Ft' : '—'}</span>
-            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>automatikusan: 5, 9, 13, 17, 21 órakor</span>
+            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>
+              automatikusan munkanapokon {SYNC_HOURS.join(', ')} órakor (NAV → Billingo → bankok)
+            </span>
           </div>
         )}
         {accounts.map((a) => (

@@ -281,6 +281,15 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           style={{ marginTop: 'auto', padding: '16px 22px', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 6 }}
         >
           <span style={{ font: `600 10.5px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.muted2 }}>Kapcsolatok</span>
+          {/* a szinkron sorrendje: NAV → Billingo → bankok (munkanapokon 5, 13, 17 órakor) */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 13px ${FONT}` }}>
+            <i style={{ width: 7, height: 7, borderRadius: '50%', background: data.integrations.nav ? C.blue2 : C.muted }} />
+            NAV · {data.integrations.nav ? relTime(data.settings.nav_last_sync) : 'nincs beállítva'}
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 13px ${FONT}` }}>
+            <i style={{ width: 7, height: 7, borderRadius: '50%', background: data.integrations.billingo ? C.blue2 : C.muted }} />
+            Billingo · {data.integrations.billingo ? relTime(data.settings.billingo_last_sync) : 'nincs beállítva'}
+          </span>
           {data.accounts
             .filter((a) => a.active)
             .map((a) => (
@@ -297,10 +306,6 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
                 {a.bank_name} · {relTime(a.last_sync)}
               </span>
             ))}
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 13px ${FONT}` }}>
-            <i style={{ width: 7, height: 7, borderRadius: '50%', background: data.integrations.billingo ? C.blue2 : C.muted }} />
-            Billingo · {data.integrations.billingo ? relTime(data.settings.billingo_last_sync) : 'nincs beállítva'}
-          </span>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
             <span style={{ font: `500 12.5px ${FONT}`, color: C.muted2 }}>{data.me.name}</span>
             <button onClick={onLogout} style={{ border: 0, background: 'transparent', color: C.blue2, font: `600 12.5px ${FONT}`, cursor: 'pointer' }}>

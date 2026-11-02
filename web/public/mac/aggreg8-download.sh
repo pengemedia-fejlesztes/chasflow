@@ -2,7 +2,7 @@
 # Cashflow – aggreg8 bankszinkron (a Mac ütemezője és a „Bankszinkron most” kérés indítja; minden futás előtt frissül).
 # A munkát az aggreg8-cdp.mjs végzi a Chrome hivatalos vezérlőfelületén (CDP): láthatatlan háttérlap, automatikus
 # belépés, szinkron, letöltés, feltöltés. Nem kell hozzá Kisegítő engedély, AppleScript vagy egérkattintás.
-URL="${CF_TEST_URL:-https://cashflow-tervezo.pengemedia.workers.dev}"
+URL="${CF_TEST_URL:-https://pmdev.hu/Cashflow}"
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 LOG="$STATE/download.log"
 note() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }

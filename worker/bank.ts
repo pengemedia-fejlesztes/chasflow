@@ -323,6 +323,14 @@ export async function syncAll(env: Env) {
   const res: Record<string, unknown> = {};
   // partnertörzs adószámai a már meglévő NAV/Billingo adatokból (a szinkron párosítása így már adószám alapján megy)
   res.taxFilled = await fillPartnerTax(env).catch((e) => String(e?.message || e));
+  // sorrend: NAV → Billingo → bankok (a bankok párosítása így már a friss számlákat látja)
+  if (navEnabled(env)) {
+    try {
+      res.nav = await syncNav(env);
+    } catch (e: any) {
+      res.navError = e.message;
+    }
+  }
   if (env.BILLINGO_API_KEY) {
     try {
       res.billingo = await syncBillingo(env);
@@ -335,13 +343,6 @@ export async function syncAll(env: Env) {
       res.bank = await syncBanks(env);
     } catch (e: any) {
       res.bankError = e.message;
-    }
-  }
-  if (navEnabled(env)) {
-    try {
-      res.nav = await syncNav(env);
-    } catch (e: any) {
-      res.navError = e.message;
     }
   }
   try {
@@ -590,17 +591,12 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const itemIds = [...new Set(items.map((i) => String(i.id)))];
   const txById = new Map<string, any>();
   if (itemIds.length) {
-    const txR = await env.DB.prepare(
-      `SELECT * FROM bank_tx WHERE status = 'new' AND id IN (${itemIds.map(() => '?').join(',')})`,
-    )
+    const txR = await env.DB.prepare(`SELECT * FROM bank_tx WHERE status = 'new' AND id IN (${itemIds.map(() => '?').join(',')})`)
       .bind(...itemIds)
       .all<any>();
     for (const r of txR.results) txById.set(String(r.id), r);
   }
-  const [leafR, accR] = await env.DB.batch<any>([
-    env.DB.prepare('SELECT id, label FROM leaves'),
-    env.DB.prepare('SELECT id, bank_name FROM bank_accounts'),
-  ]);
+  const [leafR, accR] = await env.DB.batch<any>([env.DB.prepare('SELECT id, label FROM leaves'), env.DB.prepare('SELECT id, bank_name FROM bank_accounts')]);
   const leafById = new Map<string, { id: string; label: string }>();
   for (const l of leafR.results as any[]) leafById.set(String(l.id), l);
   const accById = new Map<string, { bank_name: string }>();
@@ -743,9 +739,7 @@ async function unapprove(env: Env, u: User, ids: string[]) {
   // a tetelek EGY lekerdezessel (korabban azonositonkent ment egy-egy SELECT)
   const txById = new Map<string, any>();
   if (ids.length) {
-    const r = await env.DB.prepare(
-      `SELECT * FROM bank_tx WHERE status = 'approved' AND id IN (${ids.map(() => '?').join(',')})`,
-    )
+    const r = await env.DB.prepare(`SELECT * FROM bank_tx WHERE status = 'approved' AND id IN (${ids.map(() => '?').join(',')})`)
       .bind(...ids)
       .all<any>();
     for (const row of r.results) txById.set(String(row.id), row);
@@ -979,7 +973,10 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     const vals: unknown[] = [];
     if (b.leaf_id !== undefined) (sets.push('leaf_id = ?'), vals.push(b.leaf_id));
     if (b.plan_id !== undefined) (sets.push('plan_id = ?'), vals.push(b.plan_id));
-    if (sets.length) await env.DB.prepare(`UPDATE bank_tx SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, tm[1]).run();
+    if (sets.length)
+      await env.DB.prepare(`UPDATE bank_tx SET ${sets.join(', ')} WHERE id = ?`)
+        .bind(...vals, tm[1])
+        .run();
     return json({ ok: true });
   }
 

@@ -6,7 +6,7 @@ import { Env, getSetting, now, setSetting } from './util';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-export async function notifyUnplanned(env: Env, origin = 'https://cashflow-tervezo.pengemedia.workers.dev'): Promise<{ sent: number; items: number }> {
+export async function notifyUnplanned(env: Env, origin = 'https://pmdev.hu/Cashflow'): Promise<{ sent: number; items: number }> {
   const since = Number((await getSetting(env, 'notify_unplanned_at')) || 0);
   const t = now();
   const [inv, tx] = await env.DB.batch([

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Cashflow tervező – aggreg8 banki tételek automatikus feltöltése a Letöltések mappából (macOS).
 # 5, 9, 13, 17, 21 órakor a saját Chrome-ban megnyitja az aggreg8-at, frissít, és a tranzakciókat közvetlenül feltölti (nem ment fájlt a Letöltésekbe).
-# Telepítés:  bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh)
-# Eltávolítás: bash <(curl -fsSL https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-install.sh) --uninstall
+# Telepítés:  bash <(curl -fsSL https://pmdev.hu/Cashflow/mac/aggreg8-install.sh)
+# Eltávolítás: bash <(curl -fsSL https://pmdev.hu/Cashflow/mac/aggreg8-install.sh) --uninstall
 set -e
-URL="https://cashflow-tervezo.pengemedia.workers.dev"
+URL="https://pmdev.hu/Cashflow"
 LABEL="hu.pengemedia.cashflow-aggreg8"
 SCRIPT="$HOME/Library/Scripts/cashflow-aggreg8.sh"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -86,7 +86,7 @@ cat > "$DSCRIPT" <<'SH'
 # Mindig a legfrissebb letöltő fut (a javításokhoz nem kell újratelepíteni); ha a szerver nem érhető el, a legutóbbi helyi példány.
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 F="$STATE/aggreg8-download.sh"
-if curl -fsS -m 30 "https://cashflow-tervezo.pengemedia.workers.dev/mac/aggreg8-download.sh" -o "$F.new" && bash -n "$F.new"; then mv "$F.new" "$F"; else rm -f "$F.new"; fi
+if curl -fsS -m 30 "https://pmdev.hu/Cashflow/mac/aggreg8-download.sh" -o "$F.new" && bash -n "$F.new"; then mv "$F.new" "$F"; else rm -f "$F.new"; fi
 exec /bin/bash "$F" "$@"
 SH
 chmod 700 "$DSCRIPT"
@@ -96,13 +96,8 @@ cat > "$DPLIST" <<PL
 <plist version="1.0"><dict>
   <key>Label</key><string>$DLABEL</string>
   <key>ProgramArguments</key><array><string>/bin/bash</string><string>$DSCRIPT</string><string>ütemezett</string></array>
-  <key>StartCalendarInterval</key><array>
-    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
-  </array>
+  <!-- nincs fix időpont: a szerver munkanapokon 5, 13, 17 órakor a NAV és a Billingo után kéri (poll, 30 mp) -->
+  <key>RunAtLoad</key><false/>
 </dict></plist>
 PL
 launchctl load "$DPLIST"
@@ -116,7 +111,7 @@ PSCRIPT="$HOME/Library/Scripts/cashflow-aggreg8-poll.sh"
 PPLIST="$HOME/Library/LaunchAgents/$PLABEL.plist"
 cat > "$PSCRIPT" <<'SH'
 #!/bin/bash
-URL="https://cashflow-tervezo.pengemedia.workers.dev"
+URL="https://pmdev.hu/Cashflow"
 STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
 TOKEN=$(security find-generic-password -s cashflow-import -w 2>/dev/null) || exit 0
 S=$(curl -s -m 20 "$URL/api/ingest/status" -H "Authorization: Bearer $TOKEN") || exit 0
