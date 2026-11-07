@@ -1,5 +1,5 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
@@ -109,6 +109,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   // felső szint: Bevétel és Ajánlatok (a partnerek közvetlenül alattuk), a Kiadásnak vannak mappái
   // mindig látszanak, akkor is, ha a kiválasztott időszakban nincs tételük
+  // a Bevétel alatt a partnerek, mint a Kiadás alatt a mappák
+  const incomeRows = sideMatrix.rows.filter((r) => r.type === 'leaf' && r.top === 'in');
   const topRows = useMemo(() => {
     const inG = ix.groups.filter((g) => g.section === 'in');
     const offer = inG.find((g) => /aj[áa]nlat/i.test(g.label));
@@ -253,29 +255,54 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
           {topRows.map((g) => (
-            <button
-              key={g.id}
-              className="side-btn"
-              aria-current={view === 'cat' && filters.groupId === g.groupId ? 'page' : undefined}
-              onClick={() => goGroup(g.groupId)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-                padding: '8px 12px',
-                marginTop: 4,
-                borderRadius: R.md,
-                background: view === 'cat' && filters.groupId === g.groupId ? C.navy3 : 'transparent',
-                color: '#fff',
-                font: `700 13.5px ${FONT}`,
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0 }}>{g.label}</span>
-              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
-            </button>
+            <Fragment key={g.id}>
+              <button
+                className="side-btn"
+                aria-current={view === 'cat' && filters.groupId === g.groupId ? 'page' : undefined}
+                onClick={() => goGroup(g.groupId)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  border: 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                  marginTop: 4,
+                  borderRadius: R.md,
+                  background: view === 'cat' && filters.groupId === g.groupId ? C.navy3 : 'transparent',
+                  color: '#fff',
+                  font: `700 13.5px ${FONT}`,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>{g.label}</span>
+                <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
+              </button>
+              {g.id === 'in' &&
+                incomeRows.map((r) => (
+                  <button
+                    key={r.id}
+                    className="side-btn"
+                    onClick={() => st.openPartner(r.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      border: 0,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      padding: '8px 12px',
+                      borderRadius: R.md,
+                      background: 'transparent',
+                      color: '#fff',
+                      font: `500 13.5px ${FONT}`,
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                    <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(r.total)}</span>
+                  </button>
+                ))}
+            </Fragment>
           ))}
           {groupRows.length > 0 && <div style={{ padding: '12px 12px 6px', font: `700 13.5px ${FONT}`, color: '#fff' }}>Kiadás</div>}
           {groupRows.map((g) => (
