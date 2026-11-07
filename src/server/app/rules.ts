@@ -141,6 +141,11 @@ export async function handleRules(
       await env.DB.prepare('UPDATE match_rules SET auto = ?, updated_at = ? WHERE id = ?')
         .bind(b.auto ? 1 : 0, now(), m[1])
         .run();
+    // „Havi összevonás” kapcsoló (Beállítások › Párosítások)
+    if (b.merge !== undefined)
+      await env.DB.prepare('UPDATE match_rules SET merge = ?, updated_at = ? WHERE id = ?')
+        .bind(b.merge ? 1 : 0, now(), m[1])
+        .run();
     if (b.note !== undefined)
       await env.DB.prepare('UPDATE match_rules SET note = ? WHERE id = ?')
         .bind(b.note ? String(b.note).slice(0, 200) : null, m[1])
@@ -166,6 +171,10 @@ export async function handleRules(
     if (b.auto !== undefined)
       await env.DB.prepare('UPDATE partner_rules SET auto = ?, updated_at = ? WHERE pattern = ?')
         .bind(b.auto ? 1 : 0, now(), pattern)
+        .run();
+    if (b.merge !== undefined)
+      await env.DB.prepare('UPDATE partner_rules SET merge = ?, updated_at = ? WHERE pattern = ?')
+        .bind(b.merge ? 1 : 0, now(), pattern)
         .run();
     await audit(env, u.id, 'partner_rule_updated', { pattern, ...b });
     return json({ ok: true, ...(await reapply()) });

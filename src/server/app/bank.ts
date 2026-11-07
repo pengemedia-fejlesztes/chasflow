@@ -2,7 +2,7 @@
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
 import { namesMatch } from '../../shared/billingopay';
-import { matchPlan, partnerKey, suggestLeaf } from '../../shared/match';
+import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
 import type { Entry, Leaf } from '../../shared/types';
@@ -52,6 +52,7 @@ export async function matchingContext(env: Env) {
   const unforeseen = leaves.find((l) => !l.archived && sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
   return {
     leaves,
+    leafLabel: (id: string) => leaves.find((l) => l.id === id)?.label || '',
     sectionOf,
     rules,
     plans: plansR.results as unknown as Entry[],
@@ -71,7 +72,7 @@ function insertTxStmt(
   status: 'new' | 'ignored' = 'new',
 ) {
   const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
-  const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs);
+  const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs, ctx.leafLabel);
   return env.DB.prepare(
     `INSERT INTO bank_tx (id, account_id, ext_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, ext_id) DO NOTHING`,
@@ -151,7 +152,28 @@ export async function reapplyRules(env: Env): Promise<{ updated: number; auto: n
     if (leaf && leaf !== t.leaf_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE id = ?').bind(leaf, t.id));
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  await refreshPlanSuggestions(env, ctx);
   return { updated: stmts.length, auto: await autoApprove(env, approve) };
+}
+
+/**
+ * A jóváhagyásra váró tételek tervjavaslata: ha a beérkezéskor javasolt terv azóta megszűnt / teljesült, vagy akkor még
+ * nem volt terv (pl. a havi ÁFA-terv később jött létre), újra keressük – különben a tétel terv nélkül vár, a terv pedig
+ * lejártként a cashflow-ban marad.
+ */
+export async function refreshPlanSuggestions(env: Env, ctx?: Ctx): Promise<number> {
+  const c = ctx || (await matchingContext(env));
+  const txs = await env.DB.prepare(
+    `SELECT t.id, t.date, t.amount, t.partner, t.memo, t.leaf_id, t.plan_id FROM bank_tx t
+     WHERE t.status = 'new' AND (t.plan_id IS NULL OR NOT EXISTS (SELECT 1 FROM entries p WHERE p.id = t.plan_id AND p.kind = 'plan' AND p.done = 0))`,
+  ).all<any>();
+  const stmts: DbStatement[] = [];
+  for (const t of txs.results) {
+    const plan = matchPlan(t, c.plans, c.refs, c.leafLabel);
+    if ((plan?.id ?? null) !== t.plan_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET plan_id = ? WHERE id = ?').bind(plan?.id ?? null, t.id));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return stmts.length;
 }
 
 /**
@@ -194,7 +216,8 @@ export async function markBankFees(env: Env): Promise<number> {
     if (t.status === 'new') pending.push({ id: t.id, leaf_id: fee, merge: true });
     else if (t.status === 'approved' && t.actual_id) {
       // tévesen máshova jóváhagyott díj: a tény átkerül a Bank költségbe, és leválik a tervről
-      moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(fee, t0, t.actual_id));
+      // (a tény terv-kötése is törlődik – különben a tény a már újranyitott / máshoz kötött tervre mutatna)
+      moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, link_id = NULL, updated_at = ? WHERE id = ?').bind(fee, t0, t.actual_id));
       moves.push(env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL, updated_at = ? WHERE kind = ? AND link_id = ?').bind(t0, 'plan', t.actual_id));
       moves.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ?, plan_id = NULL WHERE id = ?').bind(fee, t.id));
     }
@@ -401,6 +424,11 @@ export async function syncAll(env: Env) {
     res.linkedSameMonthError = e.message;
   }
   try {
+    res.planSuggestions = await refreshPlanSuggestions(env);
+  } catch (e: any) {
+    res.planSuggestionsError = e.message;
+  }
+  try {
     // csak a tegnap óta módosult tervekre (a teljes tábla végigolvasása drága a D1 napi olvasási keretéhez képest)
     // csak a mostani időszak tervei (a dátum-indexen – a teljes tábla végigolvasása drága a D1 napi olvasási keretéhez képest)
     res.monthNames =
@@ -588,6 +616,9 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
   const mergedSeen = new Set<string>();
+  // egy jóváhagyáson belül egy terv / egy Billingo-tény csak egy banki tételhez kötődhet
+  const usedPlans = new Set<string>();
+  const usedBpaid = new Set<string>();
   // Elokeszites: a tetelek, a kategoriak es a szamlak EGY-EGY lekerdezessel (korabban tetelenkent haromszor kerdeztunk)
   const itemIds = [...new Set(items.map((i) => String(i.id)))];
   const txById = new Map<string, any>();
@@ -650,22 +681,39 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(mid, leafId, tx.id));
       continue;
     }
-    let planId: string | null = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
-    if (planId && !('plan_id' in it)) {
-      // nem kifejezetten választott (javasolt / automatikus) terv csak azonos kategóriában és hasonló összegnél zárható le
-      const p = await env.DB.prepare('SELECT leaf_id, amount, done FROM entries WHERE id = ?')
+    const explicit = 'plan_id' in it;
+    let planId: string | null = explicit ? it.plan_id || null : tx.plan_id;
+    if (planId) {
+      const p = await env.DB.prepare('SELECT kind, leaf_id, amount, done FROM entries WHERE id = ?')
         .bind(planId)
-        .first<{ leaf_id: string; amount: number; done: number }>();
-      if (!p || p.done || p.leaf_id !== leafId || Math.abs(tx.amount) < Math.abs(p.amount) * 0.3) planId = null;
+        .first<{ kind: string; leaf_id: string; amount: number; done: number }>();
+      if (explicit) {
+        // kifejezetten választott terv: csak nyitott, azonos irányú terv – a már teljesült terv átkötése a korábbi tényét
+        // terv nélkül hagyná (dupla tény), ezért hibát adunk
+        if (!p || p.kind !== 'plan' || p.done || usedPlans.has(planId) || Math.sign(p.amount) !== Math.sign(tx.amount)) {
+          // automatikus párosításnál a tétel a jóváhagyásra várók között marad
+          if (userId === null) continue;
+          throw new HttpError(409, `A kiválasztott terv már teljesült vagy nem létezik – frissítsd az oldalt (${tx.partner || tx.memo}).`);
+        }
+      } else if (!p || p.kind !== 'plan' || p.done || usedPlans.has(planId) || !planFitsTx(tx, leafId, p)) {
+        // nem kifejezetten választott (javasolt / automatikus) terv csak azonos kategóriában és hasonló összegnél zárható le
+        planId = null;
+      }
+      if (planId) usedPlans.add(planId);
     }
-    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel)
+    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel) –
+    // csak ugyanannak a partnernek (kategóriának) a tényéhez, különben egy másik ügyfél befizetését „lopná el”
     if (tx.amount > 0) {
       const bp = await env.DB.prepare(
-        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?)) LIMIT 1",
+        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND leaf_id = ? AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?))",
       )
-        .bind(tx.amount, tx.amount, tx.date, tx.date)
-        .first<{ id: string }>();
+        .bind(leafId, tx.amount, tx.amount, tx.date, tx.date)
+        .all<{ id: string }>()
+        .then((r) => r.results.find((x) => !usedBpaid.has(x.id)));
       if (bp) {
+        usedBpaid.add(bp.id);
+        // a tételhez javasolt / választott terv (ha nem a bpaid tényé) nyitva marad
+        if (planId) usedPlans.delete(planId);
         stmts.push(
           env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
             'bank:' + tx.id,
@@ -674,7 +722,8 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
             userId,
             bp.id,
           ),
-          env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ? WHERE id = ?").bind(bp.id, leafId, tx.id),
+          // a tervet a Billingo-tény köti (a banki tétel saját tervjavaslata nem zárul le)
+          env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(bp.id, leafId, tx.id),
         );
         continue;
       }
@@ -760,9 +809,26 @@ async function unapprove(env: Env, u: User, ids: string[]) {
       ]);
       continue;
     }
+    if (String(tx.actual_id || '').startsWith('bp')) {
+      // a Billingo „fizetve” tényéhez kötött jóváírás: a tény a Billingo-számla ténye marad (a terve is lezárva) –
+      // csak a banki kötés bomlik; törölni nem szabad, különben a bevétel eltűnne, a terv pedig lezárva maradna
+      await env.DB.batch([
+        env.DB.prepare("UPDATE entries SET source = 'billingo', ext_ref = ?, updated_at = ?, updated_by = ? WHERE id = ? AND ext_ref = ?").bind(
+          'bpaid:' + String(tx.actual_id).slice(2),
+          now(),
+          u.id,
+          tx.actual_id,
+          'bank:' + tx.id,
+        ),
+        env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
+      ]);
+      continue;
+    }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(tx.actual_id),
-      env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND link_id = ?').bind(tx.plan_id, tx.actual_id),
+      // minden terv, amely ehhez a tényhez kötődik (a jóváhagyáskor választott, vagy utólag – pl. azonos havi
+      // összevonással – kötött) újra nyitott lesz; különben a terv lezárva maradna egy törölt ténnyel
+      env.DB.prepare("UPDATE entries SET done = 0, link_id = NULL WHERE kind = 'plan' AND link_id = ?").bind(tx.actual_id),
       env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
       // a jóváhagyáskor létrehozott ismétlődő tervek (amelyek még nyitottak) is visszavonódnak
       env.DB.prepare("DELETE FROM entries WHERE series_id = ? AND kind = 'plan' AND done = 0").bind('s' + tx.id),
@@ -1043,7 +1109,11 @@ export async function importManualRows(
   // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne
   const inRows = (b.rows || []).slice(0, 30000);
   const dates = inRows.map((r) => parseDate(r.date)).filter(Boolean) as string[];
-  const have: Record<string, number> = {};
+  // Az aggreg8 saját azonosítója („a8:…”) megbízható: két különböző a8-azonosítójú, azonos napi és összegű tétel két
+  // külön banki tétel (pl. két 199 Ft-os díj, két azonos összegű kártyás vásárlás) – az a8-tételt tartalom szerint csak
+  // más forrásból (kivonat-fájl) már meglévő tétel szűri ki. A kivonat-fájlok tételei egymás között is tartalom szerint.
+  const isA8 = (ext: string) => ext.startsWith('a8:');
+  const have: Record<string, { a8: number; file: number }> = {};
   const haveExt = new Set<string>();
   if (dates.length) {
     const ex = await env.DB.prepare('SELECT date, amount, ext_id FROM bank_tx WHERE account_id = ? AND date >= ? AND date <= ?')
@@ -1055,9 +1125,11 @@ export async function importManualRows(
       .all<{ date: string; amount: number; ext_id: string }>();
     ex.results.forEach((t) => {
       haveExt.add(t.ext_id);
-      have[`${t.date}|${t.amount}`] = (have[`${t.date}|${t.amount}`] || 0) + 1;
+      const h = (have[`${t.date}|${t.amount}`] ||= { a8: 0, file: 0 });
+      h[isA8(t.ext_id) ? 'a8' : 'file']++;
     });
   }
+  const parsed: { ext: string; date: string; amount: number; partner: string; memo: string }[] = [];
   for (const r of inRows) {
     const date = parseDate(r.date);
     const amount = parseAmount(r.amount);
@@ -1071,13 +1143,29 @@ export async function importManualRows(
       ext = base + '|' + seen[base];
     }
     n++;
-    if (haveExt.has(ext)) continue;
-    const k = `${date}|${amount}`;
-    if (have[k]) {
-      have[k]--;
+    parsed.push({ ext, date, amount, partner, memo });
+  }
+  // 1. a már meglévő (azonosító szerint ismert) tételek a saját párjukat fogyasztják – különben egy azonos napi és
+  //    összegű ÚJ tétel (a sorrendtől függően) tévesen duplikátumnak számítana, és elveszne
+  const fresh = parsed.filter((x) => {
+    if (!haveExt.has(x.ext)) return true;
+    const h = have[`${x.date}|${x.amount}`];
+    const fam = isA8(x.ext) ? 'a8' : 'file';
+    if (h && h[fam] > 0) h[fam]--;
+    return false;
+  });
+  // 2. az új azonosítójú tételek: tartalom szerinti duplikáció-szűrés, a maradék beérkezik
+  for (const x of fresh) {
+    const h = have[`${x.date}|${x.amount}`];
+    if (h && h.file > 0) {
+      h.file--;
       continue;
     }
-    stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
+    if (h && !isA8(x.ext) && h.a8 > 0) {
+      h.a8--;
+      continue;
+    }
+    stmts.push(insertTxStmt(env, ctx, acc.id, { ...x, currency: 'HUF' }, statusFor(x.date, x.amount)));
   }
   if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
     stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));

@@ -1,6 +1,7 @@
 // Egy beérkezett banki tétel jóváhagyó kártyája: megnevezés, kategória, terv-párosítás, ismétlődés – legördülő és felugró ablak nélkül.
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../shared/categories';
+import { planFitsTx } from '../shared/match';
 import { fmt, monthLabel, ymOf } from '../shared/model';
 import type { BankTx, Entry, Rep } from '../shared/types';
 import { api } from './api';
@@ -63,10 +64,11 @@ export function TxCard({
   const section = t.amount >= 0 ? 'in' : 'out';
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const [leaf, setLeaf] = useState<string | null>(t.leaf_id || (section === 'out' ? unforeseen : null));
-  // csak az azonos kategóriájú javasolt terv legyen előre kiválasztva
+  // csak az azonos kategóriájú, hasonló nagyságú javasolt terv legyen előre kiválasztva (a szerver szabálya: planFitsTx –
+  // egy pár száz forintos banki díj ne zárja le előválasztással a partner havi tervét)
   const [plan, setPlan] = useState<string | null>(() => {
     const p = t.plan_id ? data.entries.find((e) => e.id === t.plan_id) : null;
-    return p && (!t.leaf_id || p.leaf_id === t.leaf_id) ? p.id : null;
+    return p && planFitsTx(t, t.leaf_id || p.leaf_id, p) ? p.id : null;
   });
   /** kategória váltáskor a másik kategóriához tartozó terv kikerül a kijelölésből */
   const pickLeaf = (id: string) => {
