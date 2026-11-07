@@ -405,6 +405,9 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
     await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action, leaf });
     return;
   }
+  // már besorolt számla újra-besorolása (másik fül, dupla kattintás): a meglévő terve marad (ON CONFLICT DO NOTHING),
+  // csak a számla kategóriája íródna át → a számla és a terve elválna. Áthelyezés: „move”; újrakezdés: „reopen”.
+  if (r.status === 'planned' || r.status === 'paid') throw new HttpError(409, 'Ez a számla már be van sorolva. Frissítsd az oldalt.');
   const date = r.payment_date || r.issue_date || todayHu();
   const name = (String(it.name || '').trim() || r.partner_name || r.invoice_number).slice(0, 200);
   let leaf = it.leaf_id || r.leaf_id;

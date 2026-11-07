@@ -2,6 +2,7 @@
 import { normalizeText } from '../../shared/categories';
 import { matchContains, partnerKey, seedContainsRules, type ContainsRule } from '../../shared/match';
 import type { Leaf } from '../../shared/types';
+import type { DbStatement } from './platform';
 import { requireRole, type User } from './auth';
 import { Env, HttpError, audit, getSetting, json, now, randomId, readJson, setSetting } from './util';
 
@@ -110,19 +111,27 @@ export async function handleRules(
 
   requireRole(u, 'admin', 'member');
 
+  // kategória ellenőrzése: nem létező alkategóriára mutató szabály minden érintett banki tételt „sehova” sorolna
+  const leafExists = async (id: unknown) => !!(await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(String(id ?? '')).first());
+
   if (path === '/api/rules' && req.method === 'POST') {
     const b = await readJson(req);
     const pattern = normalizeText(String(b.pattern || '')).slice(0, 80);
     if (pattern.length < 2) throw new HttpError(400, 'Adj meg legalább 2 karaktert (pl. a partner nevét).');
-    const leaf = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?')
-      .bind(String(b.leaf_id || ''))
-      .first();
-    if (!leaf) throw new HttpError(400, 'Válassz kategóriát.');
-    const id = randomId('r');
-    await env.DB.prepare("INSERT INTO match_rules (id, pattern, leaf_id, auto, merge, note, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)")
-      .bind(id, pattern, b.leaf_id, b.auto ? 1 : 0, b.merge ? 1 : 0, b.note ? String(b.note).slice(0, 200) : null, now())
-      .run();
-    await audit(env, u.id, 'rule_created', { id, pattern, leaf: b.leaf_id, auto: !!b.auto, merge: !!b.merge });
+    if (!(await leafExists(b.leaf_id))) throw new HttpError(400, 'Válassz kategóriát.');
+    // ugyanaz a minta ugyanarra a kategóriára (pl. dupla kattintás, „Párosítás” után „Automatikus”): a meglévő szabály
+    // kapja az új beállítást, nem jön létre második, azonos szabály
+    const same = await env.DB.prepare('SELECT id FROM match_rules WHERE pattern = ? AND leaf_id = ? LIMIT 1').bind(pattern, String(b.leaf_id)).first<{ id: string }>();
+    const id = same?.id || randomId('r');
+    if (same)
+      await env.DB.prepare('UPDATE match_rules SET auto = ?, merge = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?')
+        .bind(b.auto ? 1 : 0, b.merge ? 1 : 0, b.note ? String(b.note).slice(0, 200) : null, now(), id)
+        .run();
+    else
+      await env.DB.prepare("INSERT INTO match_rules (id, pattern, leaf_id, auto, merge, note, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)")
+        .bind(id, pattern, b.leaf_id, b.auto ? 1 : 0, b.merge ? 1 : 0, b.note ? String(b.note).slice(0, 200) : null, now())
+        .run();
+    await audit(env, u.id, same ? 'rule_updated' : 'rule_created', { id, pattern, leaf: b.leaf_id, auto: !!b.auto, merge: !!b.merge });
     const r = await reapply();
     return json({ ok: true, id, ...r });
   }
@@ -130,26 +139,23 @@ export async function handleRules(
   const m = path.match(/^\/api\/rules\/([\w-]+)$/);
   if (m && req.method === 'PATCH') {
     const b = await readJson(req);
+    if (!(await env.DB.prepare('SELECT id FROM match_rules WHERE id = ?').bind(m[1]).first())) throw new HttpError(404, 'Nincs ilyen szabály.');
+    // előbb az ellenőrzés, utána egy lépésben az írás (hibás kategóriánál a minta sem változik)
+    const stmts: DbStatement[] = [];
     if (b.pattern !== undefined) {
       const p = normalizeText(String(b.pattern)).slice(0, 80);
       if (p.length < 2) throw new HttpError(400, 'Túl rövid minta.');
-      await env.DB.prepare('UPDATE match_rules SET pattern = ?, updated_at = ? WHERE id = ?').bind(p, now(), m[1]).run();
+      stmts.push(env.DB.prepare('UPDATE match_rules SET pattern = ?, updated_at = ? WHERE id = ?').bind(p, now(), m[1]));
     }
-    if (b.leaf_id !== undefined)
-      await env.DB.prepare('UPDATE match_rules SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(String(b.leaf_id), now(), m[1]).run();
-    if (b.auto !== undefined)
-      await env.DB.prepare('UPDATE match_rules SET auto = ?, updated_at = ? WHERE id = ?')
-        .bind(b.auto ? 1 : 0, now(), m[1])
-        .run();
+    if (b.leaf_id !== undefined) {
+      if (!(await leafExists(b.leaf_id))) throw new HttpError(400, 'Válassz kategóriát.');
+      stmts.push(env.DB.prepare('UPDATE match_rules SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(String(b.leaf_id), now(), m[1]));
+    }
+    if (b.auto !== undefined) stmts.push(env.DB.prepare('UPDATE match_rules SET auto = ?, updated_at = ? WHERE id = ?').bind(b.auto ? 1 : 0, now(), m[1]));
     // „Havi összevonás” kapcsoló (Beállítások › Párosítások)
-    if (b.merge !== undefined)
-      await env.DB.prepare('UPDATE match_rules SET merge = ?, updated_at = ? WHERE id = ?')
-        .bind(b.merge ? 1 : 0, now(), m[1])
-        .run();
-    if (b.note !== undefined)
-      await env.DB.prepare('UPDATE match_rules SET note = ? WHERE id = ?')
-        .bind(b.note ? String(b.note).slice(0, 200) : null, m[1])
-        .run();
+    if (b.merge !== undefined) stmts.push(env.DB.prepare('UPDATE match_rules SET merge = ?, updated_at = ? WHERE id = ?').bind(b.merge ? 1 : 0, now(), m[1]));
+    if (b.note !== undefined) stmts.push(env.DB.prepare('UPDATE match_rules SET note = ? WHERE id = ?').bind(b.note ? String(b.note).slice(0, 200) : null, m[1]));
+    if (stmts.length) await env.DB.batch(stmts);
     await audit(env, u.id, 'rule_updated', { id: m[1], ...b });
     return json({ ok: true, ...(await reapply()) });
   }
@@ -164,18 +170,18 @@ export async function handleRules(
     const pattern = String(b.pattern || '');
     if (req.method === 'DELETE') {
       await env.DB.prepare('DELETE FROM partner_rules WHERE pattern = ?').bind(pattern).run();
+      await audit(env, u.id, 'partner_rule_deleted', { pattern });
       return json({ ok: true });
     }
-    if (b.leaf_id !== undefined)
-      await env.DB.prepare('UPDATE partner_rules SET leaf_id = ?, updated_at = ? WHERE pattern = ?').bind(String(b.leaf_id), now(), pattern).run();
-    if (b.auto !== undefined)
-      await env.DB.prepare('UPDATE partner_rules SET auto = ?, updated_at = ? WHERE pattern = ?')
-        .bind(b.auto ? 1 : 0, now(), pattern)
-        .run();
-    if (b.merge !== undefined)
-      await env.DB.prepare('UPDATE partner_rules SET merge = ?, updated_at = ? WHERE pattern = ?')
-        .bind(b.merge ? 1 : 0, now(), pattern)
-        .run();
+    if (!(await env.DB.prepare('SELECT pattern FROM partner_rules WHERE pattern = ?').bind(pattern).first())) throw new HttpError(404, 'Nincs ilyen tanult szabály.');
+    const stmts: DbStatement[] = [];
+    if (b.leaf_id !== undefined) {
+      if (!(await leafExists(b.leaf_id))) throw new HttpError(400, 'Válassz kategóriát.');
+      stmts.push(env.DB.prepare('UPDATE partner_rules SET leaf_id = ?, updated_at = ? WHERE pattern = ?').bind(String(b.leaf_id), now(), pattern));
+    }
+    if (b.auto !== undefined) stmts.push(env.DB.prepare('UPDATE partner_rules SET auto = ?, updated_at = ? WHERE pattern = ?').bind(b.auto ? 1 : 0, now(), pattern));
+    if (b.merge !== undefined) stmts.push(env.DB.prepare('UPDATE partner_rules SET merge = ?, updated_at = ? WHERE pattern = ?').bind(b.merge ? 1 : 0, now(), pattern));
+    if (stmts.length) await env.DB.batch(stmts);
     await audit(env, u.id, 'partner_rule_updated', { pattern, ...b });
     return json({ ok: true, ...(await reapply()) });
   }
