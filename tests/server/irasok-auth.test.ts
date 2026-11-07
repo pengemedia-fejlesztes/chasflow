@@ -382,3 +382,18 @@ describe('általános védelem minden író kérésen', () => {
     expect(Number(await rev())).toBeGreaterThan(1000);
   });
 });
+
+describe('váratlan szerverhiba', () => {
+  it('500: a válaszban nincs belső részlet, a hiba a diagnosztikai listába kerül (adat nélkül), új adat-verzió nincs', async () => {
+    t = await createTestApp();
+    t.sql.prepare("UPDATE settings SET value = '1000' WHERE key = 'data_rev'").run();
+    t.sql.exec('DROP TABLE month_stats');
+    const r = await t.post('/api/stats/refresh');
+    expect(r.status).toBe(500);
+    expect(r.data).toEqual({ error: 'Szerverhiba. Próbáld újra később.' });
+    const errs = JSON.parse((t.sql.prepare("SELECT value FROM settings WHERE key = 'server_errors'").get() as any).value);
+    expect(errs[0]).toMatchObject({ m: 'POST', p: '/api/stats/refresh' });
+    expect(errs[0].e).toMatch(/month_stats/);
+    expect((t.sql.prepare("SELECT value FROM settings WHERE key = 'data_rev'").get() as any).value).toBe('1000');
+  });
+});

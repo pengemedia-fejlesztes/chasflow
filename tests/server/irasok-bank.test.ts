@@ -520,3 +520,18 @@ describe('diagnosztikai végpontok (/api/diag/*)', () => {
     expect(row("SELECT status FROM bank_tx WHERE id = 'tx4'").status).toBe('approved');
   });
 });
+
+describe('kézi teljes szinkron (POST /api/sync)', () => {
+  it('szerkesztő indíthatja (szinkronkérés a Macnek a nevével, napló); olvasó 403 és nem ír', async () => {
+    t = await createTestApp();
+    seed();
+    await as('viewer');
+    expect((await t.post('/api/sync')).status).toBe(403);
+    expect(setting('ingest_request')).toBeNull();
+    await as('member');
+    const r = await t.post('/api/sync');
+    expect(r.status).toBe(200);
+    expect(JSON.parse(setting('ingest_request'))).toMatchObject({ by: 'member@minta.hu' });
+    expect(n('audit_log', "action = 'sync'")).toBe(1);
+  });
+});
