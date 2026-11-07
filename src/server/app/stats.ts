@@ -6,13 +6,19 @@ import { Env, now, todayHu } from './util';
 
 async function load(env: Env) {
   const [e, l, g] = await env.DB.batch([
-    env.DB.prepare('SELECT id, kind, date, leaf_id, amount, done, tentative, source FROM entries'),
-    env.DB.prepare('SELECT id, group_id FROM leaves'),
+    env.DB.prepare('SELECT id, kind, date, leaf_id, name, amount, done, tentative, source, link_id FROM entries'),
+    env.DB.prepare('SELECT id, group_id, label FROM leaves'),
     env.DB.prepare('SELECT id, section FROM groups'),
   ]);
   const gs = new Map((g.results as { id: string; section: Section }[]).map((x) => [x.id, x.section]));
-  const ls = new Map((l.results as { id: string; group_id: string }[]).map((x) => [x.id, gs.get(x.group_id) || 'out']));
-  return { entries: e.results as unknown as Entry[], sectionOf: (id: string) => (ls.get(id) || 'out') as Section };
+  const leaves = l.results as { id: string; group_id: string; label: string }[];
+  const ls = new Map(leaves.map((x) => [x.id, gs.get(x.group_id) || 'out']));
+  const labels = new Map(leaves.map((x) => [x.id, x.label]));
+  return {
+    entries: e.results as unknown as Entry[],
+    sectionOf: (id: string) => (ls.get(id) || 'out') as Section,
+    leafLabel: (id: string) => labels.get(id) || '',
+  };
 }
 
 /**
@@ -22,13 +28,13 @@ async function load(env: Env) {
 export async function refreshMonthStats(env: Env, userId: number | null, recloseAll = false): Promise<{ closed: number; current: string }> {
   const today = todayHu();
   const cur = ymOf(today);
-  const { entries, sectionOf } = await load(env);
+  const { entries, sectionOf, leafLabel } = await load(env);
   const start = planStart(entries) || cur;
   const existing = await env.DB.prepare('SELECT ym FROM month_stats WHERE closed = 1').all<{ ym: string }>();
   const closedSet = new Set(existing.results.map((r) => r.ym));
   const past = start < cur ? monthRange(start, addMonths(cur, -1)) : [];
   const todo = [...past.filter((ym) => recloseAll || !closedSet.has(ym)), cur];
-  const rows = planVsActual(entries, sectionOf, todo);
+  const rows = planVsActual(entries, sectionOf, todo, leafLabel);
   const t = now();
   const stmts = rows.map((r) =>
     env.DB.prepare(

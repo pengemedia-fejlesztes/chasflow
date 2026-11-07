@@ -48,7 +48,10 @@ export function PlanActualView({ mobile }: { mobile?: boolean }) {
     return monthRange(addMonths(cur, -3), addMonths(cur, 6));
   }, [range, ix.cur]);
   const start = useMemo(() => planStart(data.entries), [data.entries]);
-  const live = useMemo(() => new Map(planVsActual(data.entries, ix.sectionOf, months).map((r) => [r.ym, r])), [data.entries, ix, months]);
+  const live = useMemo(
+    () => new Map(planVsActual(data.entries, ix.sectionOf, months, (l) => ix.leafById[l]?.label || '').map((r) => [r.ym, r])),
+    [data.entries, ix, months],
+  );
   const snap = useMemo(() => new Map((data.monthStats || []).map((s) => [s.ym, s])), [data.monthStats]);
   const curSnap = snap.get(ix.cur);
 
