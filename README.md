@@ -94,15 +94,24 @@ Ha valamelyik bank (pl. BiNX) nem szerepel az Enable Banking listájában, haszn
 - Más ágon a GitHub Actions csak ellenőriz (típusellenőrzés, tesztek, build).
 - Új adatbázis-mező esetén új fájl kell a `migrations/` mappába (pl. `0002_….sql`). Ezt a deploy automatikusan lefuttatja.
 
-### Helyi futtatás
+### Helyi futtatás (Docker, Node + SQLite)
+
+Csak Docker kell (Node sem kell a gépre):
 
 ```bash
-npm ci
-echo "SETUP_TOKEN=helyi-teszt" > .dev.vars     # + BILLINGO_API_KEY=… ha kell
-npm run db:migrate:local
-npx vite build && npx wrangler dev             # http://localhost:8787
-npm test                                       # unit tesztek
+docker compose up                  # felület: http://localhost:5173  (API: http://localhost:8787)
+docker compose run --rm app npm test
+docker compose run --rm app npm run typecheck
+docker compose run --rm app node server/cron.mjs   # egy szinkron-futás kézzel (titkok kellenek hozzá)
 ```
+
+- Az adatbázis SQLite: `./.data/cashflow.sqlite`. Induláskor a `migrations/` összes még nem futtatott fájlja lefut
+  (nyilvántartás: `d1_migrations` tábla, mint a wrangler-nél). A fájl törlésével üres adatbázissal indul újra.
+- Első indításkor az első admin a `SETUP_TOKEN`-nel hozható létre (alapból `helyi-teszt`).
+- Titkok (Billingo, NAV, Enable Banking, e-mail): `.env` (minta: `.env.example`). Nélkülük az app fut, csak a külső szinkron nem.
+- A felület (Vite) azonnal frissül, a szerver (`worker/`, `shared/`, `server/`) változáskor újraépül és újraindul.
+- Az adatbázis-meghajtót a `SQLITE_PATH` választja ki (`server/db.mjs`): ha meg van adva, SQLite
+  (`server/d1-sqlite.mjs`), ha nincs, a MySQL (`server/d1-mysql.mjs`) – az éles pmdev egyelőre MySQL-lel fut.
 
 A módosításütközések elleni védelemhez a `0025_mutation_guard.sql` migráció szükséges. A frontend és a Worker együtt frissítendő; régi böngészőfül esetén töltsd újra az oldalt. A kliens a tétel korábbi verzióját küldi, a szerver pedig egyetlen tranzakcióban ellenőrzi és menti a teljes módosítást. Ütközéskor 409-es választ ad, és megőrzi a másik felhasználó változtatását. A visszavonásra is ugyanez a védelem érvényes.
 

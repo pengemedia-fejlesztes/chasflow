@@ -7,7 +7,7 @@ import { createReadStream } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker from '../dist-worker/worker.mjs';
-import { createDb } from './d1-mysql.mjs';
+import { openDb } from './db.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -39,12 +39,7 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-const db = createDb({
-  host: process.env.DB_HOST || '127.0.0.1',
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-});
+const db = await openDb(ROOT);
 
 // statikus fajlok Fetcher-kent (az ASSETS binding helyett)
 const ASSETS = {

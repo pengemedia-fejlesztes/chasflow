@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker from '../dist-worker/worker.mjs';
-import { createDb } from './d1-mysql.mjs';
+import { openDb } from './db.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 try {
@@ -19,12 +19,7 @@ try {
   }
 } catch {}
 
-const db = createDb({
-  host: process.env.DB_HOST || '127.0.0.1',
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-});
+const db = await openDb(ROOT, { migrate: false }); // a migraciot a webes folyamat vegzi
 
 const env = { ...process.env, DB: db, ASSETS: { fetch: async () => new Response('', { status: 404 }) } };
 

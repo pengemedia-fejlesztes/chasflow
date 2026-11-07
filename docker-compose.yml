@@ -1,0 +1,27 @@
+# Lokalis fejlesztoi kornyezet – Cashflow tervezo (Node + SQLite)
+#
+#   docker compose up              # felulet: http://localhost:5173  (API: http://localhost:8787)
+#   docker compose run --rm app npm test
+#   docker compose run --rm app node server/cron.mjs      # egy szinkron-futas kezzel
+#
+# Az adatbazis: ./.data/cashflow.sqlite (gitignore-ban). Torlesevel ures adatbazissal indul ujra.
+# Titkok (Billingo, NAV, Enable Banking): a ./.env fajlba (minta: .env.example) – nelkuluk az app fut,
+# csak a kulso szinkronok nem mukodnek.
+services:
+  app:
+    image: node:22-bookworm-slim # a pmdev-en is Node 22 fut
+    working_dir: /app
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["bash", "docker/dev.sh"]
+    environment:
+      HOME: /tmp
+      NODE_ENV: development
+      PORT: "8787"
+      SQLITE_PATH: .data/cashflow.sqlite
+      # az elso admin letrehozasahoz (a felulet kerdezi); a .env-ben felulirhato
+      SETUP_TOKEN: ${SETUP_TOKEN:-helyi-teszt}
+    volumes:
+      - .:/app
+    ports:
+      - "5173:5173" # Vite dev szerver (felulet, gyors ujratoltessel)
+      - "8787:8787" # Node szerver (API + a buildelt felulet, ha van dist/)
