@@ -34,3 +34,11 @@ describe('nameOwner', () => {
     expect(nameOwner('', alfa, known)).toBe('neutral');
   });
 });
+
+describe('nameOwner – cégforma nélkül azonos név', () => {
+  it('„Webműhely Kft.” tény a „webmuhely” szabályú szállítóé, nem a „Szerverpark Zrt.”-é', () => {
+    expect(nameOwner('Webműhely Kft.', ['Szerverpark Zrt.'], ['webmuhely', 'Szerverpark Zrt.'], 'Domain-Tárhely')).toBe('other');
+    // egy másik alkategória általános neve (pl. „Marketing”) nem tesz „másik partnerré” egy hosszabb tervnevet
+    expect(nameOwner('Marketing tanácsadás', ['Minta Kft.'], ['Marketing'], 'Minta')).toBe('neutral');
+  });
+});

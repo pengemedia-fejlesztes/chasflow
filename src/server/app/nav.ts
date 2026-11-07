@@ -9,6 +9,8 @@ import { normalizeText } from '../../shared/categories';
 import { matchPlan, partnerKey, suggestLeaf } from '../../shared/match';
 import type { Entry } from '../../shared/types';
 import { matchingContext } from './bank';
+import { partnerNames } from './billingo';
+import { nameOwner } from '../../shared/billingopay';
 import { taxBase, taxLeafMap } from './partnertax';
 import { Env, HttpError, audit, getSetting, now, randomId, setSetting, todayHu } from './util';
 
@@ -247,6 +249,12 @@ interface NavRow {
 
 /** A terv nélküli számlák újrapárosítása: van-e már hozzá terv (nyitott) vagy banki tény (kifizetve). */
 export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
+  // a „tervezett” számla, amelynek a terve azóta törlődött, újra terv nélküli (különben se riasztás, se párosítás nem lenne rá)
+  await env.DB.prepare(
+    "UPDATE nav_invoices SET status = 'new', plan_id = NULL, updated_at = ? WHERE status = 'planned' AND plan_id IS NOT NULL AND plan_id NOT IN (SELECT id FROM entries)",
+  )
+    .bind(now())
+    .run();
   const rows = (await env.DB.prepare("SELECT * FROM nav_invoices WHERE status = 'new'").all<NavRow>()).results;
   if (!rows.length) return { unplanned: 0 };
   const ctx = await matchingContext(env);
@@ -261,10 +269,15 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
       [r.plan_id, r.actual_id].filter(Boolean),
     ),
   );
+  // egy kiadási alkategóriában több szállító terve / ténye is lehet (pl. „Domain-Tárhely”): a más szállító nevére szólót nem kötjük
+  const names = await partnerNames(env, {}, 'out');
+  const leafLabel = new Map(ctx.leaves.map((l) => [l.id, l.label]));
   const t = now();
   const stmts: DbStatement[] = [];
   let unplanned = 0;
   for (const r of rows) {
+    const own = names.own(r.partner_name || '');
+    const notOther = (e: { name: string; leaf_id: string }) => nameOwner(e.name, own, names.known, leafLabel.get(e.leaf_id) || '') !== 'other';
     const date = r.payment_date || r.issue_date || todayHu();
     const tx = { date, amount: r.gross, partner: r.partner_name || '', memo: r.invoice_number };
     // az adószám (partnertörzs) megelőzi a név- és kategóriaszabályokat
@@ -277,7 +290,8 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
         Math.abs(a.amount - r.gross) <= Math.max(500, Math.abs(r.gross) * 0.01) &&
         a.date >= addDays(r.issue_date || date, -5) &&
         a.date <= addDays(date, 45) &&
-        ((leaf && a.leaf_id === leaf) || (key.length >= 3 && partnerKey(a.name).includes(key.split(' ')[0]))),
+        ((leaf && a.leaf_id === leaf) || (key.length >= 3 && partnerKey(a.name).includes(key.split(' ')[0]))) &&
+        notOther(a),
     );
     if (paid) {
       used.add(paid.id);
@@ -289,7 +303,7 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
     // 2) van rá nyitott terv
     const plan = matchPlan(
       { ...tx, leaf_id: leaf },
-      ctx.plans.filter((p) => !used.has(p.id)),
+      ctx.plans.filter((p) => !used.has(p.id) && notOther(p)),
       ctx.refs,
     );
     if (plan && (plan.leaf_id === leaf || Math.abs(plan.amount - r.gross) <= Math.max(1000, Math.abs(r.gross) * 0.05))) {

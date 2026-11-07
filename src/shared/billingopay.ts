@@ -61,9 +61,11 @@ export function nameOwner(name: string, own: string[], known: string[], leafLabe
   const head = compact(nameHead(name));
   if (head.length < 4) return 'neutral';
   // a név eleje a partner neve, vagy annak eleje (rövidítés: „Sweetcorner” ↔ „Sweet Corner Ingatlanfejlesztő Kft.”)
+  const headKey = partnerKey(nameHead(name));
   const names = (n: string) => {
     const k = compact(n);
-    return k.length >= 4 && (k === head || k.startsWith(head));
+    // a cégforma nélkül azonos név is (pl. „Webműhely Kft.” ↔ „webmuhely”)
+    return k.length >= 4 && (k === head || k.startsWith(head) || (headKey.length >= 4 && partnerKey(n) === headKey));
   };
   if (own.some((n) => names(n) || (compact(n).length >= 4 && head.startsWith(compact(n))) || namesMatch(n, nameHead(name)))) return 'own';
   if (leafLabel && names(leafLabel)) return 'neutral';

@@ -76,11 +76,13 @@ async function leafForPartner(
  * Partnernevek a számla ↔ terv kötéshez: egy alkategóriában több ügyfél terve is lehet (pl. „Domain és tárhely”), ezért
  * a más ügyfél nevére szóló terv nem köthető a számlához. `own(partner)` = a számla partnerének nevei, `known` = minden ismert név.
  */
-export async function partnerNames(env: Env, alias: Record<string, string> = {}) {
+export async function partnerNames(env: Env, alias: Record<string, string> = {}, side: 'in' | 'out' = 'in') {
   const [pR, dR, lR, rR] = await env.DB.batch([
     env.DB.prepare('SELECT name, aliases FROM partners'),
-    env.DB.prepare('SELECT DISTINCT partner FROM billingo_docs WHERE partner IS NOT NULL'),
-    env.DB.prepare("SELECT l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = 'in'"),
+    side === 'in'
+      ? env.DB.prepare('SELECT DISTINCT partner FROM billingo_docs WHERE partner IS NOT NULL')
+      : env.DB.prepare('SELECT DISTINCT partner_name AS partner FROM nav_invoices WHERE partner_name IS NOT NULL'),
+    env.DB.prepare('SELECT l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = ?').bind(side),
     env.DB.prepare('SELECT pattern FROM partner_rules'),
   ]);
   const groups = (pR.results as any[]).map((p) => {
