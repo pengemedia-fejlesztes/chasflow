@@ -87,9 +87,6 @@ export function partnerStats(
   all = false,
 ): PartnerStat[] {
   const infoByKey = new Map(partners.map((p) => [p.key, p]));
-  // alternatív nevek (normalizálva) → partner
-  const aliasKeys: { a: string; key: string }[] = [];
-  for (const p of partners) for (const a of p.aliases || []) if (squash(a).length >= 3) aliasKeys.push({ a: squash(a), key: p.key });
   const gById = new Map(groups.map((g) => [g.id, g]));
   const secOfLeaf = new Map(leaves.map((l) => [l.id, (gById.get(l.group_id)?.section || 'out') as Section]));
   const sectionOf = (id: string) => secOfLeaf.get(id) || 'out';
@@ -114,9 +111,19 @@ export function partnerStats(
     if (!byLeaf.has(e.leaf_id)) byLeaf.set(e.leaf_id, []);
     byLeaf.get(e.leaf_id)!.push(e);
   }
-  // Billingo számla → partner: a számlából lett terv kategóriája, különben partnernév egyezés
+  // Billingo számla → partner: a számlából lett terv kategóriája, különben partnernév egyezés – előbb a pontos (írásjel és
+  // jogi forma nélkül azonos) név, aztán ha az egyik név a másik egész szavait tartalmazza („BWT Hungária Kft.” ↔ „BWT”).
+  // Szórészlet nem elég: a „Tanácsadó Kft.” nem az „Adó”, a „Molnár Bt.” nem a „MOL” partner számlája.
+  const words = (s: string) => ' ' + partnerKey(s) + ' ';
+  const inside = (a: string, b: string) => squash(a).length >= 3 && squash(b).length >= 3 && (words(a).includes(words(b)) || words(b).includes(words(a)));
+  const named: { name: string; key: string }[] = [
+    // a saját (alkategória) név előbb, aztán a partnertörzs alternatív nevei (csak a cashflow-ban szereplő partnereké),
+    // végül a megszüntetett (archivált) sorok neve – a régi cégnév az utódpartner alternatív neveként erősebb
+    ...leaves.filter((l) => !l.archived && keyOfLeaf.get(l.id)!.length >= 3).map((l) => ({ name: l.label, key: keyOfLeaf.get(l.id)! })),
+    ...partners.filter((p) => byKey.has(p.key)).flatMap((p) => (p.aliases || []).map((a) => ({ name: a, key: p.key }))),
+    ...leaves.filter((l) => l.archived && keyOfLeaf.get(l.id)!.length >= 3).map((l) => ({ name: l.label, key: keyOfLeaf.get(l.id)! })),
+  ];
   const docsByKey = new Map<string, BillingoDoc[]>();
-  const keys = [...byKey.keys()].filter((k) => k.length >= 3);
   for (const d of billingo) {
     if (d.cancelled) continue;
     const viaPlan = d.plan_id ? entryById.get(d.plan_id)?.leaf_id : undefined;
@@ -125,8 +132,8 @@ export function partnerStats(
     const k =
       (viaPlan && keyOfLeaf.get(viaPlan)) ||
       (viaRef && keyOfLeaf.get(viaRef)) ||
-      aliasKeys.find((x) => pk.includes(x.a))?.key ||
-      keys.find((x) => pk.includes(x) || (pk.length >= 3 && x.includes(pk)));
+      (pk.length >= 3 && named.find((x) => squash(x.name) === pk)?.key) ||
+      named.find((x) => inside(x.name, d.partner || ''))?.key;
     if (!k) continue;
     if (!docsByKey.has(k)) docsByKey.set(k, []);
     docsByKey.get(k)!.push(d);
