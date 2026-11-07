@@ -277,6 +277,13 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     );
     stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
   }
+  // visszavonás (purge): a most visszaállított tételek friss kukás másolata kikerül (mint a változásnapló visszavonásánál),
+  // különben egy újabb törlés után kétszer látszanának a kukában
+  if (b.purge)
+    for (const e of b.upsert || [])
+      stmts.push(
+        env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_by = ? AND deleted_at > ?').bind(String(e.id), userId, t - 15 * 60_000),
+      );
   for (const id of b.deleteSeries || []) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ?').bind(String(id)));
   if (stmts.length > 2000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
   stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
