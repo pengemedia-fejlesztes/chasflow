@@ -308,6 +308,8 @@ export interface MatrixRow {
   groupId?: string;
   /** más mappában lévő partner ajánlata, az Ajánlatok alatt mutatva (csak megjelenítés, nem szerkeszthető) */
   offerOnly?: boolean;
+  /** felső szintű sor kulcsa, ami alá a sor tartozik (összecsukáshoz): 'in' / 'out' vagy az Ajánlatok sora */
+  top?: string;
   cells: Cell[];
   total: number;
 }
@@ -433,6 +435,9 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
       total: 0,
     };
     const secChildren: MatrixRow[] = [];
+    // bevételnél nincs köztes mappa-szint: a partnerek közvetlenül a Bevétel alatt vannak, az Ajánlatok önálló felső szint
+    let offerSec: MatrixRow | null = null;
+    const offerChildren: MatrixRow[] = [];
     // minden ajánlat az „Ajánlatok” mappában látszik (mint az Ajánlatok oldalon), a más mappában lévő partneré is
     const offerGroup = ix.groups.find((g) => g.section === section && OFFER_RX.test(g.label));
     for (const g of ix.groups.filter((g) => g.section === section)) {
@@ -466,6 +471,7 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
           groupId: g.id,
           cells,
           total: 0,
+          top: section === 'in' && offerGroup?.id === g.id ? g.id : section,
           ...(mode === 'only' ? { offerOnly: true } : {}),
         };
         lr.total = cells.reduce((s, c) => s + c.v, 0);
@@ -479,16 +485,22 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
       }
       if (!leafRows.length) continue;
       gRow.total = gRow.cells.reduce((s, c) => s + c.v, 0);
+      if (section === 'in' && offerGroup?.id === g.id) {
+        offerSec = { ...gRow, type: 'section', label: 'Ajánlatok', groupId: g.id };
+        offerChildren.push(...leafRows);
+        continue;
+      }
+      if (section === 'in' && !secRow.groupId) secRow.groupId = g.id;
       gRow.cells.forEach((c, i) => {
         secRow.cells[i].v += c.v;
         secRow.cells[i].est += c.est;
         secRow.cells[i].offer += c.offer;
       });
-      secChildren.push(gRow, ...leafRows);
+      secChildren.push(...(section === 'in' ? [] : [gRow]), ...leafRows);
     }
-    if (!secChildren.length) continue;
     secRow.total = secRow.cells.reduce((s, c) => s + c.v, 0);
-    rows.push(secRow, ...secChildren);
+    if (secChildren.length) rows.push(secRow, ...secChildren);
+    if (offerSec) rows.push(offerSec, ...offerChildren);
   }
   const proj = projection(ix, f, monthDiff(horizon, ix.cur) > 0 ? horizon : ix.cur, est);
   const balance: number[] = [];

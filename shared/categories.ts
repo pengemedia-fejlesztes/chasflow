@@ -25,7 +25,14 @@ export const leafId = (gid: string, label: string) => 'l_' + hash(gid + '|' + no
 
 /** "1 Munkatársak jövedelmei" → "1 · Munkatársak jövedelmei" */
 export function displayGroup(label: string): string {
+  // a bevételi partnerek mappája a felületen maga a Bevétel (nincs külön „Projektek” szint)
+  if (/^\s*projektek?\s*$/i.test(label)) return 'Bevétel';
   return label.replace(/^(\d+)\s+/, '$1 · ');
+}
+
+/** A mappa teljes neve: „Kiadás › 3 · Működési költségek”; a Bevétel és az Ajánlatok felső szint, nincs előtag. */
+export function groupPath(section: string, label: string): string {
+  return section === 'in' ? displayGroup(label) : `Kiadás › ${displayGroup(label)}`;
 }
 
 /** Csoport sorrend: a számozott kiadás-csoportok a számuk szerint. */

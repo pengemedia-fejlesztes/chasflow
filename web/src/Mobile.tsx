@@ -1,7 +1,7 @@
 import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { displayGroup } from '../../shared/categories';
+import { displayGroup, groupPath } from '../../shared/categories';
 import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, useFlags } from './AlertsView';
@@ -184,7 +184,8 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           const sign = s === 'in' ? 1 : -1;
           const plan = es.reduce((a, e) => a + e.amount * sign, 0);
           const done = es.filter((e) => e.kind === 'actual' || e.done).reduce((a, e) => a + e.amount * sign, 0);
-          tot += plan;
+          // az Ajánlatok önálló szint: nem számít bele a Bevétel összegébe
+          if (!/aj[áa]nlat/i.test(g.label)) tot += plan;
           return { g, plan, done, n: es.length, open: es.filter((e) => e.kind === 'plan' && !e.done).length };
         })
         .filter((x) => x.n > 0);
@@ -1759,8 +1760,7 @@ function SheetView({
               {editPlan ? <small style={{ color: C.muted, fontWeight: 500 }}> ✎</small> : null}
             </span>
             <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
-              {ix.sectionOf(base.leaf_id) === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(ix.groupById[ix.leafById[base.leaf_id]?.group_id]?.label || '')} ·{' '}
-              {ix.leafById[base.leaf_id]?.label}
+              {groupPath(ix.sectionOf(base.leaf_id), ix.groupById[ix.leafById[base.leaf_id]?.group_id]?.label || '')} · {ix.leafById[base.leaf_id]?.label}
             </span>
             <button
               onClick={() => onPartner(base.leaf_id)}

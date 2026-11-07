@@ -1,7 +1,7 @@
 // Partnerek: egy partner = a Cash-ben használt név (bevételi és kiadási oldalon is). Az adatlapon a számlázási
 // (cég)nevek, a múltbeli tények, a várható tételek, az összetevők, a Billingo számlák és a fizetési fegyelem látszik.
 import { useMemo, useState } from 'react';
-import { displayGroup, normalizeText } from '../../shared/categories';
+import { displayGroup, normalizeText, groupPath } from '../../shared/categories';
 import { addMonths, fmt, fmtM } from '../../shared/model';
 import { partnerStats, type Component, type PartnerStat } from '../../shared/partners';
 import type { Entry, Section } from '../../shared/types';
@@ -466,8 +466,7 @@ export function PartnerDetail({
       )}
       <div style={embedded ? { display: 'none' } : undefined}>
         <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>
-          Partner ·{' '}
-          {p.leaves.map((l) => `${ix.sectionOf(l.id) === 'in' ? 'bevétel' : 'kiadás'}: ${displayGroup(ix.groupById[l.group_id]?.label || '')}`).join(' · ')}
+          Partner · {p.leaves.map((l) => groupPath(ix.sectionOf(l.id), ix.groupById[l.group_id]?.label || '')).join(' · ')}
         </span>
         <h2 style={{ margin: '2px 0 0', font: `700 ${mobile ? 22 : 28}px/1.1 ${FONT_H}`, color: C.navy }}>{p.name}</h2>
       </div>

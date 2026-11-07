@@ -1,6 +1,6 @@
 // Beállítások: saját fiók (jelszó, 2FA), felhasználók, integrációk (Billingo, bankok), adatok (import, nyitó egyenleg), kategóriák.
 import { useEffect, useState } from 'react';
-import { displayGroup } from '../../shared/categories';
+import { displayGroup, groupPath } from '../../shared/categories';
 import { parseBankRows } from '../../shared/bankfile';
 import { addMonths, fmt } from '../../shared/model';
 import { payDate, payRuleLabel } from '../../shared/workdays';
@@ -865,7 +865,7 @@ function Categories() {
         Archivált alkategóriák mutatása (az archivált nem jelenik meg a választólistákban és a becslésben)
       </label>
       {ix.groups.map((g) => (
-        <Section key={g.id} title={`${g.section === 'in' ? 'Bevétel' : 'Kiadás'} · ${displayGroup(g.label)}`}>
+        <Section key={g.id} title={groupPath(g.section, g.label)}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: C.bg, borderRadius: R.lg, padding: '8px 10px' }}>
             <span style={{ ...eyebrow, fontSize: 10.5 }}>Fizetési nap a csoport minden tételére{g.section === 'in' ? ' (partnerenként felülírható)' : ''}</span>
             {canEdit ? (

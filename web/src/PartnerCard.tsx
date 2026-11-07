@@ -2,7 +2,7 @@
 // adószám, megjegyzés, projektek), alatta a tervezett feladatok (mit számlázunk neki / mit fizetünk neki), majd a statisztika.
 // A PartnerEditor a partnertörzs oldalon is ugyanez.
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { displayGroup, normalizeText } from '../../shared/categories';
+import { displayGroup, normalizeText, groupPath } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
 import { RejectedOffers } from './RejectedOffers';
 import { addMonths, fmt, monthLabel } from '../../shared/model';
@@ -438,7 +438,7 @@ export function PartnerEditor({
               >
                 {groups.map((g) => (
                   <option key={g.id} value={g.id}>
-                    {g.section === 'in' ? 'Bevétel' : 'Kiadás'} › {displayGroup(g.label)} · {cnt(g.id)} partner
+                    {groupPath(g.section, g.label)} · {cnt(g.id)} partner
                   </option>
                 ))}
               </select>
@@ -1209,7 +1209,7 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
     return (
       <>
         <SecHead>
-          Fizetés · {sec === 'in' ? 'vevőként (bevétel)' : 'szállítóként (kiadás)'} · {displayGroup(ix.groupById[L?.group_id || '']?.label || '')}
+          Fizetés · {sec === 'in' ? 'vevőként' : 'szállítóként'} · {groupPath(sec, ix.groupById[L?.group_id || '']?.label || '')}
         </SecHead>
         <SettingRow title={sec === 'in' ? 'Mikor számlázunk?' : 'Mikor fizetünk?'} sub="Minden hónapban így ismétlődik; az új rendszeres tervek ide kerülnek">
           <div style={{ alignSelf: 'flex-start', maxWidth: '100%', overflowX: 'auto' }}>
@@ -1314,7 +1314,7 @@ function TermRow({ leafId, sec, avgLate, rows }: { leafId: string; sec: Section;
   return (
     <div style={{ ...card, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <b style={{ font: `700 14px ${FONT}`, color: sec === 'in' ? C.blueDark : C.navy }}>
-        {sec === 'in' ? 'Vevőként (bevétel)' : 'Szállítóként (kiadás)'} · {displayGroup(ix.groupById[L?.group_id || '']?.label || '')}
+        {sec === 'in' ? 'Vevőként' : 'Szállítóként'} · {groupPath(sec, ix.groupById[L?.group_id || '']?.label || '')}
       </b>
       <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
         Jelenleg:{' '}
@@ -2024,10 +2024,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <b style={{ display: 'block', font: `800 24px/1.15 ${FONT_H}`, color: C.navy }}>{selP.name}</b>
                     <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>
-                      {selK ? KIND_LABEL[selK] : ''} ·{' '}
-                      {selP.leaves
-                        .map((l) => `${ix.sectionOf(l.id) === 'in' ? 'Bevétel' : 'Kiadás'} › ${displayGroup(ix.groupById[l.group_id]?.label || '')}`)
-                        .join(', ')}
+                      {selK ? KIND_LABEL[selK] : ''} · {selP.leaves.map((l) => groupPath(ix.sectionOf(l.id), ix.groupById[l.group_id]?.label || '')).join(', ')}
                     </span>
                   </div>
                   <Pill small onClick={() => openPartner(selP.key)}>

@@ -1,5 +1,5 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
@@ -104,9 +104,11 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   // az Ajánlatok mappa összege mindig az ajánlatokkal együtt (különben ajánlat-szűrő nélkül 0 lenne)
   const offerTotals = useMemo(() => {
     const m = buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '', includeOffers: true });
-    return new Map(m.rows.filter((r) => r.type === 'group' && /aj[áa]nlat/i.test(r.label)).map((r) => [r.id, r.total]));
+    return new Map(m.rows.filter((r) => r.type === 'section' && /aj[áa]nlat/i.test(r.label)).map((r) => [r.id, r.total]));
   }, [ix, filters]);
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
+  // felső szint: Bevétel és Ajánlatok (a partnerek közvetlenül alattuk), a Kiadásnak vannak mappái
+  const topRows = sideMatrix.rows.filter((r) => r.type === 'section' && r.section === 'in' && r.groupId);
   const goGroup = (id: string) => {
     setFilters({ groupId: id });
     setView('cat');
@@ -240,42 +242,56 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{periodLabel(filters, ix.cur, ix.firstActual)}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
-          {(['in', 'out'] as const).map((sec) => {
-            const gs = groupRows.filter((g) => g.section === sec);
-            if (!gs.length) return null;
-            return (
-              <Fragment key={sec}>
-                <div style={{ padding: '12px 12px 6px', font: `700 12px ${FONT_H}`, color: sec === 'in' ? C.blue2 : C.muted2, letterSpacing: '.02em' }}>
-                  {sec === 'in' ? 'Bevétel' : 'Kiadás'}
-                </div>
-                {gs.map((g) => (
-                  <button
-                    key={g.id}
-                    className="side-btn"
-                    onClick={() => goGroup(g.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      border: 0,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: R.md,
-                      background: view === 'cat' && filters.groupId === g.id ? C.navy3 : 'transparent',
-                      color: '#fff',
-                      font: `500 13.5px ${FONT}`,
-                    }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayGroup(g.label)}</span>
-                    <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>
-                      {fmtM(offerTotals.get(g.id) ?? g.total)}
-                    </span>
-                  </button>
-                ))}
-              </Fragment>
-            );
-          })}
+          {topRows.map((g) => (
+            <button
+              key={g.id}
+              className="side-btn"
+              aria-current={view === 'cat' && filters.groupId === g.groupId ? 'page' : undefined}
+              onClick={() => goGroup(g.groupId!)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                border: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+                padding: '8px 12px',
+                marginTop: 4,
+                borderRadius: R.md,
+                background: view === 'cat' && filters.groupId === g.groupId ? C.navy3 : 'transparent',
+                color: '#fff',
+                font: `700 13.5px ${FONT}`,
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0 }}>{g.label}</span>
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(offerTotals.get(g.id) ?? g.total)}</span>
+            </button>
+          ))}
+          {groupRows.length > 0 && <div style={{ padding: '12px 12px 6px', font: `700 13.5px ${FONT}`, color: '#fff' }}>Kiadás</div>}
+          {groupRows.map((g) => (
+            <button
+              key={g.id}
+              className="side-btn"
+              aria-current={view === 'cat' && filters.groupId === g.id ? 'page' : undefined}
+              onClick={() => goGroup(g.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                border: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+                padding: '8px 12px',
+                borderRadius: R.md,
+                background: view === 'cat' && filters.groupId === g.id ? C.navy3 : 'transparent',
+                color: '#fff',
+                font: `500 13.5px ${FONT}`,
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayGroup(g.label)}</span>
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
+            </button>
+          ))}
         </div>
         <div
           style={{ marginTop: 'auto', padding: '16px 22px', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 6 }}
@@ -850,7 +866,7 @@ function Overview({
               if (anyCollapsed) setCollapsed({});
               else {
                 const c: Record<string, boolean> = {};
-                matrix.rows.filter((r) => r.type === 'group').forEach((r) => (c[r.id] = true));
+                matrix.rows.filter((r) => r.type === 'group' || (r.type === 'section' && r.section === 'in')).forEach((r) => (c[r.id] = true));
                 setCollapsed(c);
               }
             }}
@@ -970,12 +986,13 @@ function Overview({
           <div style={{ padding: 30, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>A szűrőknek megfelelő időszakban nincs tétel.</div>
         )}
         {matrix.rows.map((r) => {
-          if (r.type === 'leaf' && (collapsed[r.groupId!] || collapsed[r.section])) return null;
+          if (r.type === 'leaf' && (collapsed[r.groupId!] || collapsed[r.top || r.section])) return null;
           if (r.type === 'group' && collapsed[r.section]) return null;
           const isSec = r.type === 'section',
             isGroup = r.type === 'group';
           const bg = isSec ? C.bg : '#fff';
-          const pad = isSec ? 8 : isGroup ? 22 : 44;
+          // bevételnél a partnerek közvetlenül a felső szint alatt vannak
+          const pad = isSec ? 8 : isGroup || r.section === 'in' ? 22 : 44;
           const chev = collapsed[r.id] ? '▸' : '▾';
           return (
             <div
@@ -1022,7 +1039,7 @@ function Overview({
                   <span style={{ width: 20 }} />
                 )}
                 <span
-                  onClick={() => (isGroup ? goGroup(r.id) : r.type === 'leaf' ? goGroup(r.groupId!) : undefined)}
+                  onClick={() => (isGroup ? goGroup(r.id) : r.groupId ? goGroup(r.groupId) : undefined)}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -1031,7 +1048,7 @@ function Overview({
                     whiteSpace: 'nowrap',
                     font: isSec ? `700 12.5px ${FONT_H}` : `${isGroup ? 600 : 400} 13.5px ${FONT}`,
                     color: isSec || isGroup ? C.navy : C.ink,
-                    cursor: isSec ? 'default' : 'pointer',
+                    cursor: isSec && !r.groupId ? 'default' : 'pointer',
                     textTransform: isSec ? 'uppercase' : undefined,
                   }}
                   title={r.label}

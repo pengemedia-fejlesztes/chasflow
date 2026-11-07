@@ -1,6 +1,6 @@
 // Automatikus párosítások kezelése: mely partnerek / szövegek mely kategóriához tartoznak, és mi könyvelődik jóváhagyás nélkül.
 import { useEffect, useMemo, useState } from 'react';
-import { displayGroup, normalizeText } from '../../shared/categories';
+import { displayGroup, normalizeText, groupPath } from '../../shared/categories';
 import type { Section } from '../../shared/types';
 import { api } from './api';
 import { LeafPicker } from './LeafPicker';
@@ -249,7 +249,7 @@ export function RulesTab() {
           <div key={leafId} style={{ ...card, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: G.section === 'in' ? C.blue : C.muted }}>
-                {G.section === 'in' ? 'Bevétel' : 'Kiadás'} · {displayGroup(G.label)}
+                {groupPath(G.section, G.label)}
               </span>
               <PartnerLink leaf={L.id} style={{ font: `700 16px ${FONT_H}`, color: C.navy }}>
                 {L.label}
