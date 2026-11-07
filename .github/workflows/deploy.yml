@@ -4,6 +4,9 @@
 # Szükséges GitHub Secret (Settings → Secrets and variables → Actions):
 #   PMDEV_SSH_KEY – a pengemed fiókba engedélyezett privát SSH-kulcs
 # Adatbázis: a szerver MySQL-t használ; új migrations/ fájl esetén a telepítés megáll, a sémát kézzel kell frissíteni.
+# A szerveren a repóval azonos szerkezet: dist/client, dist/server/worker.mjs, src/server/runtime/*.mjs,
+# deploy/passenger/entry.cjs. Előfeltétel (egyszeri, kézi): a Passenger PassengerStartupFile-ja
+# deploy/passenger/entry.cjs, a cron a src/server/runtime/cron.mjs-t futtatja – amíg nem, a telepítés megáll.
 name: Ellenőrzés és telepítés
 
 on:
@@ -80,9 +83,20 @@ jobs:
           else
             echo '::warning::Az előző élesített commit nem azonosítható, a migráció-ellenőrzés kimaradt.'
           fi
+      - name: Szerver-előfeltételek (Passenger és cron az új szerkezetre mutat)
+        run: |
+          ssh "$SSH_TARGET" 'bash -s' <<'CHECK'
+          set -u
+          ok=1
+          grep -q '^PassengerStartupFile deploy/passenger/entry.cjs' ~/public_html/pmdev.hu/Cashflow/.htaccess \
+            || { echo '::error title=Passenger::A PassengerStartupFile nem deploy/passenger/entry.cjs – kézi átállítás kell.'; ok=0; }
+          crontab -l 2>/dev/null | grep -q 'src/server/runtime/cron.mjs' \
+            || { echo '::error title=Cron::A cron nem a src/server/runtime/cron.mjs-t futtatja – kézi átállítás kell.'; ok=0; }
+          [ "$ok" = 1 ]
+          CHECK
       - name: Telepítés a pmdev.hu-ra
         run: |
-          tar -czf "$RUNNER_TEMP/release.tgz" dist dist-worker/worker.mjs server/*.mjs
+          tar -czf "$RUNNER_TEMP/release.tgz" dist/client dist/server/worker.mjs src/server/runtime/*.mjs deploy/passenger/entry.cjs
           ssh "$SSH_TARGET" "cat > $APP_DIR/.release.tgz" < "$RUNNER_TEMP/release.tgz"
           ssh "$SSH_TARGET" "APP_DIR=$APP_DIR SHA=$GITHUB_SHA bash -s" <<'REMOTE'
           set -euo pipefail
@@ -93,12 +107,12 @@ jobs:
           TS=$(date +%Y%m%d-%H%M%S)
           BK=.backup/$TS
           mkdir -p "$BK"
-          mv dist "$BK/dist"
-          cp -a dist-worker server "$BK/"
+          # a telepítés által kezelt mappák: mentés, majd csere
+          for d in dist src deploy; do
+            if [ -e "$d" ]; then mv "$d" "$BK/$d"; fi
+            mv "$NEW/$d" "$d"
+          done
           [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
-          mv "$NEW/dist" dist
-          cp "$NEW/dist-worker/worker.mjs" dist-worker/worker.mjs
-          cp "$NEW"/server/*.mjs server/
           rm -rf "$NEW"
           echo "$SHA" > .deployed-sha
           mkdir -p tmp && touch tmp/restart.txt
@@ -123,15 +137,15 @@ jobs:
               req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'User-Agent': 'cashflow-deploy-smoke/1.0 (+github-actions)'})
               with urllib.request.urlopen(req, timeout=30) as response:
                   return response.read()
-          local = Scripts(); local.feed(pathlib.Path('dist/index.html').read_text())
-          assert local.paths, 'No compiled application script in dist/index.html'
+          local = Scripts(); local.feed(pathlib.Path('dist/client/index.html').read_text())
+          assert local.paths, 'No compiled application script in dist/client/index.html'
           for attempt in range(8):
               try:
                   remote = Scripts(); remote.feed(get(site + '/?deployment=' + os.environ['GITHUB_SHA']).decode())
                   assert remote.paths == local.paths, 'The live HTML still serves another application build'
                   for path in local.paths:
                       assert path.startswith('/Cashflow/assets/'), 'Unexpected script location'
-                      assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
+                      assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist/client' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
                   status = json.loads(get(site + '/api/auth/status'))
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
                   print('pmdev.hu/Cashflow: HTML, application assets and authentication API verified.')

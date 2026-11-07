@@ -1,0 +1,141 @@
+import { describe, expect, it } from 'vitest';
+import { computeFlags, flagsFrom } from '../../src/shared/flags';
+import type { Entry } from '../../src/shared/types';
+
+const E = (p: Partial<Entry>): Entry => ({
+  id: 'x',
+  kind: 'actual',
+  date: '2026-10-01',
+  leaf_id: 'aranka',
+  name: '',
+  amount: 0,
+  series_id: null,
+  done: 0,
+  tentative: 0,
+  source: 'bank',
+  ext_ref: null,
+  link_id: null,
+  note: null,
+  ...p,
+});
+const sec = (l: string) => (l === 'ugyfel' ? 'in' : 'out') as 'in' | 'out';
+const today = '2026-11-20';
+const hist = E({ id: 'h', source: 'import', date: '2026-10-09', amount: -5 });
+
+describe('riasztások', () => {
+  it('a figyelt időszak az utolsó XLS-tény után / előző hónap elején kezdődik', () => {
+    expect(flagsFrom([hist], '2026-10-20')).toBe('2026-10-10');
+    expect(flagsFrom([hist], today)).toBe('2026-10-10');
+    expect(flagsFrom([hist], '2026-12-15')).toBe('2026-11-01');
+  });
+
+  it('Aranka 40 000 helyett 44 000 → eltérés', () => {
+    const plan = E({ id: 'p', kind: 'plan', date: '2026-10-30', amount: -40000, done: 1, link_id: 'a', name: 'Baka Aranka' });
+    const act = E({ id: 'a', date: '2026-10-30', amount: -44000, link_id: 'p' });
+    const f = computeFlags([hist, plan, act], [], sec, today);
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ kind: 'deviation', diff: -4000, plan: -40000 });
+    // pontos egyezés vagy küszöb alatti eltérés nem riaszt
+    expect(computeFlags([hist, plan, { ...act, amount: -40000 }], [], sec, today)).toHaveLength(0);
+    expect(computeFlags([hist, plan, { ...act, amount: -40300 }], [], sec, today)).toHaveLength(0);
+  });
+
+  it('nem tervezett kiadás és elmaradt bevétel; XLS-tény és jövőbeli terv nem riaszt; „rendben” eltünteti', () => {
+    const unp = E({ id: 'u', date: '2026-11-03', amount: -120000, leaf_id: 'elore' });
+    const due = E({ id: 'd', kind: 'plan', date: '2026-11-10', amount: 500000, leaf_id: 'ugyfel' });
+    const fut = E({ id: 'f', kind: 'plan', date: '2026-11-25', amount: 500000, leaf_id: 'ugyfel' });
+    const old = E({ id: 'o', source: 'import', date: '2026-10-05', amount: -99 });
+    const f = computeFlags([hist, unp, due, fut, old], [], sec, today);
+    expect(f.map((x) => x.kind)).toEqual(['unplanned', 'overdue']);
+    expect(f[1].section).toBe('in');
+    expect(computeFlags([hist, unp, due, fut], [], sec, today, [f[0].id, f[1].id])).toHaveLength(0);
+  });
+
+  it('a lejárt Billingo-számla régebbről is riaszt, az összevont havi tétel csak hónap végén', () => {
+    const bil = E({ id: 'b', kind: 'plan', source: 'billingo', date: '2026-08-15', amount: 300000, leaf_id: 'ugyfel' });
+    const plan = E({ id: 'p', kind: 'plan', date: '2026-11-02', amount: -20000, done: 1, leaf_id: 'bank' });
+    const merged = E({ id: 'm', date: '2026-11-18', amount: -12000, link_id: 'p', ext_ref: 'merge:m', leaf_id: 'bank' });
+    expect(computeFlags([hist, bil, plan, merged], [], sec, today).map((x) => x.kind)).toEqual(['overdue']);
+    expect(computeFlags([hist, bil, plan, merged], [], sec, '2026-12-03').map((x) => x.kind)).toEqual(['deviation', 'overdue']);
+  });
+});
+
+import { billingFlags } from '../../src/shared/flags';
+import { invoiceDue, payDate } from '../../src/shared/workdays';
+
+describe('számlázás ellenőrzése', () => {
+  const p = (id: string, date: string, amount: number, extra: any = {}): any => ({
+    id,
+    kind: 'plan',
+    date,
+    leaf_id: 'L',
+    name: 'Havi díj',
+    amount,
+    done: 0,
+    tentative: 0,
+    source: 'manual',
+    ...extra,
+  });
+  const sec = () => 'in' as const;
+  it('a számlázási nap (fizetés − határidő) után számla nélkül → nincs kiszámlázva', () => {
+    const f = billingFlags([p('a', '2026-10-12', 100000), p('b', '2026-10-30', 100000)], sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['uninvoiced:a']);
+  });
+  it('ajánlat és kész terv nem riaszt; kevesebb számla riaszt, több nem', () => {
+    const es = [
+      p('o', '2026-10-01', 5000, { tentative: 1 }),
+      p('d', '2026-10-01', 5000, { done: 1 }),
+      p('lo', '2026-10-09', 90000, { source: 'billingo', plan_amount: 100000 }),
+      p('hi', '2026-10-09', 120000, { source: 'billingo', plan_amount: 100000 }),
+    ];
+    const f = billingFlags(es, sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['underbilled:lo']);
+    expect(f[0].diff).toBe(-10000);
+  });
+  it('a terv összege marad, a számla a bill_amount: kevesebb számla riaszt, több nem', () => {
+    const es = [
+      p('lo', '2026-10-09', 100000, { source: 'billingo', plan_amount: 100000, bill_amount: 90000 }),
+      p('hi', '2026-10-09', 100000, { source: 'billingo', plan_amount: 100000, bill_amount: 120000 }),
+    ];
+    const f = billingFlags(es, sec, '2026-10-10', () => 8, '2026-09-01');
+    expect(f.map((x) => x.kind + ':' + x.entry_id)).toEqual(['underbilled:lo']);
+    expect(f[0]).toMatchObject({ amount: 90000, plan: 100000, diff: -10000 });
+  });
+  it('rendszeres tétel: a hónap első munkanapja + határidő', () => {
+    expect(invoiceDue('2026-11', 8)).toBe('2026-11-10'); // nov. 2. hétfő + 8
+    expect(payDate('2026-11', 'inv:8', 1)).toBe('2026-11-10');
+  });
+});
+
+import { partnerStats } from '../../src/shared/partners';
+import { cleanAliases } from '../../src/server/app/partners';
+
+describe('partnertörzs', () => {
+  it('alternatív nevek tisztítása: üres, rövid és ismétlődő nevek nélkül', () => {
+    expect(cleanAliases([' OMV 135 ', 'omv 135', 'x', '', 'Shell  27', null])).toEqual(['OMV 135', 'Shell 27']);
+  });
+  it('a Billingo számla az alternatív név alapján a partnerhez kerül, a partnertörzs neve az elsődleges', () => {
+    const leaves = [{ id: 'l1', group_id: 'g1', label: 'Aurapro', sort: 0, archived: 0 }];
+    const groups = [{ id: 'g1', section: 'in', label: 'Ügyfelek', sort: 0 }] as any;
+    const docs = [
+      {
+        id: 1,
+        number: 'A1',
+        partner: 'Kovács Bt.',
+        gross: 1000,
+        currency: 'HUF',
+        invoice_date: '2026-10-01',
+        due_date: '2026-10-09',
+        payment_status: 'paid',
+        paid_date: '2026-10-05',
+        cancelled: 0,
+        plan_id: null,
+      },
+    ] as any;
+    const partners = [{ key: 'aurapro', name: 'Aurapro Kft', kind: 'vevo', aliases: ['Kovács Bt'], tax_number: null, note: null, updated_at: 0 }] as any;
+    const [p] = partnerStats([], leaves, groups, docs, '2026-10-20', [], partners, true);
+    expect(p.name).toBe('Aurapro Kft');
+    expect(p.invoices.length).toBe(1);
+    expect(p.info?.kind).toBe('vevo');
+  });
+});

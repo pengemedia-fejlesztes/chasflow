@@ -28,8 +28,8 @@ Böngészőben és iPhone-on is használható, több felhasználós cashflow szo
 
 Az app a pmdev cPanel-tárhelyén fut: <https://pmdev.hu/Cashflow/>.
 
-- **Futtatás:** Node.js 22 (CloudLinux Passenger), az app könyvtára `~/cashflow`. A Passenger beállítása a `~/public_html/pmdev.hu/Cashflow/.htaccess`-ben van.
-- **Ütemezett szinkron:** cPanel-cron (`server/cron.mjs`), munkanapokon.
+- **Futtatás:** Node.js 22 (CloudLinux Passenger), az app könyvtára `~/cashflow`. A Passenger beállítása a `~/public_html/pmdev.hu/Cashflow/.htaccess`-ben van (`PassengerStartupFile deploy/passenger/entry.cjs`).
+- **Ütemezett szinkron:** cPanel-cron (`node src/server/runtime/cron.mjs` az app könyvtárában), munkanapokon.
 - **Telepítés:** a GitHub Actions (`.github/workflows/deploy.yml`) a `main` és a fejlesztési ágra pusholt commitot ellenőrzi, buildeli, és SSH-n felmásolja. Szükséges GitHub Secret: `PMDEV_SSH_KEY`.
 - **Titkok:** a `~/cashflow/.env` fájlban (minta: `.env.example`). Módosítás után az app újraindítása: `touch ~/cashflow/tmp/restart.txt`.
 - **Első belépés:** a `SETUP_TOKEN`-nel hozható létre az első admin. Utána:
@@ -83,16 +83,17 @@ Csak Docker kell (Node sem kell a gépre):
 docker compose up                  # felület: http://localhost:5173  (API: http://localhost:8787)
 docker compose run --rm app npm test
 docker compose run --rm app npm run typecheck
-docker compose run --rm app node server/cron.mjs   # egy szinkron-futás kézzel (titkok kellenek hozzá)
+docker compose run --rm app node src/server/runtime/cron.mjs   # egy szinkron-futás kézzel (titkok kellenek hozzá)
+bash scripts/dev/import-pmdev.sh   # az éles adatok behozása a lokális SQLite-ba (a hoston fut, ssh pmdev kell)
 ```
 
 - Az adatbázis SQLite: `./.data/cashflow.sqlite`. Induláskor a `migrations/` összes még nem futtatott fájlja lefut
   (nyilvántartás: `d1_migrations` tábla). A fájl törlésével üres adatbázissal indul újra.
 - Első indításkor az első admin a `SETUP_TOKEN`-nel hozható létre (alapból `helyi-teszt`).
 - Titkok (Billingo, NAV, Enable Banking, e-mail): `.env` (minta: `.env.example`). Nélkülük az app fut, csak a külső szinkron nem.
-- A felület (Vite) azonnal frissül, a szerver (`worker/`, `shared/`, `server/`) változáskor újraépül és újraindul.
-- Az adatbázis-meghajtót a `SQLITE_PATH` választja ki (`server/db.mjs`): ha meg van adva, SQLite
-  (`server/d1-sqlite.mjs`), ha nincs, a MySQL (`server/d1-mysql.mjs`) – az éles pmdev egyelőre MySQL-lel fut.
+- A felület (Vite) azonnal frissül, a szerver (`src/server/`, `src/shared/`) változáskor újraépül és újraindul.
+- Az adatbázis-meghajtót a `SQLITE_PATH` választja ki (`src/server/runtime/db.mjs`): ha meg van adva, SQLite
+  (`d1-sqlite.mjs`), ha nincs, a MySQL (`d1-mysql.mjs`) – az éles pmdev egyelőre MySQL-lel fut.
 
 A módosításütközések elleni védelemhez a `0025_mutation_guard.sql` migráció szükséges. A felület és a backend együtt frissítendő; régi böngészőfül esetén töltsd újra az oldalt. A kliens a tétel korábbi verzióját küldi, a szerver pedig egyetlen tranzakcióban ellenőrzi és menti a teljes módosítást. Ütközéskor 409-es választ ad, és megőrzi a másik felhasználó változtatását. A visszavonásra is ugyanez a védelem érvényes.
 
@@ -104,10 +105,18 @@ A regressziótesztek Node.js 22.13 vagy újabb verziót igényelnek (beépített
 
 | Mappa | Tartalom |
 |---|---|
-| `web/` | React felület (Vite), asztali és mobil nézet a feltöltött design alapján |
-| `worker/` | Az API (Worker-formájú, platformfüggetlen): hitelesítés, adatok, Billingo, bank, napi szinkron (5, 9, 13, 17, 21 óra) |
-| `shared/` | Közös logika: kategóriák, xls-értelmezés, cashflow-számítás, banki párosítás |
+| `src/client/` | React felület (Vite), asztali és mobil nézet |
+| `src/server/app/` | Az API: hitelesítés, adatok, Billingo, bank, NAV, napi szinkron. Platformfüggetlen, `{ fetch, scheduled }` formájú; a platformtól várt felület: `platform.ts` |
+| `src/server/runtime/` | Node-os futtatás: HTTP-szerver (`entry.mjs`), ütemezett futás (`cron.mjs`), adatbázis-réteg (SQLite / MySQL) |
+| `src/shared/` | Közös logika (felület + szerver): kategóriák, xls-értelmezés, cashflow-számítás, banki párosítás |
+| `public/` | Statikus fájlok (ikonok, manifest, service worker) |
+| `mac-agent/` | A Macen futó bankletöltő (aggreg8); a build a `/mac/` útvonalra másolja |
 | `migrations/` | Adatbázis-séma (SQLite) |
-| `tests/` | Unit tesztek (`vitest`) |
+| `tests/` | Tesztek (`vitest`), a forrás szerint: `client/`, `server/`, `shared/` |
+| `scripts/dev/` | Lokális fejlesztés: Docker-indítás, éles adat importja, lokális admin |
+| `scripts/ops/` | Üzemeltetés: MySQL → SQLite átvitel, füstteszt |
+| `scripts/data-fixes/` | Egyszeri adatjavító szkriptek |
+| `deploy/` | Élesítéshez: a Passenger belépési pontja |
+| `dist/` | Build-kimenet (nincs a gitben): `client/` a felület, `server/` a backend |
 
 **Egyenleg-logika:** a mai egyenleg bankkapcsolatnál a banki egyenlegek összege, egyébként a nyitó egyenleg és az összes tény összege. A múltbeli hónapok záró egyenlege a mai egyenleg mínusz az azóta történt tények. Az előrejelzés a mai egyenleg plusz a nyitott tervek (ebben a hónapban a lejárt, még nyitottakkal együtt), plusz opcionálisan az ajánlatok és a becslés.

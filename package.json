@@ -8,9 +8,9 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "format": "prettier --write worker shared web/src tests",
+    "format": "prettier --write src tests",
     "deploy": "echo 'Élesítés: push a GitHubra (claude/dreamy-johnson-9ejay9) – a GitHub Actions a pmdev.hu/Cashflow-ra telepít.' && exit 1",
-    "build:server": "esbuild worker/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist-worker/worker.mjs"
+    "build:server": "esbuild src/server/app/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/server/worker.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",
