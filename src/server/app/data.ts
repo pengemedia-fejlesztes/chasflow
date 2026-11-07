@@ -232,9 +232,16 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
       ),
     );
   }
+  // Csak a valóban más nevű testvértételek változnak (és kapnak új verziót): egy összeg-módosítás vagy kész-jelölés
+  // nem érinti a sorozat többi hónapját – különben a böngésző által ismert verziójuk elavulna, és a következő
+  // szerkesztésük hamis ütközéssel (409) hasalna el.
+  const renameIdx: number[] = [];
   for (const [sid, nev] of atnevezesek) {
     stmts.push(env.DB.prepare('UPDATE series SET name = ? WHERE id = ?').bind(nev, sid));
-    stmts.push(env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0").bind(nev, t, sid));
+    renameIdx.push(stmts.length);
+    stmts.push(
+      env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0 AND name <> ?").bind(nev, t, sid, nev),
+    );
   }
 
   // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek).
@@ -285,7 +292,9 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     throw e;
   }
   const versions = Object.fromEntries(results.slice(results.length - versionIds.length).flatMap((r) => r.results.map((e: any) => [e.id, e.updated_at])));
-  return { changes: stmts.length, versions: versionIds.length ? versions : {} };
+  // a batch-en kívüli testvértételek is átneveződtek (új név és verzió) → a kliens töltse újra az adatot
+  const renamedOthers = renameIdx.some((i) => Number(results[i]?.meta?.changes || 0) > 0);
+  return { changes: stmts.length, versions: versionIds.length ? versions : {}, ...(renamedOthers ? { reload: true } : {}) };
 }
 
 /** Kategória biztosítása (import, Billingo, bank). */

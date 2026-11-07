@@ -145,7 +145,9 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         b.expectedSeries ||
         Object.fromEntries([...(b.series || []).map((s) => [s.id, seriesVersion(s.id)]), ...(b.deleteSeries || []).map((id) => [id, seriesVersion(id)])]);
       try {
-        const result = await api<{ versions: Record<string, number> }>('/api/entries/batch', { body: { ...b, expected, expectedSeries, label: msg } });
+        const result = await api<{ versions: Record<string, number>; reload?: boolean }>('/api/entries/batch', {
+          body: { ...b, expected, expectedSeries, label: msg },
+        });
         revision.current++;
         const saved = applyLocal(dataRef.current, { ...b, upsert: b.upsert?.map((e) => ({ ...e, updated_at: result.versions[e.id] })) });
         dataRef.current = saved;
@@ -157,8 +159,8 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
             return [id, s ? JSON.stringify([s.leaf_id, s.name, s.rep, s.day]) : null];
           }),
         );
-        // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell
-        if (b.delete?.length && !b.purge) reload();
+        // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell; sorozat átnevezésekor a többi hónap neve és verziója is változott
+        if ((b.delete?.length && !b.purge) || result.reload) reload();
         const undoable = opts.undoable !== false;
         showToast({
           msg,
