@@ -50,6 +50,7 @@ export default defineConfig({
   build: { outDir: resolve('dist/client'), emptyOutDir: true, sourcemap: false },
   // changeOrigin: false – a szerver a bongeszo eredeti Host-jat lassa, kulonben a CSRF Origin-ellenorzes
   // (src/server/app/index.ts) minden irast „Tiltott eredet” hibaval elutasitana.
-  server: { proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false } } },
+  // A kulcs regex (^/api/), mert a sima '/api' elotag a felulet sajat /api.ts modulját is a szerverre kuldene.
+  server: { proxy: { '^/api/': { target: 'http://127.0.0.1:8787', changeOrigin: false } } },
   test: { root: '.', include: ['tests/**/*.test.{ts,tsx}'] },
 } as any);
