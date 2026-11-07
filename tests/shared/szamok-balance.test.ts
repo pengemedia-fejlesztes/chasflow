@@ -176,6 +176,9 @@ describe('ugyanaz a szám minden nézetben', () => {
     E({ kind: 'actual', leaf_id: 'keret', name: 'Futár', date: '2026-11-05', amount: -12_000 }),
     E({ leaf_id: 'keret', name: 'Előre nem látható költség – 2026. december', date: '2026-12-30', amount: -50_000 }),
     E({ date: '2026-12-20', leaf_id: 'ugyfel2', amount: 300_000, tentative: 1 }),
+    // a decemberi díjat az ügyfél már novemberben kifizette: a terv kész, a tényhez kötve
+    E({ id: 'a_elore', kind: 'actual', date: '2026-11-06', leaf_id: 'ugyfel2', amount: 400_000 }),
+    E({ date: '2026-12-08', leaf_id: 'ugyfel2', name: 'Havi díj – 2026. december', amount: 400_000, done: 1, link_id: 'a_elore' }),
   ];
   const ix = ixOf(entries, { accounts: [bank(4_000_000)] });
   for (const includeOffers of [false, true]) {
@@ -199,4 +202,27 @@ describe('ugyanaz a szám minden nézetben', () => {
       expect(ol.months[1].exp).toBe(sec('out'));
     });
   }
+});
+
+describe('előre kifizetett (kész) jövőbeli terv nem számít kétszer', () => {
+  const entries = [
+    E({ kind: 'actual', date: '2026-03-10', amount: 500_000 }),
+    E({ date: '2026-11-20', amount: 900_000 }),
+    E({ date: '2026-12-10', amount: 900_000 }),
+    E({ id: 'a_elore2', kind: 'actual', date: '2026-11-06', leaf_id: 'ugyfel2', amount: 400_000 }),
+    E({ date: '2026-12-08', leaf_id: 'ugyfel2', name: 'Havi díj – 2026. december', amount: 400_000, done: 1, link_id: 'a_elore2' }),
+  ];
+  const ix = ixOf(entries, { accounts: [bank(4_000_000)] });
+  it('éves nézet: a tárgyév „tény + terv” oszlopában a novemberi tény és a decemberi kész terv csak egyszer', () => {
+    const m = buildMatrix(ix, { ...defaultFilters(ix.today), from: '2026-01', to: '2026-12', granularity: 'year', estimate: false });
+    const i = m.columns.findIndex((c) => c.key === '2026p');
+    const bev = m.rows.find((r) => r.type === 'section' && r.id === 'in')!;
+    expect(bev.cells[i].v).toBe(500_000 + 400_000 + 900_000 + 900_000);
+  });
+  it('havi nézet: a decemberi oszlop csak a még várható összeget mutatja, a záró egyenleggel összhangban', () => {
+    const m = buildMatrix(ix, { ...defaultFilters(ix.today), to: '2026-12', estimate: false });
+    const i = m.columns.findIndex((c) => c.key === '2026-12p');
+    expect(m.net[i]).toBe(900_000);
+    expect(m.balance[i] - m.balance[i - 1]).toBe(m.net[i]);
+  });
 });

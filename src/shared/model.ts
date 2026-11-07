@@ -352,6 +352,9 @@ function leafValue(
     if (f.granularity === 'year' && ym === ix.cur) {
       // aktuális hónap éves nézetben: tény + nyitott terv
       v += (ix.actual.get(leaf)?.get(ym) || 0) + (ix.openPlan.get(leaf)?.get(ym) || 0);
+    } else if (monthDiff(ym, ix.cur) > 0) {
+      // jövőbeli hónap: a még várható (nyitott) terv – a már kifizetett (kész) terv a tényében szerepel, az előrejelzésben sem számít
+      v += ix.openPlan.get(leaf)?.get(ym) || 0;
     } else v += ix.plan.get(leaf)?.get(ym) || 0;
     if (f.includeOffers && offers === 'with') {
       const ov = ix.offer.get(leaf)?.get(ym) || 0;

@@ -162,7 +162,9 @@ export function extendRows(d: DataBundle, ids: string[], months = 3): EntryBatch
 
 /** Egy kategória egy hónapjának értékének átírása (áttekintő táblázat cella). */
 export function setCellValue(d: DataBundle, leaf: string, section: Section, ym: string, displayValue: number): EntryBatch | null {
-  const list = d.entries.filter((e) => e.kind === 'plan' && !e.tentative && e.leaf_id === leaf && ymOf(e.date) === ym);
+  // jövőbeli hónapban a táblázat a még nyitott tervet mutatja (a kész, előre kifizetett terv a tényben van) – ahhoz igazítjuk
+  const future = ym > ymOf(d.today);
+  const list = d.entries.filter((e) => e.kind === 'plan' && !e.tentative && e.leaf_id === leaf && ymOf(e.date) === ym && !(future && e.done));
   const cur = list.reduce((s, e) => s + e.amount, 0);
   const want = section === 'in' ? displayValue : -displayValue;
   if (want === cur) return null;
