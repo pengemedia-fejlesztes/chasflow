@@ -1,5 +1,6 @@
 // Változásnapló: ki, mikor, mit módosított (tételek, partner-összevonás, partner módosítás, visszaállítás) – visszavonható.
 // A visszavonás a rögzített korábbi állapotot állítja vissza; törölni semmit sem töröl véglegesen (a tételek a kukába kerülnek).
+import type { DbStatement } from './platform';
 import { requireRole, type User } from './auth';
 import { Env, HttpError, json, now, readJson } from './util';
 
@@ -110,7 +111,7 @@ export function describeEntries(before: Row[], after: Row[], deleted: string[]):
 }
 
 /** Egy sor visszaírása (upsert) a megadott oszlopokkal – csak a tábla létező oszlopai. */
-async function upsertStmts(env: Env, table: 'entries' | 'series', rows: Row[]): Promise<D1PreparedStatement[]> {
+async function upsertStmts(env: Env, table: 'entries' | 'series', rows: Row[]): Promise<DbStatement[]> {
   if (!rows.length) return [];
   const cols = new Set((await env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()).results.map((c) => c.name));
   return rows.map((r) => {
@@ -130,7 +131,7 @@ const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tent
 async function undoChange(env: Env, row: { id: number; ts: number; undo: string }, u: User, force: boolean): Promise<string> {
   const undo = JSON.parse(row.undo) as Undo;
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   if (undo.type === 'entries') {
     const ids = [...undo.before.map((r) => String(r.id)), ...undo.created];
     // ha valaki azóta újra módosította ezeket a tételeket, előbb rákérdezünk

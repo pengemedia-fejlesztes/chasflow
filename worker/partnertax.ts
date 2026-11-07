@@ -1,5 +1,6 @@
 // Adószám-alapú partnerazonosítás: a partnertörzs adószáma a NAV- és Billingo-számlákból töltődik ki, és a beérkező
 // számla ez alapján kerül a partnerhez – megelőzve a név/kategória szabályokat (pl. „Tibeko” ne az „IT szolgáltatás”-ba menjen).
+import type { DbStatement } from './platform';
 import { namesMatch } from '../shared/billingopay';
 import { normalizeText } from '../shared/categories';
 import { compactName } from '../shared/identity';
@@ -87,7 +88,7 @@ export async function fillPartnerTax(env: Env): Promise<number> {
     return null;
   };
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const [k, tax] of found) {
     if (partners.get(k)?.tax) continue;
     if (winner(taxBase(tax)) !== k) continue;
@@ -104,7 +105,7 @@ export async function fillPartnerTax(env: Env): Promise<number> {
 }
 
 /** Az alternatív nevekből „tartalmazza” párosítási szabályok a partner összes alkategóriájára (a régi alias-szabályok helyett). */
-export function aliasRuleStmts(env: Env, leafIds: string[], aliases: string[], name: string, t: number): D1PreparedStatement[] {
+export function aliasRuleStmts(env: Env, leafIds: string[], aliases: string[], name: string, t: number): DbStatement[] {
   if (!leafIds.length) return [];
   const out = [env.DB.prepare(`DELETE FROM match_rules WHERE source = 'alias' AND leaf_id IN (${leafIds.map(() => '?').join(',')})`).bind(...leafIds)];
   for (const a of aliases)
@@ -153,7 +154,7 @@ async function taxFromLinkedInvoices(env: Env): Promise<number> {
     if (old && old !== k) c.absorb = old;
   }
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const [k, c] of cand) {
     if (c.taxes.size !== 1) continue;
     const cur = rows.get(k);
@@ -201,7 +202,7 @@ export async function mergePartnerNames(env: Env): Promise<number> {
     (byTax.get(b) || byTax.set(b, new Set()).get(b)!).add(String(r.name).replace(/\s+/g, ' ').trim());
   }
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   let added = 0;
   for (const p of pR.results as any[]) {
     const names = byTax.get(taxBase(p.tax_number));
@@ -259,7 +260,7 @@ export async function fillPartnerKind(env: Env): Promise<number> {
     if (r.inv) x.inv = true;
   }
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const [k, x] of sides) {
     const kind = x.in && x.out ? 'mindketto' : x.in ? 'vevo' : 'szallito';
     if (cur.has(k)) {

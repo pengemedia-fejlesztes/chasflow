@@ -1,6 +1,7 @@
 // NAV Online Számla (API v3): bejövő (szállítói) számlák lekérdezése → párosítás a tervvel / banki ténnyel.
 // Ha egy számlához nincs terv, „új számla terv nélkül” riasztás lesz, javaslattal (rendszeres vagy előre nem látható).
-// Hitelesítés: NAV technikai felhasználó (Cloudflare titkok: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).
+// Hitelesítés: NAV technikai felhasználó (a szerver .env-jében: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).
+import type { DbStatement } from './platform';
 import { sha512 } from '@noble/hashes/sha2';
 import { sha3_512 as keccak } from '@noble/hashes/sha3';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -134,7 +135,7 @@ async function navPost(env: Env, body: string, op = 'queryInvoiceDigest'): Promi
       .slice(0, 160);
     last =
       res.status >= 520 && res.status <= 530
-        ? `NAV hiba: HTTP ${res.status} – a Cloudflare nem tudott kapcsolódni a NAV szerveréhez${snippet ? ` (${snippet})` : ''}`
+        ? `NAV hiba: HTTP ${res.status} – a szerver nem tudott kapcsolódni a NAV-hoz${snippet ? ` (${snippet})` : ''}`
         : `NAV hiba: HTTP ${res.status}${snippet ? ` – ${snippet}` : ''}`;
     if (res.status < 500) break;
   }
@@ -188,7 +189,7 @@ async function syncNavInner(env: Env, opts: { from?: string }): Promise<{ invoic
 
 export async function storeDigests(env: Env, digests: NavDigest[]) {
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const d of digests) {
     if (!d.invoiceNumber) continue;
     const id = `nav:${d.supplierTaxNumber || 'x'}:${d.invoiceNumber}`.slice(0, 80);
@@ -261,7 +262,7 @@ export async function rematchNav(env: Env): Promise<{ unplanned: number }> {
     ),
   );
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   let unplanned = 0;
   for (const r of rows) {
     const date = r.payment_date || r.issue_date || todayHu();
@@ -348,7 +349,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   // a számlából létrehozott terv(ek): base_0, base_1, … (a sorozat tagjai)
   const own = `substr(id, 1, ${base.length + 1}) = ?`;
   if (it.action === 'ignore' || it.action === 'reopen') {
-    const stmts: D1PreparedStatement[] = [];
+    const stmts: DbStatement[] = [];
     if (it.action === 'reopen' && r.status === 'planned') {
       // a még nyitott, ebből a számlából készült tervek a kukába (visszaállíthatók); a már teljesült (bankkal párosított) marad
       stmts.push(
@@ -375,7 +376,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
     if (r.status !== 'planned' && r.status !== 'paid') throw new HttpError(400, 'A számla még nincs besorolva.');
     const leaf = String(it.leaf_id || '');
     if (!leaf || !(await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leaf).first())) throw new HttpError(400, 'Válassz kategóriát.');
-    const stmts: D1PreparedStatement[] = [
+    const stmts: DbStatement[] = [
       // a számla tervei (a teljesült is), a hozzájuk párosított banki tény és a sorozat is az új kategóriába kerül
       env.DB.prepare(
         `UPDATE entries SET leaf_id = ?, updated_at = ?, updated_by = ?
@@ -405,7 +406,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   if (!leaf) throw new HttpError(400, 'Válassz kategóriát.');
   const ok = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leaf).first();
   if (!ok) throw new HttpError(400, 'Ismeretlen kategória.');
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const planId = base + '_0';
   if (it.action === 'recurring') {
     const months = Math.min(36, Math.max(1, Number(it.months) || 12));

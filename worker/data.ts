@@ -1,4 +1,5 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
+import type { DbResult, DbStatement } from './platform';
 import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
@@ -160,7 +161,7 @@ const ENTRY_COLS = 'id, kind, date, leaf_id, name, amount, series_id, done, tent
 export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const t = now();
   const P = await hasPeriod(env);
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const entryIds = [...new Set([...(b.upsert || []).map((e) => e.id), ...(b.delete || [])])];
   const seriesIds = [...new Set([...(b.series || []).map((s) => s.id), ...(b.deleteSeries || [])])];
   for (const id of entryIds) {
@@ -274,7 +275,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
   const versionIds = (b.upsert || []).map((e) => e.id);
   for (const id of versionIds) stmts.push(env.DB.prepare('SELECT id, updated_at FROM entries WHERE id = ?').bind(id));
-  let results: D1Result[];
+  let results: DbResult[];
   // D1 batch is a single transaction: any stale version rolls back every statement.
   try {
     results = await env.DB.batch(stmts);
@@ -299,10 +300,10 @@ export class CategoryCache {
     l.results.forEach((r) => this.leaves.add(r.id));
     return this;
   }
-  stmtsFor(section: Section, group: string, leaf: string): { gid: string; lid: string; stmts: D1PreparedStatement[] } {
+  stmtsFor(section: Section, group: string, leaf: string): { gid: string; lid: string; stmts: DbStatement[] } {
     const gid = groupId(section, group);
     const lid = leafId(gid, leaf);
-    const stmts: D1PreparedStatement[] = [];
+    const stmts: DbStatement[] = [];
     if (!this.groups.has(gid)) {
       stmts.push(
         this.env.DB.prepare('INSERT OR IGNORE INTO groups (id, section, label, sort) VALUES (?, ?, ?, ?)').bind(gid, section, group, groupSortKey(group)),
@@ -319,7 +320,7 @@ export class CategoryCache {
 
 async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], replacePlans: boolean, userId: number) {
   const cache = await new CategoryCache(env).load();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const seen: Record<string, number> = {};
   let imported = 0,
     skipped = 0,
@@ -693,7 +694,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
             .all<Record<string, unknown>>()
         ).results
       : [];
-    const stmts: D1PreparedStatement[] = [];
+    const stmts: DbStatement[] = [];
     for (const rid of rids) {
       stmts.push(
         env.DB.prepare(

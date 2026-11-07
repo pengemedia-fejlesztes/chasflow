@@ -1,6 +1,8 @@
+import type { AssetFetcher, Db } from './platform';
+
 export interface Env {
-  DB: D1Database;
-  ASSETS: Fetcher;
+  DB: Db;
+  ASSETS: AssetFetcher;
   SETUP_TOKEN?: string;
   BILLINGO_API_KEY?: string;
   BILLINGO_API_URL?: string; // csak teszteléshez (mock szerver)

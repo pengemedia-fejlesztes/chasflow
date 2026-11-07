@@ -1,7 +1,6 @@
 # Automatikus ellenőrzés és telepítés a saját tárhelyre: https://pmdev.hu/Cashflow/
 # - Minden push / pull request: típusellenőrzés, tesztek, build.
 # - Push a main vagy a fejlesztési (claude/dreamy-johnson-9ejay9) ágra: telepítés SSH-n a pmdev.hu-ra (pengemed:~/cashflow).
-#   A Cloudflare (workers.dev) változatot ez a workflow NEM telepíti.
 # Szükséges GitHub Secret (Settings → Secrets and variables → Actions):
 #   PMDEV_SSH_KEY – a pengemed fiókba engedélyezett privát SSH-kulcs
 # Adatbázis: a szerver MySQL-t használ; új migrations/ fájl esetén a telepítés megáll, a sémát kézzel kell frissíteni.

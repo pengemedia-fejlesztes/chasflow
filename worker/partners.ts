@@ -1,6 +1,7 @@
 // Partnertörzs: a partner adatlapjának mentése (név, típus, alternatív nevek, adószám, megjegyzés).
 // Az alternatív nevek „tartalmazza” párosítási szabályokká válnak a partner összes alkategóriájára (bevételi és kiadási
 // oldalon is), így a banki, NAV és Billingo tételek ezek alapján kerülnek a partnerhez (pl. „OMV 135”, „Shell 27” → Tankolás).
+import type { DbStatement } from './platform';
 import { normalizeText } from '../shared/categories';
 import { partnerIdOf } from '../shared/partners';
 import type { Partner } from '../shared/types';
@@ -46,7 +47,7 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
   );
   const cur = await env.DB.prepare('SELECT * FROM partners WHERE key = ?').bind(key).first<any>();
   if (!leaves.length && !cur) throw new HttpError(404, 'Nincs ilyen partner.');
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const t = now();
 
   let name: string = cur?.name || leaves[0]?.label || key;

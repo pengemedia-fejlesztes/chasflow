@@ -1,4 +1,5 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
+import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../shared/categories';
 import { namesMatch } from '../shared/billingopay';
 import { matchPlan, partnerKey, suggestLeaf } from '../shared/match';
@@ -113,7 +114,7 @@ export async function syncBanks(env: Env): Promise<{ accounts: number; newTx: nu
       const last = await env.DB.prepare('SELECT MAX(date) AS d FROM bank_tx WHERE account_id = ?').bind(a.id).first<{ d: string | null }>();
       const from = last?.d ? new Date(Date.parse(last.d) - 7 * 86400_000).toISOString().slice(0, 10) : first;
       const txs = await eb.getTransactions(env, a.eb_account_uid, from);
-      const stmts: D1PreparedStatement[] = [];
+      const stmts: DbStatement[] = [];
       for (const t of txs) {
         if (t.status && t.status !== 'BOOK') continue; // csak a könyvelt tételek
         const amt = Math.round(parseFloat(t.transaction_amount.amount)) * (t.credit_debit_indicator === 'DBIT' ? -1 : 1);
@@ -144,7 +145,7 @@ export async function syncBanks(env: Env): Promise<{ accounts: number; newTx: nu
 export async function reapplyRules(env: Env): Promise<{ updated: number; auto: number }> {
   const ctx = await matchingContext(env);
   const txs = await env.DB.prepare("SELECT id, date, amount, partner, memo, leaf_id FROM bank_tx WHERE status = 'new'").all<any>();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const t of txs.results) {
     const leaf = suggestLeaf(t, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
     if (leaf && leaf !== t.leaf_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE id = ?').bind(leaf, t.id));
@@ -186,7 +187,7 @@ export async function markBankFees(env: Env): Promise<number> {
     );
   };
   const pending: ApproveItem[] = [];
-  const moves: D1PreparedStatement[] = [];
+  const moves: DbStatement[] = [];
   const t0 = now();
   for (const t of txs) {
     if (!isFee(t)) continue;
@@ -237,7 +238,7 @@ export async function linkSameMonthActuals(env: Env): Promise<number> {
   const acts = aR.results as any[];
   const used = new Set<string>();
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   for (const p of (pR.results as any[]).sort((a, b) => a.date.localeCompare(b.date))) {
     if (isBudgetPlan(p as Entry, label.get(p.leaf_id) || '')) continue;
     const ym = p.period || p.date.slice(0, 7);
@@ -283,7 +284,7 @@ export async function settleNavPlans(env: Env): Promise<number> {
   const usedA = new Set<string>(),
     usedT = new Set<string>();
   const t0 = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const items: ApproveItem[] = [];
   const seen = new Set<string>();
   for (const p of pR.results as any[]) {
@@ -583,7 +584,7 @@ const addMonthsDate = (date: string, n: number) => {
 };
 
 export async function approve(env: Env, userId: number | null, items: ApproveItem[]) {
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
   const mergedSeen = new Set<string>();
@@ -824,7 +825,7 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   }
   if (path === '/api/nav/sync' && req.method === 'POST') {
     requireRole(u, 'admin');
-    if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (Cloudflare titkok: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
+    if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (a szerver .env-jében: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
     const b = await readJson<{ from?: string }>(req).catch(() => ({}) as { from?: string });
     const from = b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from) ? b.from : undefined;
     const r = await syncNav(env, { from }).catch((e: any) => {
@@ -1036,7 +1037,7 @@ export async function importManualRows(
   const count = () =>
     env.DB.prepare('SELECT status, COUNT(*) AS n FROM bank_tx WHERE account_id = ? GROUP BY status').bind(acc!.id).all<{ status: string; n: number }>();
   const before = Object.fromEntries((await count()).results.map((r) => [r.status, r.n]));
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   const seen: Record<string, number> = {};
   let n = 0;
   // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne

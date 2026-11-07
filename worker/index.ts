@@ -1,4 +1,5 @@
-// Cashflow tervező – Cloudflare Worker belépési pont (API + ütemezett szinkron).
+// Cashflow tervező – a backend belépési pontja (API + ütemezett szinkron), Worker-formában: { fetch, scheduled }.
+import type { AppHandler, ExecutionContext, ScheduledEvent } from './platform';
 import { currentUser, handleAccount, handleAuth, handleUsers } from './auth';
 import { handleBank, payBillingoFromBank, reapplyRules, syncAll } from './bank';
 import { autoPayBillingo } from './billingo';
@@ -133,7 +134,7 @@ export default {
     }
   },
 
-  async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(ev: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),
@@ -168,4 +169,4 @@ export default {
         .catch((e) => console.error('stats failed', e)),
     );
   },
-} satisfies ExportedHandler<Env>;
+} satisfies AppHandler<Env>;

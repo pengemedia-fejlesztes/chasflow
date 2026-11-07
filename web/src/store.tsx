@@ -92,7 +92,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
   }, [showToast]);
 
   // változásfigyelés: percenként egyetlen sor (adat-verzió); a teljes adat csak akkor töltődik újra, ha változott
-  // (a teljes újratöltés sok sort olvas – a Cloudflare D1 napi olvasási kerete ezt nem bírja, ha percenként fut)
+  // (a teljes újratöltés sok sort olvas – ezért nem percenként fut)
   const rev = useRef<string | null>(null);
   useEffect(() => {
     let busy = false;

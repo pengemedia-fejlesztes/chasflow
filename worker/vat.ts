@@ -1,6 +1,7 @@
 // ÁFA-terv karbantartása szinkronkor: a következő 12 hónap ÁFA-terve az előző havi bevételből (27/127), a következő hónapban.
 // A számított tervek azonosítója „vat_YYYY-MM” (forrás: vat). A folyó hónap terve kézi (bevallás szerinti) marad;
 // a jövő hónapok kézi (nem számított) nyitott ÁFA-tervei a kukába kerülnek (visszaállíthatók), hogy ne duplázódjanak.
+import type { DbStatement } from './platform';
 import { addMonths } from '../shared/model';
 import type { Section } from '../shared/types';
 import { isVatLeaf, vatPlan } from '../shared/vat';
@@ -27,7 +28,7 @@ export async function refreshVatPlans(env: Env): Promise<{ months: number; chang
   const rule = effectiveRule(vatLeaf, groups.get(vatLeaf.group_id));
   const t = now();
   const next = addMonths(cur, 1) + '-01';
-  const stmts: D1PreparedStatement[] = [
+  const stmts: DbStatement[] = [
     // a jövő hónapok kézi ÁFA-tervei → kuka (a számított terv lép a helyükre)
     env.DB.prepare(
       `INSERT INTO deleted_entries (id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by, deleted_at, deleted_by)

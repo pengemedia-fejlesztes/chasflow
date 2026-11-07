@@ -18,44 +18,25 @@ Böngészőben és iPhone-on is használható, több felhasználós cashflow szo
 - **Brute-force védelem:** 5 hibás próbálkozás után 15 percre zárolja a fiókot, és IP-cím szerinti korlátozás is van.
 - **Munkamenet:** `HttpOnly`, `Secure`, `SameSite` süti, 7 nap inaktivitás után lejár. „Kilépés minden eszközön” funkció.
 - **Böngészővédelem:** CSRF-védelem, szigorú Content-Security-Policy, HSTS, clickjacking-védelem, `noindex`.
-- **Titkok:** az API kulcsok (Billingo, Enable Banking) **csak Cloudflare titokként** léteznek, soha nem kerülnek a repóba.
-- **Pénzügyi adatok:** csak a Cloudflare D1 adatbázisban vannak. A repó nem tartalmaz adatot, az xls/csv fájlok a `.gitignore`-ban vannak.
+- **Titkok:** az API kulcsok (Billingo, Enable Banking, NAV, e-mail) csak a szerver `.env` fájljában vannak (`~/cashflow/.env`, 600-as jog), soha nem kerülnek a repóba.
+- **Pénzügyi adatok:** csak a szerver adatbázisában vannak. A repó nem tartalmaz adatot, az xls/csv fájlok és a lokális adatbázis (`.data/`) a `.gitignore`-ban vannak.
 - **Napló:** belépések és fontos műveletek naplója.
 
 > ⚠️ **A GitHub repó legyen privát!** GitHub → a repó → *Settings* → *General* → legalul *Danger Zone* → *Change repository visibility* → *Make private*.
 
-Extra védelemként ajánlott a **Cloudflare Access** (Zero Trust, 50 felhasználóig ingyenes). Ezzel az oldal be sem töltődik, csak a megadott e-mail címekre küldött egyszer használatos kóddal:
-*Cloudflare dashboard → Zero Trust → Access → Applications → Add → Self-hosted* → a Worker domainje → *Policy: Allow, Emails: …*
+## Üzemeltetés (pmdev.hu)
 
-## Telepítés (egyszer kell)
+Az app a pmdev cPanel-tárhelyén fut: <https://pmdev.hu/Cashflow/>.
 
-Szükséges: egy ingyenes [Cloudflare](https://dash.cloudflare.com) fiók és Node.js 22 (vagy csak a GitHub Actions).
-
-1. **Cloudflare API token:** *My Profile → API Tokens → Create Token → „Edit Cloudflare Workers”* sablon, plusz *Account → D1 → Edit* jogosultság. Az **Account ID** a Workers oldal jobb oldalán látszik.
-2. **Adatbázis létrehozása** (a saját gépeden):
-   ```bash
-   npm ci
-   npx wrangler login
-   npx wrangler d1 create cashflow      # kiírja a database_id-t
-   ```
-3. **GitHub Secrets** (*repó → Settings → Secrets and variables → Actions → New repository secret*):
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - `D1_DATABASE_ID` (a 2. lépés kimenetéből)
-4. **Első deploy:** push vagy merge a `main` ágra. A GitHub Actions lefuttatja a teszteket, a migrációt és a deployt. Az app címe: `https://cashflow-tervezo.<fiókod>.workers.dev` (saját domain is beállítható).
-5. **Titkok beállítása** (a saját gépeden, egyszer):
-   ```bash
-   npx wrangler secret put SETUP_TOKEN        # tetszőleges hosszú, véletlen szöveg az első adminhoz
-   npx wrangler secret put BILLINGO_API_KEY   # Billingo → Beállítások → API
-   # bankkapcsolathoz (lásd lent):
-   npx wrangler secret put EB_APP_ID
-   npx wrangler secret put EB_PRIVATE_KEY     # a .pem fájl teljes tartalma
-   ```
-6. **Első belépés:** nyisd meg az appot, add meg a `SETUP_TOKEN`-t, és hozd létre az admin fiókot. Utána:
-   - *Beállítások → Adatok:* töltsd fel a TÉNYEK és a TERVEK xls fájlt.
-   - Ha még nincs bankkapcsolat, add meg a mai egyenleget.
-   - *Beállítások → Fiókom:* kapcsold be a 2FA-t.
-   - *Beállítások → Felhasználók:* hívd meg a kollégákat.
+- **Futtatás:** Node.js 22 (CloudLinux Passenger), az app könyvtára `~/cashflow`. A Passenger beállítása a `~/public_html/pmdev.hu/Cashflow/.htaccess`-ben van.
+- **Ütemezett szinkron:** cPanel-cron (`server/cron.mjs`), munkanapokon.
+- **Telepítés:** a GitHub Actions (`.github/workflows/deploy.yml`) a `main` és a fejlesztési ágra pusholt commitot ellenőrzi, buildeli, és SSH-n felmásolja. Szükséges GitHub Secret: `PMDEV_SSH_KEY`.
+- **Titkok:** a `~/cashflow/.env` fájlban (minta: `.env.example`). Módosítás után az app újraindítása: `touch ~/cashflow/tmp/restart.txt`.
+- **Első belépés:** a `SETUP_TOKEN`-nel hozható létre az első admin. Utána:
+  - *Beállítások → Adatok:* töltsd fel a TÉNYEK és a TERVEK xls fájlt.
+  - Ha még nincs bankkapcsolat, add meg a mai egyenleget.
+  - *Beállítások → Fiókom:* kapcsold be a 2FA-t.
+  - *Beállítások → Felhasználók:* hívd meg a kollégákat.
 
 ## Elfelejtett jelszó – e-mail küldés
 
@@ -66,10 +47,10 @@ Beállítás a **Brevo**-val (ingyenes, napi 300 levél):
 1. Regisztrálj: <https://www.brevo.com>.
 2. *Senders, Domains & Dedicated IPs → Senders → Add a sender*: add meg a feladó címet (pl. `laszlo.nagy@360-marketing.eu`), és igazold a kapott levéllel. A jobb kézbesítéshez ajánlott a domain hitelesítése is (DKIM/DMARC DNS rekordok).
 3. *SMTP & API → API keys → Generate a new API key*.
-4. Állítsd be a titkokat:
+4. Állítsd be a titkokat a `.env`-ben:
    ```bash
-   npx wrangler secret put BREVO_API_KEY
-   npx wrangler secret put MAIL_FROM     # pl.: Cashflow <laszlo.nagy@360-marketing.eu>
+   BREVO_API_KEY=…
+   MAIL_FROM="Cashflow <laszlo.nagy@360-marketing.eu>"
    ```
 
 A Brevo helyett **Resend** is használható: `RESEND_API_KEY`, ehhez a domaint DNS-ben igazolni kell.
@@ -90,9 +71,9 @@ Ha valamelyik bank (pl. BiNX) nem szerepel az Enable Banking listájában, haszn
 
 ## Frissítés, fejlesztés GitHubon keresztül
 
-- Minden módosítás, ami a `main` ágra kerül, automatikusan élesedik: tesztek, adatbázis-migráció és deploy egy lépésben.
+- Minden módosítás, ami a `main` (vagy a fejlesztési) ágra kerül, automatikusan élesedik: tesztek, build és telepítés egy lépésben.
 - Más ágon a GitHub Actions csak ellenőriz (típusellenőrzés, tesztek, build).
-- Új adatbázis-mező esetén új fájl kell a `migrations/` mappába (pl. `0002_….sql`). Ezt a deploy automatikusan lefuttatja.
+- Új adatbázis-mező esetén új fájl kell a `migrations/` mappába (pl. `0002_….sql`). Az éles MySQL-t ez még nem frissíti: a deploy ilyenkor megáll, a sémát kézzel kell frissíteni.
 
 ### Helyi futtatás (Docker, Node + SQLite)
 
@@ -106,14 +87,14 @@ docker compose run --rm app node server/cron.mjs   # egy szinkron-futás kézzel
 ```
 
 - Az adatbázis SQLite: `./.data/cashflow.sqlite`. Induláskor a `migrations/` összes még nem futtatott fájlja lefut
-  (nyilvántartás: `d1_migrations` tábla, mint a wrangler-nél). A fájl törlésével üres adatbázissal indul újra.
+  (nyilvántartás: `d1_migrations` tábla). A fájl törlésével üres adatbázissal indul újra.
 - Első indításkor az első admin a `SETUP_TOKEN`-nel hozható létre (alapból `helyi-teszt`).
 - Titkok (Billingo, NAV, Enable Banking, e-mail): `.env` (minta: `.env.example`). Nélkülük az app fut, csak a külső szinkron nem.
 - A felület (Vite) azonnal frissül, a szerver (`worker/`, `shared/`, `server/`) változáskor újraépül és újraindul.
 - Az adatbázis-meghajtót a `SQLITE_PATH` választja ki (`server/db.mjs`): ha meg van adva, SQLite
   (`server/d1-sqlite.mjs`), ha nincs, a MySQL (`server/d1-mysql.mjs`) – az éles pmdev egyelőre MySQL-lel fut.
 
-A módosításütközések elleni védelemhez a `0025_mutation_guard.sql` migráció szükséges. A frontend és a Worker együtt frissítendő; régi böngészőfül esetén töltsd újra az oldalt. A kliens a tétel korábbi verzióját küldi, a szerver pedig egyetlen tranzakcióban ellenőrzi és menti a teljes módosítást. Ütközéskor 409-es választ ad, és megőrzi a másik felhasználó változtatását. A visszavonásra is ugyanez a védelem érvényes.
+A módosításütközések elleni védelemhez a `0025_mutation_guard.sql` migráció szükséges. A felület és a backend együtt frissítendő; régi böngészőfül esetén töltsd újra az oldalt. A kliens a tétel korábbi verzióját küldi, a szerver pedig egyetlen tranzakcióban ellenőrzi és menti a teljes módosítást. Ütközéskor 409-es választ ad, és megőrzi a másik felhasználó változtatását. A visszavonásra is ugyanez a védelem érvényes.
 
 Az összegmezők egész forintot fogadnak el, szóközös ezres tagolással is. A tizedesjel és az előjel elutasításra kerül; a bevétel/kiadás választás határozza meg az előjelet.
 
@@ -124,9 +105,9 @@ A regressziótesztek Node.js 22.13 vagy újabb verziót igényelnek (beépített
 | Mappa | Tartalom |
 |---|---|
 | `web/` | React felület (Vite), asztali és mobil nézet a feltöltött design alapján |
-| `worker/` | Cloudflare Worker API: hitelesítés, adatok, Billingo, bank, napi szinkron (5, 9, 13, 17, 21 óra) |
+| `worker/` | Az API (Worker-formájú, platformfüggetlen): hitelesítés, adatok, Billingo, bank, napi szinkron (5, 9, 13, 17, 21 óra) |
 | `shared/` | Közös logika: kategóriák, xls-értelmezés, cashflow-számítás, banki párosítás |
-| `migrations/` | D1 (SQLite) adatbázis séma |
+| `migrations/` | Adatbázis-séma (SQLite) |
 | `tests/` | Unit tesztek (`vitest`) |
 
 **Egyenleg-logika:** a mai egyenleg bankkapcsolatnál a banki egyenlegek összege, egyébként a nyitó egyenleg és az összes tény összege. A múltbeli hónapok záró egyenlege a mai egyenleg mínusz az azóta történt tények. Az előrejelzés a mai egyenleg plusz a nyitott tervek (ebben a hónapban a lejárt, még nyitottakkal együtt), plusz opcionálisan az ajánlatok és a becslés.

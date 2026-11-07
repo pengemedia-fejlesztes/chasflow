@@ -1,4 +1,5 @@
 // Billingo v3 szinkron: kiállított számlák → tervezett bevétel.
+import type { DbStatement } from './platform';
 import { partnerKey, suggestLeaf, type ContainsRule } from '../shared/match';
 import { loadContains } from './rules';
 import type { Leaf } from '../shared/types';
@@ -51,7 +52,7 @@ async function leafForPartner(
   sectionOf: (id: string) => 'in' | 'out',
   rules: Record<string, string>,
   cache: CategoryCache,
-  stmts: D1PreparedStatement[],
+  stmts: DbStatement[],
   contains?: ContainsRule[],
 ) {
   // a partnertörzs alternatív nevei (és a többi „tartalmazza” szabály) is számítanak
@@ -78,7 +79,7 @@ type GroupRow = { id: string; label: string; section: string };
  * A kiszámlázott ügyfél projekt, nem ajánlat: ha a partner az Ajánlatok mappában van, a számla a Projektek mappabeli
  * párjához kerül (ugyanaz a partner), ha nincs ilyen, létrejön a Projektek alatt.
  */
-export function projectLeafOf(lid: string, leaves: Leaf[], groups: GroupRow[], cache: CategoryCache, stmts: D1PreparedStatement[]): string {
+export function projectLeafOf(lid: string, leaves: Leaf[], groups: GroupRow[], cache: CategoryCache, stmts: DbStatement[]): string {
   const leaf = leaves.find((l) => l.id === lid);
   const g = groups.find((x) => x.id === leaf?.group_id);
   if (!leaf || !g || g.section !== 'in' || !OFFER_RX.test(g.label)) return lid;
@@ -118,8 +119,8 @@ export async function promoteOfferLeaves(env: Env): Promise<number> {
   const leaves = lR.results as unknown as Leaf[];
   const groups = gR.results as unknown as GroupRow[];
   const cache = await new CategoryCache(env).load();
-  const stmts: D1PreparedStatement[] = [];
-  const moves: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
+  const moves: DbStatement[] = [];
   const t = now();
   for (const e of eR.results as any[]) {
     const to = projectLeafOf(e.leaf_id, leaves, groups, cache, stmts);
@@ -210,7 +211,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   const linkedR = await env.DB.prepare("SELECT link_id FROM entries WHERE kind = 'plan' AND link_id IS NOT NULL").all<{ link_id: string }>();
   const linked = new Set(linkedR.results.map((r) => r.link_id));
   /** Billingo szerint kifizetett számla → tény (vagy a meglévő, azonos tényhez kötés) + a terv lezárása. */
-  const paidStmts = (planId: string, leaf: string, d: BillingoDocument, gross: number, partner: string): D1PreparedStatement[] => {
+  const paidStmts = (planId: string, leaf: string, d: BillingoDocument, gross: number, partner: string): DbStatement[] => {
     const paidOn = d.paid_date && d.paid_date <= today ? d.paid_date : today;
     const same = actualsR.results.find(
       (a) =>
@@ -221,7 +222,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     );
     const aid = same?.id || 'bp' + d.id;
     linked.add(aid);
-    const out: D1PreparedStatement[] = [];
+    const out: DbStatement[] = [];
     if (!same)
       out.push(
         env.DB.prepare(
@@ -232,7 +233,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(aid, t, planId));
     return out;
   };
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   let plans = 0;
   for (const d of docs) {
     if (!d.id || !INCOME_TYPES.has(String(d.type))) continue;
@@ -450,7 +451,7 @@ export function attachInvoiceStmts(
   bill: { id: string; ext_ref: string; amount: number; bill_amount: number | null; date: string; done: number; link_id: string | null },
   planId: string,
   t: number,
-): D1PreparedStatement[] {
+): DbStatement[] {
   return [
     // az egyedi ext_ref miatt előbb a számla-terv engedi el
     env.DB.prepare('UPDATE entries SET ext_ref = NULL WHERE id = ?').bind(bill.id),
@@ -480,7 +481,7 @@ export async function reconcileInvoicePlans(env: Env): Promise<number> {
   const open = openR.results as any[];
   const used = new Set<string>();
   const t = now();
-  const stmts: D1PreparedStatement[] = [];
+  const stmts: DbStatement[] = [];
   let n = 0;
   for (const b of billR.results as any[]) {
     const gross = Number(b.bill_amount ?? b.amount);

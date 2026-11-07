@@ -1,4 +1,4 @@
-// E-mail küldés külső szolgáltatón keresztül (Brevo vagy Resend). A kulcs Cloudflare titokként van beállítva.
+// E-mail küldés külső szolgáltatón keresztül (Brevo vagy Resend). A kulcs a szerver .env-jében van.
 import type { Env } from './util';
 
 export interface Mail {

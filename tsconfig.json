@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["@cloudflare/workers-types", "vite/client"]
+    "types": ["vite/client"]
   },
   "include": ["worker", "shared", "web/src", "tests"]
 }

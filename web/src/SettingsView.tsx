@@ -466,7 +466,7 @@ function Integrations() {
       </Section>
       <Section
         title="NAV Online Számla"
-        sub="A cégnek kiállított (bejövő, szállítói) számlák a NAV-ból naponta 5 alkalommal szinkronizálódnak. Ha egy számlához nincs terv, riasztás jön még a kifizetés előtt, javaslattal: rendszeres (havonta tervbe) vagy előre nem látható költség. Hozzáférés: NAV technikai felhasználó (Online Számla → Felhasználók), Cloudflare titokként: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER."
+        sub="A cégnek kiállított (bejövő, szállítói) számlák a NAV-ból naponta 5 alkalommal szinkronizálódnak. Ha egy számlához nincs terv, riasztás jön még a kifizetés előtt, javaslattal: rendszeres (havonta tervbe) vagy előre nem látható költség. Hozzáférés: NAV technikai felhasználó (Online Számla → Felhasználók), a szerver .env-jében: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER."
       >
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ font: `600 14px ${FONT}`, color: data.integrations.nav ? C.inc : C.neg }}>
