@@ -69,6 +69,8 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
   // átnevezés egy már meglévő partner nevére = összevonás: a cél partner törzsadatai (adószám, alternatív nevek, típus,
   // megjegyzés) megmaradnak, a forrásé csak kiegészíti őket – különben az adószám és a felismert nevek elvesznének
   const into = newKey !== key ? await env.DB.prepare('SELECT * FROM partners WHERE key = ?').bind(newKey).first<any>() : null;
+  // típus: vevő / szállító / mindkettő, vagy üres (= automatikus); más érték hiba (korábban csendben törölte a típust)
+  if (b.kind != null && b.kind !== '' && !KINDS.has(String(b.kind))) throw new HttpError(400, 'Ismeretlen partnertípus.');
   const kind =
     b.kind !== undefined ? (KINDS.has(String(b.kind)) ? String(b.kind) : null) : (into?.kind ?? cur?.kind ?? null);
   let aliases: string[] = b.aliases !== undefined ? cleanAliases(b.aliases) : JSON.parse(cur?.aliases || '[]');
