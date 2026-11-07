@@ -48,6 +48,8 @@ export function genSeries(o: {
       id: uid('e'),
       kind: 'plan',
       date: o.payRule ? payDate(addMonths(o.startYm, i * step), o.payRule, o.day) : dateIn(addMonths(o.startYm, i * step), o.day),
+      // a tétel hónapja a díj saját hónapja – a szabály szerinti fizetés (pl. „számlázás + 30 nap”) átcsúszhat a következő hónapra
+      period: addMonths(o.startYm, i * step),
       leaf_id: o.leaf,
       name: o.name,
       amount: signed(o.section, o.amount),
