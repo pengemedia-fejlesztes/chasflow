@@ -107,6 +107,15 @@ export function suggestLeaf(tx: TxLike, rules: RuleMap, leaves: Leaf[], leafSect
   return best ? best.id : null;
 }
 
+/**
+ * Javasolt (nem kifejezetten kiválasztott) terv lezárható-e a banki tétellel: azonos kategória, és a tétel a terv
+ * összegének legalább 30%-a – így egy kis tétel (pl. egy pár száz forintos banki díj) nem zár le egy havidíj-tervet.
+ * Ugyanezt a szabályt használja a szerver jóváhagyáskor és a felület a terv előválasztásánál.
+ */
+export function planFitsTx(tx: { amount: number }, txLeaf: string | null | undefined, plan: { leaf_id: string; amount: number }): boolean {
+  return !!txLeaf && plan.leaf_id === txLeaf && Math.sign(plan.amount) === Math.sign(tx.amount) && Math.abs(tx.amount) >= Math.abs(plan.amount) * 0.3;
+}
+
 function dayDiff(a: string, b: string): number {
   return Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 }

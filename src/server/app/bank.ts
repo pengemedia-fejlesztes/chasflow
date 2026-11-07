@@ -2,7 +2,7 @@
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
 import { namesMatch } from '../../shared/billingopay';
-import { matchPlan, partnerKey, suggestLeaf } from '../../shared/match';
+import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
 import type { Entry, Leaf } from '../../shared/types';
@@ -194,7 +194,8 @@ export async function markBankFees(env: Env): Promise<number> {
     if (t.status === 'new') pending.push({ id: t.id, leaf_id: fee, merge: true });
     else if (t.status === 'approved' && t.actual_id) {
       // tévesen máshova jóváhagyott díj: a tény átkerül a Bank költségbe, és leválik a tervről
-      moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(fee, t0, t.actual_id));
+      // (a tény terv-kötése is törlődik – különben a tény a már újranyitott / máshoz kötött tervre mutatna)
+      moves.push(env.DB.prepare('UPDATE entries SET leaf_id = ?, link_id = NULL, updated_at = ? WHERE id = ?').bind(fee, t0, t.actual_id));
       moves.push(env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL, updated_at = ? WHERE kind = ? AND link_id = ?').bind(t0, 'plan', t.actual_id));
       moves.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ?, plan_id = NULL WHERE id = ?').bind(fee, t.id));
     }
@@ -588,6 +589,9 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
   const mergedSeen = new Set<string>();
+  // egy jóváhagyáson belül egy terv / egy Billingo-tény csak egy banki tételhez kötődhet
+  const usedPlans = new Set<string>();
+  const usedBpaid = new Set<string>();
   // Elokeszites: a tetelek, a kategoriak es a szamlak EGY-EGY lekerdezessel (korabban tetelenkent haromszor kerdeztunk)
   const itemIds = [...new Set(items.map((i) => String(i.id)))];
   const txById = new Map<string, any>();
@@ -650,22 +654,39 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(mid, leafId, tx.id));
       continue;
     }
-    let planId: string | null = 'plan_id' in it ? it.plan_id || null : tx.plan_id;
-    if (planId && !('plan_id' in it)) {
-      // nem kifejezetten választott (javasolt / automatikus) terv csak azonos kategóriában és hasonló összegnél zárható le
-      const p = await env.DB.prepare('SELECT leaf_id, amount, done FROM entries WHERE id = ?')
+    const explicit = 'plan_id' in it;
+    let planId: string | null = explicit ? it.plan_id || null : tx.plan_id;
+    if (planId) {
+      const p = await env.DB.prepare('SELECT kind, leaf_id, amount, done FROM entries WHERE id = ?')
         .bind(planId)
-        .first<{ leaf_id: string; amount: number; done: number }>();
-      if (!p || p.done || p.leaf_id !== leafId || Math.abs(tx.amount) < Math.abs(p.amount) * 0.3) planId = null;
+        .first<{ kind: string; leaf_id: string; amount: number; done: number }>();
+      if (explicit) {
+        // kifejezetten választott terv: csak nyitott, azonos irányú terv – a már teljesült terv átkötése a korábbi tényét
+        // terv nélkül hagyná (dupla tény), ezért hibát adunk
+        if (!p || p.kind !== 'plan' || p.done || usedPlans.has(planId) || Math.sign(p.amount) !== Math.sign(tx.amount)) {
+          // automatikus párosításnál a tétel a jóváhagyásra várók között marad
+          if (userId === null) continue;
+          throw new HttpError(409, `A kiválasztott terv már teljesült vagy nem létezik – frissítsd az oldalt (${tx.partner || tx.memo}).`);
+        }
+      } else if (!p || p.kind !== 'plan' || p.done || usedPlans.has(planId) || !planFitsTx(tx, leafId, p)) {
+        // nem kifejezetten választott (javasolt / automatikus) terv csak azonos kategóriában és hasonló összegnél zárható le
+        planId = null;
+      }
+      if (planId) usedPlans.add(planId);
     }
-    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel)
+    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel) –
+    // csak ugyanannak a partnernek (kategóriának) a tényéhez, különben egy másik ügyfél befizetését „lopná el”
     if (tx.amount > 0) {
       const bp = await env.DB.prepare(
-        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?)) LIMIT 1",
+        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND leaf_id = ? AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?))",
       )
-        .bind(tx.amount, tx.amount, tx.date, tx.date)
-        .first<{ id: string }>();
+        .bind(leafId, tx.amount, tx.amount, tx.date, tx.date)
+        .all<{ id: string }>()
+        .then((r) => r.results.find((x) => !usedBpaid.has(x.id)));
       if (bp) {
+        usedBpaid.add(bp.id);
+        // a tételhez javasolt / választott terv (ha nem a bpaid tényé) nyitva marad
+        if (planId) usedPlans.delete(planId);
         stmts.push(
           env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
             'bank:' + tx.id,
@@ -674,7 +695,8 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
             userId,
             bp.id,
           ),
-          env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ? WHERE id = ?").bind(bp.id, leafId, tx.id),
+          // a tervet a Billingo-tény köti (a banki tétel saját tervjavaslata nem zárul le)
+          env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = NULL WHERE id = ?").bind(bp.id, leafId, tx.id),
         );
         continue;
       }
@@ -760,9 +782,26 @@ async function unapprove(env: Env, u: User, ids: string[]) {
       ]);
       continue;
     }
+    if (String(tx.actual_id || '').startsWith('bp')) {
+      // a Billingo „fizetve” tényéhez kötött jóváírás: a tény a Billingo-számla ténye marad (a terve is lezárva) –
+      // csak a banki kötés bomlik; törölni nem szabad, különben a bevétel eltűnne, a terv pedig lezárva maradna
+      await env.DB.batch([
+        env.DB.prepare("UPDATE entries SET source = 'billingo', ext_ref = ?, updated_at = ?, updated_by = ? WHERE id = ? AND ext_ref = ?").bind(
+          'bpaid:' + String(tx.actual_id).slice(2),
+          now(),
+          u.id,
+          tx.actual_id,
+          'bank:' + tx.id,
+        ),
+        env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
+      ]);
+      continue;
+    }
     await env.DB.batch([
       env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(tx.actual_id),
-      env.DB.prepare('UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND link_id = ?').bind(tx.plan_id, tx.actual_id),
+      // minden terv, amely ehhez a tényhez kötődik (a jóváhagyáskor választott, vagy utólag – pl. azonos havi
+      // összevonással – kötött) újra nyitott lesz; különben a terv lezárva maradna egy törölt ténnyel
+      env.DB.prepare("UPDATE entries SET done = 0, link_id = NULL WHERE kind = 'plan' AND link_id = ?").bind(tx.actual_id),
       env.DB.prepare("UPDATE bank_tx SET status = 'new', actual_id = NULL WHERE id = ?").bind(tx.id),
       // a jóváhagyáskor létrehozott ismétlődő tervek (amelyek még nyitottak) is visszavonódnak
       env.DB.prepare("DELETE FROM entries WHERE series_id = ? AND kind = 'plan' AND done = 0").bind('s' + tx.id),
