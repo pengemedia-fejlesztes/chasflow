@@ -352,6 +352,9 @@ function leafValue(
     if (f.granularity === 'year' && ym === ix.cur) {
       // aktuális hónap éves nézetben: tény + nyitott terv
       v += (ix.actual.get(leaf)?.get(ym) || 0) + (ix.openPlan.get(leaf)?.get(ym) || 0);
+    } else if (monthDiff(ym, ix.cur) > 0) {
+      // jövőbeli hónap: a még várható (nyitott) terv – a már kifizetett (kész) terv a tényében szerepel, az előrejelzésben sem számít
+      v += ix.openPlan.get(leaf)?.get(ym) || 0;
     } else v += ix.plan.get(leaf)?.get(ym) || 0;
     if (f.includeOffers && offers === 'with') {
       const ov = ix.offer.get(leaf)?.get(ym) || 0;
@@ -375,16 +378,13 @@ export function projection(ix: Index, f: Pick<Filters, 'includeOffers' | 'estima
   // aktuális hónap: minden nyitott terv a hónap végéig (a lejárt, még nyitott tételekkel együtt)
   // a mai napnál későbbi dátumú tények (pl. előre rögzített kézi tétel) a saját hónapjukban számítanak
   const futureActual = new Map<string, number>();
-  for (const e of ix.entries) {
-    if (e.kind === 'actual') {
-      if (e.date > ix.today) futureActual.set(ymOf(e.date), (futureActual.get(ymOf(e.date)) || 0) + e.amount);
-      continue;
-    }
-    if (e.done) continue;
-    if (e.tentative && !f.includeOffers) continue;
-    const ym = ymOf(e.date);
-    if (ym <= ix.cur && ym >= minOverdue) bal += e.amount;
-  }
+  for (const e of ix.entries)
+    if (e.kind === 'actual' && e.date > ix.today) futureActual.set(ymOf(e.date), (futureActual.get(ymOf(e.date)) || 0) + e.amount);
+  // a nyitott tervek az indexből (openPlan): keret-tervnél (pl. „Előre nem látható költség”) csak a keretből még hátralévő rész
+  // és a besorolt nyitott tételek – a keret és a belőle fogyó tétel / tény nem vonódik le kétszer
+  const overdue = monthRange(minOverdue, ix.cur);
+  for (const [, m] of ix.openPlan) bal += sumMonths(m, overdue);
+  if (f.includeOffers) for (const [, m] of ix.offer) bal += sumMonths(m, overdue);
   bal += futureActual.get(ix.cur) || 0;
   out.set(ix.cur, bal);
   for (const ym of monthRange(addMonths(ix.cur, 1), to)) {

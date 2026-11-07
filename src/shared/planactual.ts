@@ -1,5 +1,6 @@
 // Havi terv–tény összesítő: tervezett és tényleges bevétel, kiadás, profit és az eltérések.
 import type { Entry, Section } from './types';
+import { budgetMonth, isBudgetPlan } from './budget';
 import { ymOf } from './model';
 
 export interface PvaMonth {
@@ -20,8 +21,17 @@ export interface PvaMonth {
 
 export const pvaProfit = (m: Pick<PvaMonth, 'planIn' | 'planOut' | 'actIn' | 'actOut'>) => ({ plan: m.planIn - m.planOut, act: m.actIn - m.actOut });
 
-/** Tervezett = a hónap összes (nem ajánlat) terve, teljesült és nyitott is; tény = a hónap tényei. */
-export function planVsActual(entries: Entry[], sectionOf: (leaf: string) => Section, months: string[]): PvaMonth[] {
+/**
+ * Tervezett = a hónap összes (nem ajánlat) terve, teljesült és nyitott is; tény = a hónap tényei.
+ * Keret-tervnél (pl. „Előre nem látható költség” 50 000/hó; ehhez kell a `leafLabel`) a hónap terve a keret – a besorolt
+ * tételek abból fogynak, nem adódnak hozzá (mint az Áttekintésben); a nyitott rész a besorolt nyitott tételek + a keret maradéka.
+ */
+export function planVsActual(
+  entries: Entry[],
+  sectionOf: (leaf: string) => Section,
+  months: string[],
+  leafLabel?: (leaf: string) => string,
+): PvaMonth[] {
   const map = new Map<string, PvaMonth>(
     months.map((ym) => [
       ym,
@@ -49,6 +59,22 @@ export function planVsActual(entries: Entry[], sectionOf: (leaf: string) => Sect
       if (!e.done) {
         if (inc) m.openIn += v;
         else m.openOut += v;
+      }
+    }
+  }
+  if (leafLabel) {
+    // keret-terv: a kategória-hónap tervei helyett a keret szerinti terv és nyitott rész (kiadás, pozitív szám)
+    const byLeaf = new Map<string, Entry[]>();
+    for (const e of entries) if (sectionOf(e.leaf_id) === 'out') (byLeaf.get(e.leaf_id) || byLeaf.set(e.leaf_id, []).get(e.leaf_id)!).push(e);
+    for (const [leaf, es] of byLeaf) {
+      const label = leafLabel(leaf) || '';
+      for (const ym of new Set(es.filter((e) => isBudgetPlan(e, label)).map((e) => ymOf(e.date)))) {
+        const m = map.get(ym);
+        const bm = m && budgetMonth(es, label, ym);
+        if (!m || !bm) continue;
+        const plans = es.filter((e) => e.kind === 'plan' && !e.tentative && ymOf(e.date) === ym);
+        m.planOut += bm.plan + plans.reduce((a, e) => a + e.amount, 0);
+        m.openOut += bm.openOther + bm.left + plans.filter((e) => !e.done).reduce((a, e) => a + e.amount, 0);
       }
     }
   }
