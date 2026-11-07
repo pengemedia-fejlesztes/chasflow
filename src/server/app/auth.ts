@@ -378,6 +378,8 @@ export async function handleAccount(env: Env, req: Request, path: string, u: Use
   return null;
 }
 
+const ROLES = ['admin', 'member', 'viewer'];
+
 /** Felhasználókezelés (csak admin). */
 export async function handleUsers(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
   if (!path.startsWith('/api/users')) return null;
@@ -395,7 +397,9 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
       .trim()
       .toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'Érvénytelen e-mail cím.');
-    const role = (['admin', 'member', 'viewer'].includes(body.role) ? body.role : 'member') as Role;
+    // szerepkör nélkül szerkesztő (a felület alapértéke); ismeretlen szerepkör → hiba (nem csendben szerkesztő)
+    if (body.role !== undefined && !ROLES.includes(body.role)) throw new HttpError(400, 'Ismeretlen szerepkör.');
+    const role = (body.role ?? 'member') as Role;
     // ideiglenes jelszó – első belépéskor cserélni kell
     const temp = b64url(randomBytes(12));
     const pw = await newPasswordFields(temp);
@@ -412,6 +416,7 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
   const m = path.match(/^\/api\/users\/(\d+)(\/reset)?$/);
   if (m) {
     const id = Number(m[1]);
+    if (!(await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?').bind(id).first())) throw new HttpError(404, 'Nincs ilyen felhasználó.');
     if (m[2] && req.method === 'POST') {
       const temp = b64url(randomBytes(12));
       const pw = await newPasswordFields(temp);
@@ -426,9 +431,11 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
     }
     if (req.method === 'PATCH') {
       const body = await readJson(req);
+      // ismeretlen szerepkör: hiba, mielőtt bármi (pl. a feltöltési kulcs visszavonása) megtörténne
+      if (body.role !== undefined && !ROLES.includes(body.role)) throw new HttpError(400, 'Ismeretlen szerepkör.');
       if (id === u.id && ((body.role && body.role !== 'admin') || body.disabled)) throw new HttpError(400, 'Saját magad nem fokozhatod le / tilthatod le.');
       if ((body.role && body.role !== 'admin') || body.disabled) await revokeImportToken(env, id);
-      if (body.role && ['admin', 'member', 'viewer'].includes(body.role))
+      if (body.role)
         await env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, id).run();
       if (body.disabled !== undefined) {
         await env.DB.prepare('UPDATE users SET disabled = ? WHERE id = ?')
