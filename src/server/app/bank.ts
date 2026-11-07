@@ -845,6 +845,13 @@ async function unapprove(env: Env, u: User, ids: string[]) {
   await audit(env, u.id, 'bank_unapprove', { n: ids.length });
 }
 
+/** Tétel-azonosítók listája a kérésből (legfeljebb 500); nem tömb → 400 (korábban szövegnél 500-as hiba). */
+function idList(v: unknown): string[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new HttpError(400, 'Hibás kérés.');
+  return v.slice(0, 500).map(String);
+}
+
 export async function handleBank(env: Env, req: Request, path: string, u: User, url: URL): Promise<Response | null> {
   const bdoc = path.match(/^\/api\/billingo\/doc\/(\d{1,15})\/url$/);
   if (bdoc && req.method === 'GET') {
@@ -1001,15 +1008,25 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (am && req.method === 'PATCH') {
     requireRole(u, 'admin');
     const b = await readJson(req);
-    if (b.label !== undefined) await env.DB.prepare('UPDATE bank_accounts SET label = ? WHERE id = ?').bind(String(b.label).slice(0, 80), am[1]).run();
-    if (b.active !== undefined)
-      await env.DB.prepare('UPDATE bank_accounts SET active = ? WHERE id = ?')
-        .bind(b.active ? 1 : 0, am[1])
-        .run();
-    if (b.balance !== undefined)
-      await env.DB.prepare("UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ? AND provider = 'manual'")
-        .bind(b.balance === null ? null : parseAmount(b.balance), now(), am[1])
-        .run();
+    const acc = await env.DB.prepare('SELECT provider FROM bank_accounts WHERE id = ?').bind(am[1]).first<{ provider: string }>();
+    if (!acc) throw new HttpError(404, 'Ismeretlen bankszámla.');
+    // előbb az ellenőrzés, utána egy lépésben az írás
+    const stmts: DbStatement[] = [];
+    if (b.label !== undefined) {
+      const label = String(b.label ?? '').trim().slice(0, 80);
+      if (!label) throw new HttpError(400, 'Adj meg nevet.');
+      stmts.push(env.DB.prepare('UPDATE bank_accounts SET label = ? WHERE id = ?').bind(label, am[1]));
+    }
+    if (b.active !== undefined) stmts.push(env.DB.prepare('UPDATE bank_accounts SET active = ? WHERE id = ?').bind(b.active ? 1 : 0, am[1]));
+    if (b.balance !== undefined) {
+      // a bankkapcsolatos számla egyenlege a banktól jön; kézzel csak a kivonatos számláé írható
+      if (acc.provider !== 'manual') throw new HttpError(400, 'Ennek a számlának az egyenlege a bankból frissül, kézzel nem írható át.');
+      const raw = b.balance === null ? '' : String(b.balance).replace(/\s/g, '').replace(/Ft$/i, '');
+      // szöveg (pl. „sok”) nem lehet 0 Ft egyenleg
+      if (raw && !/^-?[\d.,]+$/.test(raw)) throw new HttpError(400, 'Hibás egyenleg. Számot adj meg (pl. 1 250 000).');
+      stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(raw ? parseAmount(raw) : null, now(), am[1]));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
     return json({ ok: true });
   }
 
@@ -1017,6 +1034,7 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ ids?: string[]; items?: ApproveItem[] }>(req);
     const items = b.items || (b.ids || []).map((id) => ({ id }));
+    if (!Array.isArray(items)) throw new HttpError(400, 'Hibás kérés.');
     await approve(env, u.id, items.slice(0, 500));
     // a terv nélkül jóváhagyott tény azonnal a hónap azonos összegű tervéhez kötődik (pl. Munkabér 300 000)
     await linkSameMonthActuals(env).catch(() => 0);
@@ -1025,14 +1043,14 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   if (path === '/api/bank/unapprove' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ ids: string[] }>(req);
-    await unapprove(env, u, (b.ids || []).slice(0, 500));
+    await unapprove(env, u, idList(b.ids));
     return json({ ok: true });
   }
   if (path === '/api/bank/ignore' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ ids: string[]; undo?: boolean }>(req);
     // egy lekerdezes az osszes tetelre (korabban tetelenkent ment egy-egy UPDATE)
-    const ids = (b.ids || []).slice(0, 500);
+    const ids = idList(b.ids);
     if (ids.length)
       await env.DB.prepare(`UPDATE bank_tx SET status = ? WHERE status = ? AND id IN (${ids.map(() => '?').join(',')})`)
         .bind(b.undo ? 'new' : 'ignored', b.undo ? 'ignored' : 'new', ...ids)
@@ -1041,12 +1059,27 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   }
   const tm = path.match(/^\/api\/bank\/tx\/([\w-]+)$/);
   if (tm && req.method === 'PATCH') {
+    // (a felület jelenleg nem hívja) várakozó banki tétel javasolt kategóriája / terve
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
+    const tx = await env.DB.prepare('SELECT status FROM bank_tx WHERE id = ?').bind(tm[1]).first<{ status: string }>();
+    if (!tx) throw new HttpError(404, 'Ismeretlen banki tétel.');
+    // a jóváhagyott tétel kategóriája / terve a tényével együtt él: itt átírva elválna tőle (visszavonás + újra jóváhagyás kell)
+    if (tx.status === 'approved') throw new HttpError(409, 'A tétel már jóvá van hagyva. Előbb vond vissza a jóváhagyást.');
     const sets: string[] = [];
     const vals: unknown[] = [];
-    if (b.leaf_id !== undefined) (sets.push('leaf_id = ?'), vals.push(b.leaf_id));
-    if (b.plan_id !== undefined) (sets.push('plan_id = ?'), vals.push(b.plan_id));
+    if (b.leaf_id !== undefined) {
+      if (b.leaf_id !== null && !(await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(String(b.leaf_id)).first()))
+        throw new HttpError(400, 'Ismeretlen kategória.');
+      sets.push('leaf_id = ?');
+      vals.push(b.leaf_id === null ? null : String(b.leaf_id));
+    }
+    if (b.plan_id !== undefined) {
+      if (b.plan_id !== null && !(await env.DB.prepare("SELECT id FROM entries WHERE id = ? AND kind = 'plan'").bind(String(b.plan_id)).first()))
+        throw new HttpError(400, 'Ismeretlen terv.');
+      sets.push('plan_id = ?');
+      vals.push(b.plan_id === null ? null : String(b.plan_id));
+    }
     if (sets.length)
       await env.DB.prepare(`UPDATE bank_tx SET ${sets.join(', ')} WHERE id = ?`)
         .bind(...vals, tm[1])
