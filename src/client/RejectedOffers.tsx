@@ -1,5 +1,6 @@
 // Lezárt (elutasított) ajánlatok: nincsenek a tervben, áthúzva látszanak, mennyi idő után zártuk le őket.
 import { useMemo } from 'react';
+import { offerKey, offerName } from '../shared/insights';
 import { fmt } from '../shared/model';
 import type { LostOffer } from '../shared/types';
 import { useStore } from './store';
@@ -19,14 +20,14 @@ export interface RejectedOffer {
   days: number | null;
 }
 
-/** Az elutasított tételek ajánlatonként összevonva (egy sorozat / név = egy ajánlat), a legutóbb lezárt elöl. */
+/** Az elutasított tételek ajánlatonként összevonva (egy sorozat / alapnév = egy ajánlat, a hónap és a részlet nélkül), a legutóbb lezárt elöl. */
 export function groupRejected(lost: LostOffer[]): RejectedOffer[] {
   const m = new Map<string, RejectedOffer>();
   for (const e of lost) {
-    const key = e.leaf_id + '|' + (e.series_id || e.name || '');
+    const key = offerKey(e);
     const x = m.get(key) || {
       key,
-      name: e.name || '(név nélkül)',
+      name: offerName(e.name) || e.name || '(név nélkül)',
       leaf_id: e.leaf_id,
       n: 0,
       sum: 0,
