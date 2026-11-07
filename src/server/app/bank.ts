@@ -52,6 +52,7 @@ export async function matchingContext(env: Env) {
   const unforeseen = leaves.find((l) => !l.archived && sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
   return {
     leaves,
+    leafLabel: (id: string) => leaves.find((l) => l.id === id)?.label || '',
     sectionOf,
     rules,
     plans: plansR.results as unknown as Entry[],
@@ -71,7 +72,7 @@ function insertTxStmt(
   status: 'new' | 'ignored' = 'new',
 ) {
   const leaf = suggestLeaf(tx, ctx.rules, ctx.leaves, ctx.sectionOf, ctx.contains);
-  const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs);
+  const plan = matchPlan({ ...tx, leaf_id: leaf }, ctx.plans, ctx.refs, ctx.leafLabel);
   return env.DB.prepare(
     `INSERT INTO bank_tx (id, account_id, ext_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, ext_id) DO NOTHING`,
@@ -151,7 +152,28 @@ export async function reapplyRules(env: Env): Promise<{ updated: number; auto: n
     if (leaf && leaf !== t.leaf_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE id = ?').bind(leaf, t.id));
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  await refreshPlanSuggestions(env, ctx);
   return { updated: stmts.length, auto: await autoApprove(env, approve) };
+}
+
+/**
+ * A jóváhagyásra váró tételek tervjavaslata: ha a beérkezéskor javasolt terv azóta megszűnt / teljesült, vagy akkor még
+ * nem volt terv (pl. a havi ÁFA-terv később jött létre), újra keressük – különben a tétel terv nélkül vár, a terv pedig
+ * lejártként a cashflow-ban marad.
+ */
+export async function refreshPlanSuggestions(env: Env, ctx?: Ctx): Promise<number> {
+  const c = ctx || (await matchingContext(env));
+  const txs = await env.DB.prepare(
+    `SELECT t.id, t.date, t.amount, t.partner, t.memo, t.leaf_id, t.plan_id FROM bank_tx t
+     WHERE t.status = 'new' AND (t.plan_id IS NULL OR NOT EXISTS (SELECT 1 FROM entries p WHERE p.id = t.plan_id AND p.kind = 'plan' AND p.done = 0))`,
+  ).all<any>();
+  const stmts: DbStatement[] = [];
+  for (const t of txs.results) {
+    const plan = matchPlan(t, c.plans, c.refs, c.leafLabel);
+    if ((plan?.id ?? null) !== t.plan_id) stmts.push(env.DB.prepare('UPDATE bank_tx SET plan_id = ? WHERE id = ?').bind(plan?.id ?? null, t.id));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return stmts.length;
 }
 
 /**
@@ -400,6 +422,11 @@ export async function syncAll(env: Env) {
     res.linkedSameMonth = await linkSameMonthActuals(env);
   } catch (e: any) {
     res.linkedSameMonthError = e.message;
+  }
+  try {
+    res.planSuggestions = await refreshPlanSuggestions(env);
+  } catch (e: any) {
+    res.planSuggestionsError = e.message;
   }
   try {
     // csak a tegnap óta módosult tervekre (a teljes tábla végigolvasása drága a D1 napi olvasási keretéhez képest)

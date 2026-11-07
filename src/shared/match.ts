@@ -122,10 +122,21 @@ function dayDiff(a: string, b: string): number {
 
 /**
  * A banki tételhez legjobban illő nyitott terv.
- * Pontozás: azonos kategória, összeg-egyezés, dátum közelség, számlaszám a közleményben.
+ * Pontozás: azonos kategória, összeg-egyezés, dátum közelség, számlaszám a közleményben; a tétel hónapjának terve
+ * előnyt kap (mint a felület tervlistájában: „elöl a tranzakció hónapjának tervei”), és a jelentősen (15–50%) eltérő
+ * összegű tervet csak akkor javasolja, ha a partner neve a terv nevében / kategóriájában szerepel – különben pl. egy
+ * másik szolgáltató utalása zárná le a közös kategória (pl. Domain-Tárhely) egy másik partnerének havi tervét.
  */
-export function matchPlan(tx: TxLike & { leaf_id?: string | null }, entries: Entry[], invoiceRefs: Record<string, string> = {}): Entry | null {
+export function matchPlan(
+  tx: TxLike & { leaf_id?: string | null },
+  entries: Entry[],
+  invoiceRefs: Record<string, string> = {},
+  leafLabel: (id: string) => string = () => '',
+): Entry | null {
   const memoN = normalizeText(tx.memo + ' ' + tx.partner);
+  // a partner nevének szavai (pl. „NAV Áfa” → nav, afa) – a terv nevében / kategóriájában keressük
+  const words = partnerKey(tx.partner || '').split(' ').filter((w) => w.length >= 3);
+  const txYm = tx.date.slice(0, 7);
   let best: { e: Entry; score: number } | null = null;
   for (const e of entries) {
     if (e.kind !== 'plan' || e.done) continue;
@@ -134,7 +145,8 @@ export function matchPlan(tx: TxLike & { leaf_id?: string | null }, entries: Ent
     if (dd < -50 || dd > 75) continue;
     let score = 0;
     const inv = invoiceRefs[e.id];
-    if (inv && memoN.includes(normalizeText(inv))) score += 100;
+    const invHit = !!inv && memoN.includes(normalizeText(inv));
+    if (invHit) score += 100;
     if (tx.leaf_id && e.leaf_id === tx.leaf_id) score += 40;
     const a = Math.abs(tx.amount),
       b = Math.abs(e.amount);
@@ -143,6 +155,11 @@ export function matchPlan(tx: TxLike & { leaf_id?: string | null }, entries: Ent
     else if (rel < 0.02) score += 30;
     else if (rel < 0.15) score += 12;
     else if (rel > 0.5) score -= 30;
+    else if (!invHit) {
+      const hay = ' ' + normalizeText(e.name + ' ' + leafLabel(e.leaf_id)) + ' ';
+      if (!words.some((w) => hay.includes(' ' + w + ' '))) score -= 15;
+    }
+    if ((e.period || e.date.slice(0, 7)) === txYm) score += 8;
     score -= Math.min(20, Math.abs(dd) / 3);
     if (score < 30) continue;
     if (!best || score > best.score) best = { e, score };
