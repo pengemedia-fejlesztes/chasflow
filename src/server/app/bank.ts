@@ -588,6 +588,7 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   const t = now();
   const unforeseen = await unforeseenLeaf(env);
   const mergedSeen = new Set<string>();
+  const usedBp = new Set<string>();
   // Elokeszites: a tetelek, a kategoriak es a szamlak EGY-EGY lekerdezessel (korabban tetelenkent haromszor kerdeztunk)
   const itemIds = [...new Set(items.map((i) => String(i.id)))];
   const txById = new Map<string, any>();
@@ -659,13 +660,23 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       if (!p || p.done || p.leaf_id !== leafId || Math.abs(tx.amount) < Math.abs(p.amount) * 0.3) planId = null;
     }
     // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel)
-    if (tx.amount > 0) {
-      const bp = await env.DB.prepare(
-        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?)) LIMIT 1",
+    // Csak ugyanannál a partnernél (kategória), és nem, ha a felhasználó kifejezetten egy (még nyitott) tervhez hagyta jóvá –
+    // különben egy másik ügyfél azonos összegű befizetése vinné el a tényt, a választott terv pedig nyitva maradna.
+    // (julianday nélkül: a MySQL-ben nincs ilyen függvény)
+    const chosenOpen =
+      'plan_id' in it && planId ? await env.DB.prepare('SELECT id FROM entries WHERE id = ? AND done = 0').bind(planId).first() : null;
+    if (tx.amount > 0 && !chosenOpen) {
+      const cands = await env.DB.prepare(
+        "SELECT id, date, amount FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND leaf_id = ? AND date >= ? AND date <= ?",
       )
-        .bind(tx.amount, tx.amount, tx.date, tx.date)
-        .first<{ id: string }>();
+        .bind(leafId, addDaysIso(tx.date, -20), addDaysIso(tx.date, 20))
+        .all<{ id: string; date: string; amount: number }>();
+      const dist = (d: string) => Math.abs(Date.parse(d) - Date.parse(tx.date));
+      const bp = cands.results
+        .filter((a) => !usedBp.has(a.id) && Math.abs(a.amount - tx.amount) <= Math.max(500, Math.abs(tx.amount) * 0.01))
+        .sort((a, b) => dist(a.date) - dist(b.date))[0];
       if (bp) {
+        usedBp.add(bp.id);
         stmts.push(
           env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
             'bank:' + tx.id,

@@ -27,3 +27,14 @@ describe('MySQL fordítás – ON CONFLICT', () => {
     expect(sql).toMatch(/ON DUPLICATE KEY UPDATE m = w\.m \+ VALUES\(`?m`?\)/);
   });
 });
+
+describe('MySQL-ben nem létező SQLite-függvények a szerver SQL-jeiben', () => {
+  it('julianday() nincs (a banki jóváhagyás „Billingo: fizetve” keresése MySQL-en elbukott)', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const dir = 'src/server/app';
+    const hits = readdirSync(dir)
+      .filter((f) => f.endsWith('.ts'))
+      .filter((f) => /julianday\s*\(/i.test(readFileSync(`${dir}/${f}`, 'utf8')));
+    expect(hits).toEqual([]);
+  });
+});
