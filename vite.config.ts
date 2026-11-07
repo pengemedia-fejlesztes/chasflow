@@ -27,6 +27,8 @@ export default defineConfig({
     __APP_BUILD__: JSON.stringify(buildDate),
   },
   build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
-  server: { proxy: { '/api': 'http://127.0.0.1:8787' } },
+  // changeOrigin: false – a szerver a bongeszo eredeti Host-jat lassa, kulonben a CSRF Origin-ellenorzes
+  // (worker/index.ts) minden irast „Tiltott eredet” hibaval elutasitana.
+  server: { proxy: { '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false } } },
   test: { root: '.', include: ['tests/**/*.test.{ts,tsx}'] },
 } as any);

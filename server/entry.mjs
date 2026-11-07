@@ -76,7 +76,9 @@ const ctx = {
 };
 
 function toRequest(req) {
-  const proto = req.headers['x-forwarded-proto'] || 'https';
+  // A proxy (Passenger) jelzi a protokollt; ha nincs fejlec, az alapertelmezes https (eles),
+  // lokalisan DEFAULT_PROTO=http – kulonben a CSRF-vedelem Origin-ellenorzese elutasitana minden irast.
+  const proto = req.headers['x-forwarded-proto'] || process.env.DEFAULT_PROTO || 'https';
   const host = req.headers.host || 'localhost';
   let path = req.url || '/';
   if (BASE && path.startsWith(BASE)) path = path.slice(BASE.length) || '/';

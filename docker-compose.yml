@@ -17,6 +17,7 @@ services:
       HOME: /tmp
       NODE_ENV: development
       PORT: "8787"
+      DEFAULT_PROTO: http # lokalisan nincs HTTPS (a CSRF Origin-ellenorzeshez kell)
       SQLITE_PATH: .data/cashflow.sqlite
       # az elso admin letrehozasahoz (a felulet kerdezi); a .env-ben felulirhato
       SETUP_TOKEN: ${SETUP_TOKEN:-helyi-teszt}
