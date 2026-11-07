@@ -441,11 +441,21 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
     const prev = await env.DB.prepare(
-      'SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?',
+      'SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel, g.section AS gsection FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?',
     )
       .bind(lm[1])
       .first<Record<string, unknown>>();
     if (!prev) throw new HttpError(404, 'Ismeretlen partner.');
+    // bevételi ↔ kiadási mappa közti áthelyezés: a tételek előjele nem illene a szekcióhoz (mint az összevonásnál, itt sem engedjük)
+    if (b.group_id !== undefined && b.group_id !== prev.group_id) {
+      const ng = await env.DB.prepare('SELECT section FROM groups WHERE id = ?').bind(String(b.group_id)).first<{ section: string }>();
+      if (!ng) throw new HttpError(400, 'Ismeretlen csoport.');
+      if (prev.gsection && ng.section !== prev.gsection) {
+        const used = await env.DB.prepare('SELECT 1 AS x FROM entries WHERE leaf_id = ? LIMIT 1').bind(lm[1]).first();
+        if (used)
+          throw new HttpError(400, 'Bevételi és kiadási mappa között nem helyezhető át, mert vannak tételei (az előjelük nem illene a mappához). Vegyél fel új alkategóriát a másik oldalon.');
+      }
+    }
     // egyetlen UPDATE a modositott mezokre (korabban mezonkent ment egy-egy kerdes)
     const setParts: string[] = [];
     const setVals: unknown[] = [];
