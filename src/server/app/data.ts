@@ -15,7 +15,18 @@ import { Env, HttpError, audit, json, now, readJson, setSetting, todayHu } from 
 /** Fizetési nap szabály ellenőrzése: első / utolsó munkanap, vagy N. nap. */
 function cleanPayRule(v: unknown): string | null {
   const r = v == null ? '' : String(v);
-  return /^(month_start|month_end|first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r) ? r : null;
+  if (!r) return null; // üres: a szabály törlése (a mappa / az alapértelmezés számít)
+  // ismeretlen szabály: hiba – korábban csendben törölte a meglévő szabályt
+  if (!/^(month_start|month_end|first_workday|last_workday|day:([1-9]|[12]\d|3[01])|inv:\d{1,3})$/.test(r)) throw new HttpError(400, 'Hibás fizetési szabály.');
+  return r;
+}
+
+/** Egész nap 0–180 között; üres / null → nincs megadva. Szöveg vagy tört → hiba (korábban csendben 0 lett). */
+function cleanDays(v: unknown, what: string): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 180) throw new HttpError(400, `${what}: 0 és 180 közötti egész számot adj meg.`);
+  return n;
 }
 
 /** Van-e már az entries.period oszlop (0016-os migráció). A telepítés a migráció hibája esetén is kirakja a kódot – addig nélküle fut. */
@@ -164,6 +175,16 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   const stmts: DbStatement[] = [];
   const entryIds = [...new Set([...(b.upsert || []).map((e) => e.id), ...(b.delete || [])])];
   const seriesIds = [...new Set([...(b.series || []).map((s) => s.id), ...(b.deleteSeries || [])])];
+  // nem létező kategóriába nem kerülhet tétel / sorozat: érthető 400 (SQLite-on különben idegenkulcs-hiba → 500,
+  // idegenkulcs nélküli adatbázison árva tétel, ami egyik nézetben sem látszik)
+  const leafIds = [...new Set([...(b.upsert || []).map((e) => e?.leaf_id), ...(b.series || []).map((s) => s?.leaf_id)].map((x) => String(x ?? '')))];
+  if (leafIds.length) {
+    if (leafIds.length > 1000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
+    const known = await env.DB.prepare(`SELECT id FROM leaves WHERE id IN (${leafIds.map(() => '?').join(',')})`)
+      .bind(...leafIds)
+      .all<{ id: string }>();
+    if (known.results.length < leafIds.length) throw new HttpError(400, 'Ismeretlen kategória. Frissítsd az oldalt, és válassz kategóriát.');
+  }
   for (const id of entryIds) {
     const version = b.expected?.[id];
     if (version !== null && (!Number.isSafeInteger(version) || Number(version) < 0)) throw new HttpError(409, 'Hiányzó tételverzió. Frissítsd az oldalt.');
@@ -459,15 +480,16 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     // egyetlen UPDATE a modositott mezokre (korabban mezonkent ment egy-egy kerdes)
     const setParts: string[] = [];
     const setVals: unknown[] = [];
-    if (b.label !== undefined) (setParts.push('label = ?'), setVals.push(String(b.label).trim().slice(0, 80)));
+    if (b.label !== undefined) {
+      const label = String(b.label ?? '').trim().slice(0, 80);
+      if (!label) throw new HttpError(400, 'Adj meg nevet.');
+      setParts.push('label = ?');
+      setVals.push(label);
+    }
     if (b.archived !== undefined) (setParts.push('archived = ?'), setVals.push(b.archived ? 1 : 0));
     if (b.group_id !== undefined) (setParts.push('group_id = ?'), setVals.push(String(b.group_id)));
     if (b.pay_rule !== undefined) (setParts.push('pay_rule = ?'), setVals.push(cleanPayRule(b.pay_rule)));
-    if (b.pay_days !== undefined) {
-      const n = b.pay_days === null || b.pay_days === '' ? null : Math.min(180, Math.max(0, Math.round(Number(b.pay_days)) || 0));
-      setParts.push('pay_days = ?');
-      setVals.push(n);
-    }
+    if (b.pay_days !== undefined) (setParts.push('pay_days = ?'), setVals.push(cleanDays(b.pay_days, 'Fizetési határidő')));
     if (setParts.length)
       await env.DB.prepare(`UPDATE leaves SET ${setParts.join(', ')} WHERE id = ?`)
         .bind(...setVals, lm[1])
@@ -496,9 +518,16 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (gm && req.method === 'PATCH') {
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
-    if (b.pay_rule !== undefined) await env.DB.prepare('UPDATE groups SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), gm[1]).run();
-    if (b.label !== undefined && String(b.label).trim())
-      await env.DB.prepare('UPDATE groups SET label = ? WHERE id = ?').bind(String(b.label).trim().slice(0, 80), gm[1]).run();
+    if (!(await env.DB.prepare('SELECT 1 AS x FROM groups WHERE id = ?').bind(gm[1]).first())) throw new HttpError(404, 'Ismeretlen csoport.');
+    // előbb minden mező ellenőrzése, utána egy lépésben az írás (hibás szabálynál a név sem változik)
+    const stmts: DbStatement[] = [];
+    if (b.pay_rule !== undefined) stmts.push(env.DB.prepare('UPDATE groups SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), gm[1]));
+    if (b.label !== undefined) {
+      const label = String(b.label ?? '').trim().slice(0, 80);
+      if (!label) throw new HttpError(400, 'Adj meg nevet.');
+      stmts.push(env.DB.prepare('UPDATE groups SET label = ? WHERE id = ?').bind(label, gm[1]));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
     await audit(env, u.id, 'group_updated', { id: gm[1], ...b });
     return json({ ok: true });
   }
@@ -527,6 +556,9 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     // a link csak akkor változik, ha a kérés hozza (a régi hívások nem törlik)
     const url = b.sheet_url === undefined ? undefined : String(b.sheet_url || '').trim();
     if (url && !sheetIdOf(url)) throw new HttpError(400, 'Google-táblázat linket adj meg (https://docs.google.com/spreadsheets/d/…).');
+    // a költség-alkategóriának léteznie kell (különben a munkatárs díja egyik projekthez sem számítana)
+    if (b.cost_leaf_id && !(await env.DB.prepare('SELECT 1 AS x FROM leaves WHERE id = ?').bind(String(b.cost_leaf_id)).first()))
+      throw new HttpError(400, 'Ismeretlen alkategória.');
     await env.DB.prepare(
       `INSERT INTO employees (key, name, cost_leaf_id, sheet_url, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
          name = excluded.name, cost_leaf_id = excluded.cost_leaf_id, sheet_url = CASE WHEN ? THEN excluded.sheet_url ELSE employees.sheet_url END,
@@ -597,7 +629,21 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       'default_oneoff_days_in',
       'default_oneoff_days_out',
     ];
-    for (const k of allowed) if (k in b) await setSetting(env, k, b[k] == null ? null : String(b[k]).slice(0, 200));
+    // előbb minden érték ellenőrzése (hibás értéknél semmi sem íródik), utána a mentés
+    const vals: [string, string | null][] = [];
+    for (const k of allowed) {
+      if (!(k in b)) continue;
+      const v = b[k] == null ? null : String(b[k]).trim().slice(0, 200);
+      if (v) {
+        if (k === 'opening_balance' || k === 'profit_target') {
+          if (!/^-?\d+$/.test(v) || Math.abs(Number(v)) > 1e12) throw new HttpError(400, 'Az összeg egész forint legyen (pl. 1500000).');
+        } else if (k === 'billingo_leaf_default') {
+          if (!(await env.DB.prepare('SELECT 1 AS x FROM leaves WHERE id = ?').bind(v).first())) throw new HttpError(400, 'Ismeretlen alkategória.');
+        } else cleanDays(v, 'Fizetési határidő');
+      }
+      vals.push([k, v]);
+    }
+    for (const [k, v] of vals) await setSetting(env, k, v);
     await audit(env, u.id, 'settings', b);
     return json({ ok: true });
   }
