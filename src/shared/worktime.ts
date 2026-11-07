@@ -111,6 +111,8 @@ export interface ProjectMonth {
   leaf: string | null;
   minutes: number;
   laborCost: number;
+  /** alvállalkozói díj, amelynek tétele ezt az ügyfelet nevezi meg (pl. „Naturtex – marketing feladatok”) */
+  subcontract: number;
   revenue: number;
 }
 
@@ -123,6 +125,7 @@ export interface BreakevenMonth {
   billableMinutes: number; // ügyfélprojekteken
   directLabor: number; // ügyfélprojektekre jutó munkaköltség (változó költség)
   subcontract: number; // alvállalkozók díja (változó költség – projektenként jön)
+  subcontractUnassigned: number; // ebből egyik ügyfélhez sem köthető (a tétel neve nem nevez meg ügyfelet)
   contribution: number; // fedezet = bevétel − változó költség (közvetlen munkaköltség + alvállalkozók)
   ratio: number; // fedezeti hányad
   fixed: number; // fix költség = összes kiadás − változó költség
@@ -169,6 +172,15 @@ export function breakeven(o: {
     if (!leafCache.has(p)) leafCache.set(p, projectLeaf(p, incomeLeaves, o.aliases));
     return leafCache.get(p)!;
   };
+  // tény → a hozzá kötött terv neve: a banki tény neve a kedvezményezett (pl. „KOVÁCS BENCE EV”), a projektet a terv nevezi meg
+  const planName = new Map<string, string>();
+  for (const e of o.entries)
+    if (e.kind === 'plan' && e.link_id && e.name) planName.set(e.link_id, e.name);
+  const byId = new Map(o.entries.map((e) => [e.id, e]));
+  for (const e of o.entries) {
+    const p = e.kind === 'actual' && e.link_id ? byId.get(e.link_id) : undefined;
+    if (p?.kind === 'plan' && p.name && !planName.has(e.id)) planName.set(e.id, p.name);
+  }
   return o.months.map((ym) => {
     const acts = o.entries.filter((e) => e.kind === 'actual' && e.date.startsWith(ym));
     const revenue = acts.filter((e) => sectionOf.get(e.leaf_id) === 'in').reduce((a, e) => a + e.amount, 0);
@@ -201,6 +213,7 @@ export function breakeven(o: {
           leaf,
           minutes: 0,
           laborCost: 0,
+          subcontract: 0,
           revenue: 0,
         };
         if (!p.names.includes(w.project)) p.names.push(w.project);
@@ -232,7 +245,22 @@ export function breakeven(o: {
     for (const [k, p] of projects) if (p.leaf) p.revenue = leafRevenue.get(k)?.rev || 0;
     // bevételes partner, akin ebben a hónapban senki nem dolgozott (a felvitt munkatársak közül)
     for (const [k, x] of leafRevenue)
-      if (!projects.has(k)) projects.set(k, { project: labelOf(x.leaf), names: [], leaf: x.leaf, minutes: 0, laborCost: 0, revenue: x.rev });
+      if (!projects.has(k)) projects.set(k, { project: labelOf(x.leaf), names: [], leaf: x.leaf, minutes: 0, laborCost: 0, subcontract: 0, revenue: x.rev });
+    // alvállalkozói díj → projekt: ha a tétel neve megnevezi az ügyfelet (név vagy alternatív név, pl. „Naturtex – marketing
+    // feladatok”), a díj annak a projektnek a fedezetét csökkenti; ami egyik ügyfélhez sem köthető, külön összegként látszik
+    let subUnassigned = 0;
+    for (const e of acts) {
+      if (!subLeaves.has(e.leaf_id)) continue;
+      const leaf = leafOf(e.name || '') || (planName.has(e.id) ? leafOf(planName.get(e.id)!) : null);
+      if (!leaf) {
+        subUnassigned -= e.amount;
+        continue;
+      }
+      const k = keyOfLeaf(leaf);
+      const p = projects.get(k) || { project: labelOf(leaf), names: [], leaf, minutes: 0, laborCost: 0, revenue: 0, subcontract: 0 };
+      p.subcontract -= e.amount;
+      projects.set(k, p);
+    }
     const subcontract = -acts.filter((e) => subLeaves.has(e.leaf_id)).reduce((a, e) => a + e.amount, 0);
     const variable = directLabor + subcontract;
     const contribution = revenue - variable;
@@ -247,7 +275,8 @@ export function breakeven(o: {
       minutes,
       billableMinutes,
       directLabor: Math.round(directLabor),
-      subcontract: Math.round(subcontract),
+      subcontract: Math.round(subcontract) || 0,
+      subcontractUnassigned: Math.round(subUnassigned) || 0,
       contribution: Math.round(contribution),
       ratio,
       fixed: Math.round(fixed),
@@ -255,7 +284,7 @@ export function breakeven(o: {
       margin: be == null ? null : Math.round(revenue - be),
       revenuePerBillableHour: billableMinutes ? Math.round(revenue / (billableMinutes / 60)) : null,
       projects: [...projects.values()]
-        .map((p) => ({ ...p, laborCost: Math.round(p.laborCost) }))
+        .map((p) => ({ ...p, laborCost: Math.round(p.laborCost), subcontract: Math.round(p.subcontract) || 0 }))
         .sort((a, b) => b.revenue - a.revenue || b.minutes - a.minutes),
       people,
     };
