@@ -278,7 +278,9 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   };
   const stmts: DbStatement[] = [];
   let plans = 0;
-  for (const d of docs) {
+  // a sztornózott számlák előbb: a saját tervről leváló számla helyére még ebben a körben beköthető a helyesbítő (új) számla
+  const isCancelled = (d: BillingoDocument) => !!d.cancelled || d.payment_status === 'cancelled';
+  for (const d of [...docs].sort((a, b) => Number(isCancelled(b)) - Number(isCancelled(a)))) {
     if (!d.id || !INCOME_TYPES.has(String(d.type))) continue;
     const rate = d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1;
     const gross = Math.round((Number(d.gross_total) || 0) * rate);
