@@ -535,3 +535,19 @@ describe('kézi teljes szinkron (POST /api/sync)', () => {
     expect(n('audit_log', "action = 'sync'")).toBe(1);
   });
 });
+
+describe('Mac-ügynök állapot (GET /api/ingest/status – olvasás, de első híváskor ír)', () => {
+  it('kulccsal: bankonkénti utolsó tétel-nap kiszámolva és eltárolva, a kezdőnap 7 nappal korábbi; kulcs nélkül 401, nem ír', async () => {
+    t = await createTestApp();
+    seed();
+    tx('t1', -4990, 'ignored', { date: '2026-10-20' });
+    tx('t2', 12_000, 'new', { date: '2026-10-28' });
+    expect((await t.call('GET', '/api/ingest/status', undefined, { Authorization: 'Bearer rossz' })).status).toBe(401);
+    expect(setting('bank_last_dates')).toBeNull();
+    const tok = (await t.post('/api/ingest/token')).data.token;
+    const r = await t.call('GET', '/api/ingest/status', undefined, { Authorization: 'Bearer ' + tok });
+    expect(r.status).toBe(200);
+    expect(r.data).toMatchObject({ last_dates: { 'Minta Bank': '2026-10-28' }, since: '2026-10-21' });
+    expect(JSON.parse(setting('bank_last_dates'))).toEqual({ 'Minta Bank': '2026-10-28' });
+  });
+});
