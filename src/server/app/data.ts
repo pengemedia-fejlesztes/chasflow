@@ -1,7 +1,7 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
 import type { DbResult, DbStatement } from './platform';
 import { baseName, withMonth } from '../../shared/monthname';
-import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../../shared/categories';
+import { groupId, groupSortKey, hash, leafId, normalizeImportRow, normalizeText, type ImportRow } from '../../shared/categories';
 import { partnerKey } from '../../shared/match';
 import { partnerIdOf } from '../../shared/partners';
 import { sheetIdOf } from '../../shared/worktime';
@@ -329,17 +329,30 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
 export class CategoryCache {
   groups = new Set<string>();
   leaves = new Set<string>();
+  // név szerinti keresés: az átnevezett mappa / alkategória azonosítója a RÉGI névből számolt, így az új névből számolt
+  // azonosító nem létezik – az INSERT OR IGNORE a (mappa, név) egyedisége miatt csendben kimaradna, és a tétel nem
+  // létező kategóriára mutatna (idegenkulcs-hiba / árva tétel)
+  private groupByLabel = new Map<string, string>();
+  private leafByLabel = new Map<string, string>();
   constructor(private env: Env) {}
   async load() {
-    const g = await this.env.DB.prepare('SELECT id FROM groups').all<{ id: string }>();
-    g.results.forEach((r) => this.groups.add(r.id));
-    const l = await this.env.DB.prepare('SELECT id FROM leaves').all<{ id: string }>();
-    l.results.forEach((r) => this.leaves.add(r.id));
+    const g = await this.env.DB.prepare('SELECT id, section, label FROM groups').all<{ id: string; section: string; label: string }>();
+    g.results.forEach((r) => {
+      this.groups.add(r.id);
+      this.groupByLabel.set(`${r.section}|${normalizeText(r.label)}`, r.id);
+    });
+    const l = await this.env.DB.prepare('SELECT id, group_id, label FROM leaves').all<{ id: string; group_id: string; label: string }>();
+    l.results.forEach((r) => {
+      this.leaves.add(r.id);
+      this.leafByLabel.set(`${r.group_id}|${normalizeText(r.label)}`, r.id);
+    });
     return this;
   }
   stmtsFor(section: Section, group: string, leaf: string): { gid: string; lid: string; stmts: DbStatement[] } {
-    const gid = groupId(section, group);
-    const lid = leafId(gid, leaf);
+    let gid = groupId(section, group);
+    if (!this.groups.has(gid)) gid = this.groupByLabel.get(`${section}|${normalizeText(group)}`) || gid;
+    let lid = leafId(gid, leaf);
+    if (!this.leaves.has(lid)) lid = this.leafByLabel.get(`${gid}|${normalizeText(leaf)}`) || lid;
     const stmts: DbStatement[] = [];
     if (!this.groups.has(gid)) {
       stmts.push(

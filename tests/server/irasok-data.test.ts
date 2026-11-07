@@ -331,3 +331,27 @@ describe('kuka (POST /api/trash/restore) – idempotencia', () => {
     expect(n('change_log')).toBe(logs);
   });
 });
+
+describe('xls import átnevezett kategóriákba', () => {
+  it('átnevezett alkategória / mappa új nevére importált sor a meglévő sorba kerül (nem 500, nincs árva tétel)', async () => {
+    t = await createTestApp();
+    const L = await setupLeaves(t);
+    expect((await t.patch(`/api/leaves/${L.minta}`, { label: 'Minta Hungary Kft.' })).status).toBe(200);
+    expect((await t.patch(`/api/groups/${L.gout}`, { label: '3 Iroda és működés' })).status).toBe(200);
+    const leavesBefore = n('leaves');
+    const r = await t.post('/api/import', {
+      kind: 'actual',
+      rows: [
+        { date: '2026-10-05', name: 'Havi díj', category: 'Projektek - Minta Hungary Kft.', amount: 250_000 },
+        { date: '2026-10-12', name: 'Szerverbérlés', category: '3 Iroda és működés - Szoftver, beszerzés', amount: -49_000 },
+      ],
+    });
+    expect(r.status).toBe(200);
+    expect(rows('SELECT name, leaf_id FROM entries ORDER BY date')).toEqual([
+      { name: 'Havi díj', leaf_id: L.minta },
+      { name: 'Szerverbérlés', leaf_id: L.szoftver },
+    ]);
+    expect(n('leaves')).toBe(leavesBefore);
+    expect(rows('SELECT count(*) AS n FROM entries e LEFT JOIN leaves l ON l.id = e.leaf_id WHERE l.id IS NULL')).toEqual([{ n: 0 }]);
+  });
+});
