@@ -1043,7 +1043,11 @@ export async function importManualRows(
   // tartalom szerinti duplikáció-szűrés: ugyanaz a tétel más formátumból (pl. CSV után aggreg8 XML) más azonosítóval jönne
   const inRows = (b.rows || []).slice(0, 30000);
   const dates = inRows.map((r) => parseDate(r.date)).filter(Boolean) as string[];
-  const have: Record<string, number> = {};
+  // Az aggreg8 saját azonosítója („a8:…”) megbízható: két különböző a8-azonosítójú, azonos napi és összegű tétel két
+  // külön banki tétel (pl. két 199 Ft-os díj, két azonos összegű kártyás vásárlás) – az a8-tételt tartalom szerint csak
+  // más forrásból (kivonat-fájl) már meglévő tétel szűri ki. A kivonat-fájlok tételei egymás között is tartalom szerint.
+  const isA8 = (ext: string) => ext.startsWith('a8:');
+  const have: Record<string, { a8: number; file: number }> = {};
   const haveExt = new Set<string>();
   if (dates.length) {
     const ex = await env.DB.prepare('SELECT date, amount, ext_id FROM bank_tx WHERE account_id = ? AND date >= ? AND date <= ?')
@@ -1055,9 +1059,11 @@ export async function importManualRows(
       .all<{ date: string; amount: number; ext_id: string }>();
     ex.results.forEach((t) => {
       haveExt.add(t.ext_id);
-      have[`${t.date}|${t.amount}`] = (have[`${t.date}|${t.amount}`] || 0) + 1;
+      const h = (have[`${t.date}|${t.amount}`] ||= { a8: 0, file: 0 });
+      h[isA8(t.ext_id) ? 'a8' : 'file']++;
     });
   }
+  const parsed: { ext: string; date: string; amount: number; partner: string; memo: string }[] = [];
   for (const r of inRows) {
     const date = parseDate(r.date);
     const amount = parseAmount(r.amount);
@@ -1071,13 +1077,29 @@ export async function importManualRows(
       ext = base + '|' + seen[base];
     }
     n++;
-    if (haveExt.has(ext)) continue;
-    const k = `${date}|${amount}`;
-    if (have[k]) {
-      have[k]--;
+    parsed.push({ ext, date, amount, partner, memo });
+  }
+  // 1. a már meglévő (azonosító szerint ismert) tételek a saját párjukat fogyasztják – különben egy azonos napi és
+  //    összegű ÚJ tétel (a sorrendtől függően) tévesen duplikátumnak számítana, és elveszne
+  const fresh = parsed.filter((x) => {
+    if (!haveExt.has(x.ext)) return true;
+    const h = have[`${x.date}|${x.amount}`];
+    const fam = isA8(x.ext) ? 'a8' : 'file';
+    if (h && h[fam] > 0) h[fam]--;
+    return false;
+  });
+  // 2. az új azonosítójú tételek: tartalom szerinti duplikáció-szűrés, a maradék beérkezik
+  for (const x of fresh) {
+    const h = have[`${x.date}|${x.amount}`];
+    if (h && h.file > 0) {
+      h.file--;
       continue;
     }
-    stmts.push(insertTxStmt(env, ctx, acc.id, { ext, date, amount, currency: 'HUF', partner, memo }, statusFor(date, amount)));
+    if (h && !isA8(x.ext) && h.a8 > 0) {
+      h.a8--;
+      continue;
+    }
+    stmts.push(insertTxStmt(env, ctx, acc.id, { ...x, currency: 'HUF' }, statusFor(x.date, x.amount)));
   }
   if (b.balance !== undefined && b.balance !== null && String(b.balance).trim() !== '')
     stmts.push(env.DB.prepare('UPDATE bank_accounts SET balance = ?, balance_at = ? WHERE id = ?').bind(parseAmount(b.balance), now(), acc.id));
