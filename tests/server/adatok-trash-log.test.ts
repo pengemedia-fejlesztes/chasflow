@@ -109,6 +109,20 @@ describe('változásnapló visszavonás', () => {
     expect((await tab.reload()).entries[0]).toMatchObject({ amount: -380_000, date: '2026-12-05' });
   });
 
+  it('sorozat-átnevezés visszavonása a naplóból: a sorozat és minden nyitott hónap visszakapja a régi nevet', async () => {
+    const { app, L, tab } = await setup();
+    const b = genSeries({ leaf: L.minta, section: 'in', name: 'Havi díj', amount: 250_000, startYm: '2026-11', count: 3, rep: 'monthly', day: 10 });
+    await tab.commit(b);
+    await tab.reload();
+    const nov = tab.data.entries.find((e) => e.date === '2026-11-10')!;
+    await tab.commit({ upsert: [{ ...nov, name: 'Marketing díj' }] }, 'Átnevezve');
+    expect(app.sql.prepare('SELECT DISTINCT name FROM entries').all()).toEqual([{ name: 'Marketing díj' }]);
+    const log = (await app.get('/api/changelog')).data.items as any[];
+    expect((await app.post(`/api/changelog/${log[0].id}/undo`, {})).status).toBe(200);
+    expect(app.sql.prepare('SELECT DISTINCT name FROM entries').all()).toEqual([{ name: 'Havi díj' }]);
+    expect((app.sql.prepare('SELECT name FROM series').get() as any).name).toBe('Havi díj');
+  });
+
   it('ha a tételt azóta újra módosították, a visszavonás rákérdez (409), kényszerítve felülírja', async () => {
     const { app, L, tab } = await setup();
     await tab.commit(genSeries({ leaf: L.iroda, section: 'out', name: 'Bérleti díj', amount: 380_000, startYm: '2026-12', count: 1, rep: 'once', day: 5 }));
