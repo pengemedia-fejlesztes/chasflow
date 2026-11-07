@@ -232,9 +232,16 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
       ),
     );
   }
+  // Csak a valóban más nevű testvértételek változnak (és kapnak új verziót): egy összeg-módosítás vagy kész-jelölés
+  // nem érinti a sorozat többi hónapját – különben a böngésző által ismert verziójuk elavulna, és a következő
+  // szerkesztésük hamis ütközéssel (409) hasalna el.
+  const renameIdx: number[] = [];
   for (const [sid, nev] of atnevezesek) {
     stmts.push(env.DB.prepare('UPDATE series SET name = ? WHERE id = ?').bind(nev, sid));
-    stmts.push(env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0").bind(nev, t, sid));
+    renameIdx.push(stmts.length);
+    stmts.push(
+      env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0 AND name <> ?").bind(nev, t, sid, nev),
+    );
   }
 
   // Billingo számla kézi átsorolása → partner szabály tanulása (a következő számlák és banki tételek is ide kerülnek).
@@ -270,6 +277,13 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     );
     stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(String(id)));
   }
+  // visszavonás (purge): a most visszaállított tételek friss kukás másolata kikerül (mint a változásnapló visszavonásánál),
+  // különben egy újabb törlés után kétszer látszanának a kukában
+  if (b.purge)
+    for (const e of b.upsert || [])
+      stmts.push(
+        env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_by = ? AND deleted_at > ?').bind(String(e.id), userId, t - 15 * 60_000),
+      );
   for (const id of b.deleteSeries || []) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ?').bind(String(id)));
   if (stmts.length > 2000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
   stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
@@ -285,7 +299,9 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
     throw e;
   }
   const versions = Object.fromEntries(results.slice(results.length - versionIds.length).flatMap((r) => r.results.map((e: any) => [e.id, e.updated_at])));
-  return { changes: stmts.length, versions: versionIds.length ? versions : {} };
+  // a batch-en kívüli testvértételek is átneveződtek (új név és verzió) → a kliens töltse újra az adatot
+  const renamedOthers = renameIdx.some((i) => Number(results[i]?.meta?.changes || 0) > 0);
+  return { changes: stmts.length, versions: versionIds.length ? versions : {}, ...(renamedOthers ? { reload: true } : {}) };
 }
 
 /** Kategória biztosítása (import, Billingo, bank). */
@@ -425,11 +441,21 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     requireRole(u, 'admin', 'member');
     const b = await readJson(req);
     const prev = await env.DB.prepare(
-      'SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?',
+      'SELECT l.label, l.archived, l.group_id, l.pay_rule, l.pay_days, g.label AS glabel, g.section AS gsection FROM leaves l LEFT JOIN groups g ON g.id = l.group_id WHERE l.id = ?',
     )
       .bind(lm[1])
       .first<Record<string, unknown>>();
     if (!prev) throw new HttpError(404, 'Ismeretlen partner.');
+    // bevételi ↔ kiadási mappa közti áthelyezés: a tételek előjele nem illene a szekcióhoz (mint az összevonásnál, itt sem engedjük)
+    if (b.group_id !== undefined && b.group_id !== prev.group_id) {
+      const ng = await env.DB.prepare('SELECT section FROM groups WHERE id = ?').bind(String(b.group_id)).first<{ section: string }>();
+      if (!ng) throw new HttpError(400, 'Ismeretlen csoport.');
+      if (prev.gsection && ng.section !== prev.gsection) {
+        const used = await env.DB.prepare('SELECT 1 AS x FROM entries WHERE leaf_id = ? LIMIT 1').bind(lm[1]).first();
+        if (used)
+          throw new HttpError(400, 'Bevételi és kiadási mappa között nem helyezhető át, mert vannak tételei (az előjelük nem illene a mappához). Vegyél fel új alkategóriát a másik oldalon.');
+      }
+    }
     // egyetlen UPDATE a modositott mezokre (korabban mezonkent ment egy-egy kerdes)
     const setParts: string[] = [];
     const setVals: unknown[] = [];
@@ -687,13 +713,32 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ rids: number[] }>(req);
     const rids = (Array.isArray(b.rids) ? b.rids : []).map(Number).filter(Number.isFinite).slice(0, 500);
-    const restored = rids.length
-      ? (
-          await env.DB.prepare(`SELECT id, name, leaf_id, date, amount, kind FROM deleted_entries WHERE rowid IN (${rids.map(() => '?').join(',')})`)
-            .bind(...rids)
-            .all<Record<string, unknown>>()
-        ).results
-      : [];
+    const pick = async (ids: number[]) =>
+      ids.length
+        ? (
+            await env.DB.prepare(`SELECT rowid AS rid, id, name, leaf_id, date, amount, kind, done, link_id FROM deleted_entries WHERE rowid IN (${ids.map(() => '?').join(',')})`)
+              .bind(...ids)
+              .all<Record<string, unknown>>()
+          ).results
+        : [];
+    const restored = await pick(rids);
+    // Terv ↔ tény kötés: a kész terv a hozzá kötött, vele együtt törölt ténnyel együtt jön vissza
+    // (különben „teljesült” lenne tény nélkül – és a terv összege sem számítana).
+    const partnerIds = [...new Set(restored.filter((r) => r.kind === 'plan' && r.done && r.link_id).map((r) => String(r.link_id)))].filter(
+      (id) => !restored.some((r) => r.id === id),
+    );
+    if (partnerIds.length) {
+      const extra = (
+        await env.DB.prepare(
+          `SELECT max(d.rowid) AS rid FROM deleted_entries d WHERE d.id IN (${partnerIds.map(() => '?').join(',')}) AND d.kind = 'actual'
+             AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id) GROUP BY d.id`,
+        )
+          .bind(...partnerIds)
+          .all<{ rid: number }>()
+      ).results.map((r) => Number(r.rid));
+      restored.push(...(await pick(extra)));
+      rids.push(...extra);
+    }
     const stmts: DbStatement[] = [];
     for (const rid of rids) {
       stmts.push(
@@ -705,6 +750,24 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       stmts.push(env.DB.prepare('DELETE FROM deleted_entries WHERE rowid = ? AND id IN (SELECT id FROM entries)').bind(rid));
     }
     for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+    // a visszajött kötések rendbetétele: a ténye nélküli kész terv újra nyitott; a visszajött tény a még nyitott tervéhez kötődik
+    const linkBefore: Record<string, unknown>[] = [];
+    const fix: DbStatement[] = [];
+    const ids = [...new Set(restored.map((r) => String(r.id)))];
+    const cur = await rowsById(env, 'entries', ids);
+    const curById = new Map(cur.map((r) => [String(r.id), r]));
+    const targets = await rowsById(env, 'entries', cur.map((r) => String(r.link_id || '')).filter(Boolean));
+    const tById = new Map(targets.map((r) => [String(r.id), r]));
+    for (const r of cur) {
+      if (!r.link_id) continue;
+      const other = tById.get(String(r.link_id));
+      if (r.kind === 'plan' && r.done && !other) fix.push(env.DB.prepare("UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND kind = 'plan'").bind(r.id));
+      if (r.kind === 'actual' && other && other.kind === 'plan' && !other.done && !other.link_id && !curById.has(String(other.id))) {
+        linkBefore.push(other);
+        fix.push(env.DB.prepare("UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ? AND done = 0 AND link_id IS NULL").bind(r.id, now(), u.id, other.id));
+      }
+    }
+    if (fix.length) await env.DB.batch(fix);
     await audit(env, u.id, 'trash.restore', { rids });
     const back = restored.filter((r, i, a) => a.findIndex((x) => x.id === r.id) === i);
     if (back.length)
@@ -714,7 +777,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
         'trash.restore',
         `Kukából visszaállítva · ${back.length} tétel`,
         back.map((r) => String(r.leaf_id)),
-        { type: 'entries', before: [], created: back.map((r) => String(r.id)), seriesBefore: [], seriesCreated: [] },
+        { type: 'entries', before: linkBefore, created: back.map((r) => String(r.id)), seriesBefore: [], seriesCreated: [] },
         back.map((r) => ({
           op: 'new' as const,
           name: String(r.name || ''),

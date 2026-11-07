@@ -51,6 +51,9 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
     if (parsedAmount === null) return setError('Egész forintösszeget adj meg, tizedesjel és előjel nélkül.');
     if (!amt) return setError('Adj meg összeget.');
     if (!f.leaf) return setError('Válassz kategóriát.');
+    // a teljesült hónapok (és a tényük) előjele a régi oldalhoz tartozik – bevétel ↔ kiadás váltás csak nyitott sorozatnál
+    if (edit && initLeaf && ix.sectionOf(initLeaf) !== f.type && rowEntries.some((e) => e.done))
+      return setError('A sorozatnak már van teljesült tétele, ezért nem tehető át a bevétel és a kiadás között. Vegyél fel új tételt.');
     saving.current = true;
     setBusy(true);
     let ok = false;

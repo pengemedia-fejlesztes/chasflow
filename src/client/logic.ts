@@ -48,6 +48,8 @@ export function genSeries(o: {
       id: uid('e'),
       kind: 'plan',
       date: o.payRule ? payDate(addMonths(o.startYm, i * step), o.payRule, o.day) : dateIn(addMonths(o.startYm, i * step), o.day),
+      // a tétel hónapja a díj saját hónapja – a szabály szerinti fizetés (pl. „számlázás + 30 nap”) átcsúszhat a következő hónapra
+      period: addMonths(o.startYm, i * step),
       leaf_id: o.leaf,
       name: o.name,
       amount: signed(o.section, o.amount),
@@ -108,15 +110,25 @@ export function shiftEntries(d: DataBundle, ids: string[], n: number): EntryBatc
 
 export function deleteEntries(d: DataBundle, ids: string[]): EntryBatch {
   const set = new Set(ids);
-  const del = [...set];
+  const del = new Set(set);
+  const byId = new Map(d.entries.map((e) => [e.id, e]));
   // a kézzel létrehozott, hozzá kapcsolt tény is törlődjön
   d.entries.forEach((e) => {
-    if (set.has(e.id) && e.link_id) {
-      const l = d.entries.find((x) => x.id === e.link_id);
-      if (l && l.source === 'manual' && l.kind === 'actual') del.push(l.id);
+    if (set.has(e.id) && e.kind === 'plan' && e.link_id) {
+      const l = byId.get(e.link_id);
+      if (l && l.source === 'manual' && l.kind === 'actual') del.add(l.id);
     }
   });
-  return { delete: del };
+  // A kötés két vége nem maradhat árván (mint a markDone visszanyitásánál és a banki jóváhagyás visszavonásánál):
+  //  - törölt tény → a rá mutató terv újra nyitott (különben „teljesült” lenne tény nélkül, és sem a terv, sem a tény nem számítana);
+  //  - törölt terv → a megmaradó (banki / importált) tény leválik róla.
+  const upsert: Entry[] = [];
+  for (const e of d.entries) {
+    if (del.has(e.id) || !e.link_id || !del.has(e.link_id)) continue;
+    if (e.kind === 'plan') upsert.push({ ...e, done: 0, link_id: null });
+    else if (e.kind === 'actual') upsert.push({ ...e, link_id: null });
+  }
+  return upsert.length ? { delete: [...del], upsert } : { delete: [...del] };
 }
 
 /** Sor-kulcs a kategória nézethez: sorozat, vagy (importált terveknél) kategória+név. */
