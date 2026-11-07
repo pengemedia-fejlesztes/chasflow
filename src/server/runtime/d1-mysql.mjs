@@ -88,6 +88,8 @@ export function translate(sqlIn) {
     (m, cols, tbl) => `(SELECT REPLACE(CAST(json_array(${cols}) AS CHAR), ' ', '') FROM ${tbl} WHERE id = ?) <=> REPLACE(?, ' ', '')`,
   );
   sql = sql.replace(/\)\s+IS\s+\?/gi, ') <=> ?');
+  // oszlop „IS ?” (pl. NAV sztornó: partner_tax IS ?) – MySQL-ben az IS után nem állhat paraméter
+  sql = sql.replace(/\b([A-Za-z_][\w.]*)\s+IS\s+\?/g, (m, col) => (/^(NOT|AND|OR|WHERE|WHEN|THEN|ELSE)$/i.test(col) ? m : `${col} <=> ?`));
   // SQLite kétargumentumú MAX(a, b) / MIN(a, b) -> GREATEST / LEAST (az aggregát MAX(x) marad)
   sql = scalarMinMax(sql);
 

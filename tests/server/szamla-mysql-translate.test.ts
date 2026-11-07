@@ -38,3 +38,14 @@ describe('MySQL-ben nem létező SQLite-függvények a szerver SQL-jeiben', () =
     expect(hits).toEqual([]);
   });
 });
+
+describe('MySQL fordítás – null-biztos egyenlőség (IS ?)', () => {
+  it('oszlop IS ? → <=> ? (NAV sztornó: az eredeti számla kikerül)', () => {
+    const sql = translate("UPDATE nav_invoices SET status = 'ignored', updated_at = ? WHERE invoice_number = ? AND partner_tax IS ? AND status = 'new'");
+    expect(sql).toContain('partner_tax <=> ?');
+    expect(sql).not.toMatch(/\bIS\s+\?/);
+  });
+  it('IS NULL / IS NOT NULL változatlan', () => {
+    expect(translate('SELECT 1 FROM t WHERE a IS NULL AND b IS NOT NULL')).toBe('SELECT 1 FROM t WHERE a IS NULL AND b IS NOT NULL');
+  });
+});
