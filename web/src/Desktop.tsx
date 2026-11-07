@@ -108,7 +108,17 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   }, [ix, filters]);
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   // felső szint: Bevétel és Ajánlatok (a partnerek közvetlenül alattuk), a Kiadásnak vannak mappái
-  const topRows = sideMatrix.rows.filter((r) => r.type === 'section' && r.section === 'in' && r.groupId);
+  // mindig látszanak, akkor is, ha a kiválasztott időszakban nincs tételük
+  const topRows = useMemo(() => {
+    const inG = ix.groups.filter((g) => g.section === 'in');
+    const offer = inG.find((g) => /aj[áa]nlat/i.test(g.label));
+    const income = inG.find((g) => g.id !== offer?.id);
+    const totalOf = (label: string) => sideMatrix.rows.find((r) => r.type === 'section' && r.label === label)?.total ?? 0;
+    return [
+      ...(income ? [{ id: 'in', label: 'Bevétel', groupId: income.id, total: totalOf('Bevétel') }] : []),
+      ...(offer ? [{ id: offer.id, label: 'Ajánlatok', groupId: offer.id, total: offerTotals.get(offer.id) ?? 0 }] : []),
+    ];
+  }, [ix.groups, sideMatrix, offerTotals]);
   const goGroup = (id: string) => {
     setFilters({ groupId: id });
     setView('cat');
@@ -247,7 +257,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
               key={g.id}
               className="side-btn"
               aria-current={view === 'cat' && filters.groupId === g.groupId ? 'page' : undefined}
-              onClick={() => goGroup(g.groupId!)}
+              onClick={() => goGroup(g.groupId)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -264,7 +274,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
               }}
             >
               <span style={{ flex: 1, minWidth: 0 }}>{g.label}</span>
-              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(offerTotals.get(g.id) ?? g.total)}</span>
+              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
             </button>
           ))}
           {groupRows.length > 0 && <div style={{ padding: '12px 12px 6px', font: `700 13.5px ${FONT}`, color: '#fff' }}>Kiadás</div>}
