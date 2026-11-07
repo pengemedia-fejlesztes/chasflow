@@ -180,6 +180,15 @@ async function undoChange(env: Env, row: { id: number; ts: number; undo: string 
         undo.before.map((r) => ({ ...r, updated_at: t, updated_by: u.id })),
       )),
     );
+    // A sorozat neve egy helyen él (a mentés a sorozatot és minden nyitott hónapját átnevezi) – a visszavonás is
+    // a sorozat és a testvérhónapok korábbi nevét állítja vissza, nem csak a módosított tételét.
+    const names = new Map<string, string>();
+    for (const r of undo.before) if (r.kind === 'plan' && r.series_id && r.name) names.set(String(r.series_id), String(r.name));
+    for (const [sid, name] of names)
+      stmts.push(
+        env.DB.prepare('UPDATE series SET name = ? WHERE id = ?').bind(name, sid),
+        env.DB.prepare("UPDATE entries SET name = ?, updated_at = ? WHERE series_id = ? AND kind = 'plan' AND done = 0 AND name <> ?").bind(name, t, sid, name),
+      );
     for (const r of undo.before)
       stmts.push(
         env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_at >= ? AND deleted_at <= ?').bind(r.id, row.ts - 60_000, row.ts + 60_000),
