@@ -4,7 +4,7 @@ import { partnerKey, suggestLeaf, type ContainsRule } from '../../shared/match';
 import { loadContains } from './rules';
 import type { Leaf } from '../../shared/types';
 import { CategoryCache } from './data';
-import { matchPayments, namesMatch } from '../../shared/billingopay';
+import { matchPayments, nameOwner, namesMatch } from '../../shared/billingopay';
 import { partnerIdOf } from '../../shared/partners';
 import { taxBase, taxLeafMap } from './partnertax';
 import { Env, HttpError, audit, getSetting, now, setSetting, todayHu } from './util';
@@ -70,6 +70,39 @@ async function leafForPartner(
   stmts.push(...r.stmts);
   leaves.push({ id: r.lid, group_id: r.gid, label, sort: 0, archived: 0 });
   return r.lid;
+}
+
+/**
+ * Partnernevek a számla ↔ terv kötéshez: egy alkategóriában több ügyfél terve is lehet (pl. „Domain és tárhely”), ezért
+ * a más ügyfél nevére szóló terv nem köthető a számlához. `own(partner)` = a számla partnerének nevei, `known` = minden ismert név.
+ */
+export async function partnerNames(env: Env, alias: Record<string, string> = {}) {
+  const [pR, dR, lR, rR] = await env.DB.batch([
+    env.DB.prepare('SELECT name, aliases FROM partners'),
+    env.DB.prepare('SELECT DISTINCT partner FROM billingo_docs WHERE partner IS NOT NULL'),
+    env.DB.prepare("SELECT l.label FROM leaves l JOIN groups g ON g.id = l.group_id WHERE g.section = 'in'"),
+    env.DB.prepare('SELECT pattern FROM partner_rules'),
+  ]);
+  const groups = (pR.results as any[]).map((p) => {
+    let a: string[] = [];
+    try {
+      a = JSON.parse(p.aliases || '[]');
+    } catch {}
+    return [p.name, ...a].filter(Boolean) as string[];
+  });
+  const known = [
+    ...groups.flat(),
+    ...(dR.results as any[]).map((d) => d.partner as string),
+    ...(lR.results as any[]).map((l) => l.label as string),
+    ...(rR.results as any[]).map((r) => r.pattern as string),
+    ...Object.values(alias),
+  ];
+  const own = (partner: string) => [
+    partner,
+    ...(alias[partnerKey(partner)] ? [alias[partnerKey(partner)]] : []),
+    ...groups.filter((g) => g.some((n) => namesMatch(n, partner))).flat(),
+  ];
+  return { known, own };
 }
 
 const OFFER_RX = /aj[áa]nlat/i;
@@ -145,10 +178,10 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     env.DB.prepare('SELECT * FROM leaves'),
     env.DB.prepare('SELECT id, label, section FROM groups'),
     env.DB.prepare('SELECT pattern, leaf_id FROM partner_rules'),
-    env.DB.prepare("SELECT id, ext_ref, done, leaf_id, date FROM entries WHERE ext_ref LIKE 'billingo:%'"),
+    env.DB.prepare("SELECT id, ext_ref, done, leaf_id, date, amount, tentative, name FROM entries WHERE ext_ref LIKE 'billingo:%'"),
     env.DB.prepare('SELECT id, due_date FROM billingo_docs'),
     env.DB.prepare(
-      "SELECT id, leaf_id, date, amount, tentative FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-120 days')",
+      "SELECT id, leaf_id, date, amount, tentative, name FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-120 days')",
     ),
   ]);
   const leaves = leavesR.results as unknown as Leaf[];
@@ -159,24 +192,35 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   const sectionOf = (id: string) => secOfGroup[leafGroup[id]] || 'out';
   const rules: Record<string, string> = {};
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
-  const existing = new Map<string, { id: string; done: number; leaf_id: string; date: string }>();
+  const existing = new Map<string, { id: string; done: number; leaf_id: string; date: string; amount: number; tentative: number; name: string }>();
   (existingR.results as any[]).forEach((e) => existing.set(e.ext_ref, e));
   const prevDue = new Map<number, string>();
   (docsR.results as any[]).forEach((d) => prevDue.set(d.id, d.due_date));
 
   // nyitott (kézi / importált) tervek, amelyekhez a számla hozzárendelhető – így nincs dupla bevétel
-  const openPlans = openR.results as unknown as { id: string; leaf_id: string; date: string; amount: number; tentative: number }[];
+  const openPlans = openR.results as unknown as { id: string; leaf_id: string; date: string; amount: number; tentative: number; name: string }[];
   const used = new Set<string>();
+  // partner álnevek (pl. „MAGYAR OKLEVELES ADÓSZAKÉRTŐK EGYESÜLETE” → „MOKLASZ”): a terv neve ezzel jelenik meg
+  let alias: Record<string, string> = {};
+  try {
+    alias = JSON.parse((await getSetting(env, 'partner_alias')) || '{}');
+  } catch {}
+  const names = await partnerNames(env, alias);
+  const leafLabel = (id: string) => leaves.find((l) => l.id === id)?.label || '';
+  /** a terv (tény) neve szerint kié: a számla partneréé, másik ügyfélé, vagy általános */
+  const ownerOf = (name: string, leaf: string, partner: string) => nameOwner(name, names.own(partner), names.known, leafLabel(leaf));
   /**
    * A partner (kategória) nyitott terve(i), amelyekhez a számla tartozik – a számla a tervhez kötődik, az összegtől függetlenül
    * (az eltérést a riasztás jelzi). Sorrend: egy terv ±3%-kal; több tétel együtt (pl. SEO + PPC); különben a legközelebbi terv.
+   * Egy alkategóriában több ügyfél terve is lehet (pl. „Domain és tárhely”): a más ügyfél nevére szóló terv kimarad,
+   * a számla partnerének nevére szóló előnyt kap.
    */
-  const findPlan = (leaf: string, gross: number, due: string): { id: string; covered: string[] } | null => {
+  const findPlan = (leaf: string, gross: number, due: string, partner: string): { id: string; covered: string[] } | null => {
     const near = openPlans
       .filter((p) => !used.has(p.id) && p.leaf_id === leaf)
-      .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(due)) / 86400_000 }))
-      .filter((p) => p.dd <= 25)
-      .sort((a, b) => a.tentative - b.tentative || a.dd - b.dd);
+      .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(due)) / 86400_000, who: ownerOf(p.name, p.leaf_id, partner) }))
+      .filter((p) => p.dd <= 25 && p.who !== 'other')
+      .sort((a, b) => a.tentative - b.tentative || Number(b.who === 'own') - Number(a.who === 'own') || a.dd - b.dd);
     const close = (v: number) => Math.abs(v - gross) / Math.max(gross, 1) <= 0.03;
     const take = (ps: typeof near) => {
       ps.forEach((p) => used.add(p.id));
@@ -197,17 +241,12 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     return nearest ? take([nearest]) : null;
   };
 
-  // partner álnevek (pl. „MAGYAR OKLEVELES ADÓSZAKÉRTŐK EGYESÜLETE” → „MOKLASZ”): a terv neve ezzel jelenik meg
-  let alias: Record<string, string> = {};
-  try {
-    alias = JSON.parse((await getSetting(env, 'partner_alias')) || '{}');
-  } catch {}
   const t = now();
   const today = todayHu();
   // a már meglévő bevételi tények (pl. xls import, banki tétel) – a Billingo „fizetve” ne duplázza meg őket
   const actualsR = await env.DB.prepare(
-    "SELECT id, leaf_id, date, amount FROM entries WHERE kind = 'actual' AND amount > 0 AND date >= date('now', '-200 days')",
-  ).all<{ id: string; leaf_id: string; date: string; amount: number }>();
+    "SELECT id, leaf_id, date, amount, name FROM entries WHERE kind = 'actual' AND amount > 0 AND date >= date('now', '-200 days')",
+  ).all<{ id: string; leaf_id: string; date: string; amount: number; name: string }>();
   const linkedR = await env.DB.prepare("SELECT link_id FROM entries WHERE kind = 'plan' AND link_id IS NOT NULL").all<{ link_id: string }>();
   const linked = new Set(linkedR.results.map((r) => r.link_id));
   /** Billingo szerint kifizetett számla → tény (vagy a meglévő, azonos tényhez kötés) + a terv lezárása. */
@@ -218,7 +257,9 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         !linked.has(a.id) &&
         a.leaf_id === leaf &&
         Math.abs(a.amount - gross) <= Math.max(500, gross * 0.01) &&
-        Math.abs(Date.parse(a.date) - Date.parse(paidOn)) <= 12 * 86400_000,
+        Math.abs(Date.parse(a.date) - Date.parse(paidOn)) <= 12 * 86400_000 &&
+        // több ügyfeles alkategóriában a másik ügyfél befizetése (tény) nem ez
+        ownerOf(a.name, a.leaf_id, d.partner?.name || partner) !== 'other',
     );
     const aid = same?.id || 'bp' + d.id;
     linked.add(aid);
@@ -248,7 +289,14 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
     let planId = ex?.id ?? null;
 
     if (cancelled) {
-      if (ex && !ex.done) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(ex.id));
+      if (ex && !ex.done) {
+        if (ex.id === 'b' + d.id) stmts.push(env.DB.prepare('DELETE FROM entries WHERE id = ?').bind(ex.id));
+        else {
+          // a saját (előre felvett) terv megmarad, csak a számla válik le róla: újra „nincs kiszámlázva”, a helyesbítő számla köthető hozzá
+          stmts.push(env.DB.prepare('UPDATE entries SET ext_ref = NULL, bill_amount = NULL, updated_at = ? WHERE id = ? AND done = 0').bind(t, ex.id));
+          openPlans.push({ id: ex.id, leaf_id: ex.leaf_id, date: ex.date, amount: ex.amount, tentative: ex.tentative, name: ex.name });
+        }
+      }
       planId = null;
     } else if (ex) {
       // meglévő terv: összeg és név frissítése; a felhasználó által áthelyezett dátumot csak akkor írjuk felül, ha a határidő változott.
@@ -284,7 +332,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         leafGroup[lid] = leaves.find((l) => l.id === lid)!.group_id;
         secOfGroup[leafGroup[lid]] = 'in';
       }
-      const matched = findPlan(lid, gross, due) || (lid0 !== lid ? findPlan(lid0, gross, due) : null);
+      const matched = findPlan(lid, gross, due, partnerRaw) || (lid0 !== lid ? findPlan(lid0, gross, due, partnerRaw) : null);
       if (matched) {
         // a meglévő tervből „kiszámlázott” tétel lesz
         planId = matched.id;
@@ -333,6 +381,8 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         d.partner?.taxcode || null,
       ),
     );
+    // a sztornózott számla már nem tartozik a tervhez (a banki közlemény-párosítás se a sztornózott sorszámot keresse)
+    if (cancelled && !ex?.done) stmts.push(env.DB.prepare('UPDATE billingo_docs SET plan_id = NULL WHERE id = ?').bind(d.id));
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   await setSetting(env, 'billingo_last_sync', String(t));
@@ -470,14 +520,20 @@ export function attachInvoiceStmts(
 export async function reconcileInvoicePlans(env: Env): Promise<number> {
   const [billR, openR, leavesR] = await env.DB.batch([
     env.DB.prepare(
-      "SELECT id, ext_ref, leaf_id, amount, bill_amount, date, done, link_id FROM entries WHERE kind = 'plan' AND ext_ref LIKE 'billingo:%' AND plan_amount IS NULL AND id GLOB 'b[0-9]*' AND date >= date('now', '-200 days')",
+      "SELECT e.id, e.ext_ref, e.leaf_id, e.amount, e.bill_amount, e.date, e.done, e.link_id, d.partner FROM entries e LEFT JOIN billingo_docs d ON d.plan_id = e.id WHERE e.kind = 'plan' AND e.ext_ref LIKE 'billingo:%' AND e.plan_amount IS NULL AND e.id GLOB 'b[0-9]*' AND e.date >= date('now', '-200 days')",
     ),
     env.DB.prepare(
-      "SELECT id, leaf_id, date, amount, tentative FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-250 days')",
+      "SELECT id, leaf_id, date, amount, tentative, name FROM entries WHERE kind = 'plan' AND done = 0 AND (ext_ref IS NULL OR ext_ref LIKE 'imp:%') AND amount > 0 AND date >= date('now', '-250 days')",
     ),
     env.DB.prepare('SELECT id, label FROM leaves'),
   ]);
   const pid = new Map((leavesR.results as any[]).map((l) => [l.id as string, partnerIdOf(l.label)]));
+  const label = new Map((leavesR.results as any[]).map((l) => [l.id as string, l.label as string]));
+  let alias: Record<string, string> = {};
+  try {
+    alias = JSON.parse((await getSetting(env, 'partner_alias')) || '{}');
+  } catch {}
+  const names = await partnerNames(env, alias);
   const open = openR.results as any[];
   const used = new Set<string>();
   const t = now();
@@ -485,10 +541,13 @@ export async function reconcileInvoicePlans(env: Env): Promise<number> {
   let n = 0;
   for (const b of billR.results as any[]) {
     const gross = Number(b.bill_amount ?? b.amount);
+    // több ügyfeles alkategóriában (pl. „Domain és tárhely”) a más ügyfél nevére szóló terv kimarad
+    const who = (p: any) => (b.partner ? nameOwner(p.name, names.own(b.partner), names.known, label.get(p.leaf_id) || '') : 'neutral');
     const near = open
       .filter((p) => !used.has(p.id) && (p.leaf_id === b.leaf_id || (pid.get(p.leaf_id) && pid.get(p.leaf_id) === pid.get(b.leaf_id))))
-      .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(b.date)) / 86400_000 }))
-      .sort((x, y) => x.tentative - y.tentative || x.dd - y.dd);
+      .map((p) => ({ ...p, dd: Math.abs(Date.parse(p.date) - Date.parse(b.date)) / 86400_000, who: who(p) }))
+      .filter((p) => p.who !== 'other')
+      .sort((x, y) => x.tentative - y.tentative || Number(y.who === 'own') - Number(x.who === 'own') || x.dd - y.dd);
     const hit = near.find((p) => p.dd <= 45 && Math.abs(p.amount - gross) / Math.max(gross, 1) <= 0.03) || near.find((p) => !p.tentative && p.dd <= 20);
     if (!hit) continue;
     used.add(hit.id);
