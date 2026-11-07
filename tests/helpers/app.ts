@@ -14,7 +14,7 @@ import { newPasswordFields } from '../../src/server/app/auth';
 import type { Env } from '../../src/server/app/util';
 import { SqliteD1, migrate } from '../../src/server/runtime/d1-sqlite.mjs';
 
-export type Role = 'admin' | 'editor' | 'viewer';
+export type Role = 'admin' | 'member' | 'viewer'; // az adatbazis CHECK-je szerint (member = szerkeszto)
 export interface CallResult<T = any> {
   status: number;
   data: T;
