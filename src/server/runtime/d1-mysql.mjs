@@ -72,14 +72,14 @@ export function translate(sqlIn) {
   sql = sql.replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, 'REPLACE INTO');
   sql = sql.replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT IGNORE INTO');
 
-  // ON CONFLICT(...) DO NOTHING  ->  INSERT IGNORE
-  if (/ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+NOTHING/i.test(sql)) {
-    sql = sql.replace(/\s*ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+NOTHING/gi, '');
+  // ON CONFLICT[(...)] DO NOTHING  ->  INSERT IGNORE (az ütközési cél nélküli „ON CONFLICT DO NOTHING” is)
+  if (/ON\s+CONFLICT\s*(?:\([^)]*\))?\s*DO\s+NOTHING/i.test(sql)) {
+    sql = sql.replace(/\s*ON\s+CONFLICT\s*(?:\([^)]*\))?\s*DO\s+NOTHING/gi, '');
     sql = sql.replace(/^\s*INSERT\s+INTO/i, 'INSERT IGNORE INTO');
   }
 
-  // ON CONFLICT(...) DO UPDATE SET x = excluded.y  ->  ON DUPLICATE KEY UPDATE x = VALUES(y)
-  sql = sql.replace(/ON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET/gi, 'ON DUPLICATE KEY UPDATE');
+  // ON CONFLICT[(...)] DO UPDATE SET x = excluded.y  ->  ON DUPLICATE KEY UPDATE x = VALUES(y)
+  sql = sql.replace(/ON\s+CONFLICT\s*(?:\([^)]*\))?\s*DO\s+UPDATE\s+SET/gi, 'ON DUPLICATE KEY UPDATE');
   sql = sql.replace(/\bexcluded\.([A-Za-z_][\w]*)/gi, (m, c) => `VALUES(${quote(c)})`);
 
   // SQLite „IS ?” (null-biztos egyenlőség) -> MySQL <=>; a sorozat-verzió (json_array) szövegként, szóközök nélkül hasonlítva
@@ -88,6 +88,8 @@ export function translate(sqlIn) {
     (m, cols, tbl) => `(SELECT REPLACE(CAST(json_array(${cols}) AS CHAR), ' ', '') FROM ${tbl} WHERE id = ?) <=> REPLACE(?, ' ', '')`,
   );
   sql = sql.replace(/\)\s+IS\s+\?/gi, ') <=> ?');
+  // oszlop „IS ?” (pl. NAV sztornó: partner_tax IS ?) – MySQL-ben az IS után nem állhat paraméter
+  sql = sql.replace(/\b([A-Za-z_][\w.]*)\s+IS\s+\?/g, (m, col) => (/^(NOT|AND|OR|WHERE|WHEN|THEN|ELSE)$/i.test(col) ? m : `${col} <=> ?`));
   // SQLite kétargumentumú MAX(a, b) / MIN(a, b) -> GREATEST / LEAST (az aggregát MAX(x) marad)
   sql = scalarMinMax(sql);
 

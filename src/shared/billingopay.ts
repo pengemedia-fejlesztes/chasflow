@@ -43,6 +43,35 @@ export function namesMatch(a: string, b: string): boolean {
   return inside(x, y) || inside(y, x);
 }
 
+/** A terv / tény nevének eleje: a „ – 2026. november” hónap, a „ - szolgáltatás” és a „ · számlaszám” rész nélkül. */
+export const nameHead = (name: string) =>
+  String(name || '')
+    .split(/\s[–·-]\s/)[0]
+    .trim();
+
+/**
+ * Kinek a nevére szól egy terv (tény) neve egy partnerhez képest: 'own' = a partner (vagy alternatív neve, rövidítése),
+ * 'other' = egy másik ismert partner (pl. „Sweetcorner – 2026. október” egy több ügyfeles „Domain és tárhely” sorban),
+ * 'neutral' = általános név (pl. „Havi díj”, „Marketing tanácsadás”, vagy maga a kategória neve).
+ * @param own a partner nevei (számlázási név, álnév, partnertörzs szerinti alternatív nevek)
+ * @param known az összes ismert partnernév (partnertörzs, bevételi alkategóriák, számlák partnerei, szabályok)
+ * @param leafLabel a terv saját alkategóriája (az ő nevére szóló terv általános)
+ */
+export function nameOwner(name: string, own: string[], known: string[], leafLabel = ''): 'own' | 'other' | 'neutral' {
+  const head = compact(nameHead(name));
+  if (head.length < 4) return 'neutral';
+  // a név eleje a partner neve, vagy annak eleje (rövidítés: „Sweetcorner” ↔ „Sweet Corner Ingatlanfejlesztő Kft.”)
+  const headKey = partnerKey(nameHead(name));
+  const names = (n: string) => {
+    const k = compact(n);
+    // a cégforma nélkül azonos név is (pl. „Webműhely Kft.” ↔ „webmuhely”)
+    return k.length >= 4 && (k === head || k.startsWith(head) || (headKey.length >= 4 && partnerKey(n) === headKey));
+  };
+  if (own.some((n) => names(n) || (compact(n).length >= 4 && head.startsWith(compact(n))) || namesMatch(n, nameHead(name)))) return 'own';
+  if (leafLabel && names(leafLabel)) return 'neutral';
+  return known.some(names) ? 'other' : 'neutral';
+}
+
 /**
  * @param aliasesOf egy számlapartner névhez a partnertörzs szerinti összes név (név + alternatív nevek)
  */

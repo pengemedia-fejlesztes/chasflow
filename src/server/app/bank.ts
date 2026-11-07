@@ -701,18 +701,25 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
       }
       if (planId) usedPlans.add(planId);
     }
-    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel) –
-    // csak ugyanannak a partnernek (kategóriának) a tényéhez, különben egy másik ügyfél befizetését „lopná el”
-    if (tx.amount > 0) {
-      const bp = await env.DB.prepare(
-        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND leaf_id = ? AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?))",
+    // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel).
+    // Csak ugyanannál a partnernél (kategória), és nem, ha a felhasználó kifejezetten egy (még nyitott) tervhez hagyta jóvá –
+    // különben egy másik ügyfél azonos összegű befizetése vinné el a tényt, a választott terv pedig nyitva maradna.
+    // A kifejezetten választott tervet fent már ellenőriztük: ha a planId megmaradt, az nyitott.
+    // (julianday nélkül: a MySQL-ben nincs ilyen függvény)
+    const chosenOpen = explicit && !!planId;
+    if (tx.amount > 0 && !chosenOpen) {
+      const cands = await env.DB.prepare(
+        "SELECT id, date, amount FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND leaf_id = ? AND date >= ? AND date <= ?",
       )
-        .bind(leafId, tx.amount, tx.amount, tx.date, tx.date)
-        .all<{ id: string }>()
-        .then((r) => r.results.find((x) => !usedBpaid.has(x.id)));
+        .bind(leafId, addDaysIso(tx.date, -20), addDaysIso(tx.date, 20))
+        .all<{ id: string; date: string; amount: number }>();
+      const dist = (d: string) => Math.abs(Date.parse(d) - Date.parse(tx.date));
+      const bp = cands.results
+        .filter((a) => !usedBpaid.has(a.id) && Math.abs(a.amount - tx.amount) <= Math.max(500, Math.abs(tx.amount) * 0.01))
+        .sort((a, b) => dist(a.date) - dist(b.date))[0];
       if (bp) {
         usedBpaid.add(bp.id);
-        // a tételhez javasolt / választott terv (ha nem a bpaid tényé) nyitva marad
+        // a tételhez javasolt terv (ha nem a Billingo-tényé) nyitva marad
         if (planId) usedPlans.delete(planId);
         stmts.push(
           env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
