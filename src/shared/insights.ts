@@ -1,4 +1,5 @@
 // További statisztikák: likviditás (runway), bevétel-trend, költségszerkezet, ügyfélkoncentráció, kintlévőségek kora.
+import { baseName } from './monthname';
 import { addMonths, monthRange, sumMonths, type Index } from './model';
 import type { BillingoDoc, Entry, Section } from './types';
 
@@ -176,6 +177,18 @@ export interface OfferStats {
   acceptN: number;
   rejectDays: number | null;
 }
+/** az ajánlat neve a hónap és a részlet sorszáma nélkül („Weboldal – 2. részlet – 2026. december” → „Weboldal”) */
+export const offerName = (name: string | null | undefined) =>
+  baseName(name || '')
+    .replace(/\s*[–-]\s*\d+\.\s*részlet$/i, '')
+    .trim();
+/**
+ * Egy ajánlat azonosítója: sorozat, különben a partner + a tétel alapneve – a program a névhez teszi a hónapot
+ * („– 2026. november”) és a részlet sorszámát („– 2. részlet”), ettől egy ajánlat nem válik több ajánlattá.
+ */
+export const offerKey = (e: { leaf_id: string; series_id?: string | null; name?: string | null }) =>
+  e.leaf_id + '|' + (e.series_id || offerName(e.name).toLowerCase());
+
 /** Megnyert = valaha ajánlat volt, de már biztos terv / teljesült; elveszett = törölt ajánlat; lejárt = 30 napnál régebbi nyitott ajánlat. */
 export function offerConversion(entries: Entry[], lost: OfferStats['lost'], today: string): OfferStats {
   const won = entries.filter((e) => e.kind === 'plan' && e.was_offer && (!e.tentative || e.done));
@@ -183,8 +196,6 @@ export function offerConversion(entries: Entry[], lost: OfferStats['lost'], toda
   const expired = openAll.filter((e) => dayDiff(e.date, today) > 30);
   const open = openAll.filter((e) => dayDiff(e.date, today) <= 30);
   const sum = (xs: { amount: number }[]) => xs.reduce((s, e) => s + Math.abs(e.amount), 0);
-  // egy ajánlat = egy sorozat (vagy azonos nevű tételek egy partnernél) – a 6 havi ajánlat 1-nek számít, nem 6-nak
-  const offerKey = (e: { leaf_id: string; series_id?: string | null; name?: string | null }) => e.leaf_id + '|' + (e.series_id || e.name || '');
   const wonN = new Set(won.map(offerKey)).size;
   const lostN = new Set(lost.map(offerKey)).size;
   const decided = wonN + lostN;

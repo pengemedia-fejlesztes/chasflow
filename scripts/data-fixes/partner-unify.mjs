@@ -28,6 +28,9 @@ const normalizeText = (s) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 const partnerKey = (p) => normalizeText(p).replace(LEGAL, ' ').replace(/\s+/g, ' ').trim();
+// a partnertörzs kulcsa a program partnerIdOf-ja (src/shared/partners.ts): a normalizált név szóközök nélkül –
+// szóközös kulcs (pl. „mr big team”) külön, alkategória nélküli partnert hozna létre a „mrbig” mellett
+const partnerId = (p) => partnerKey(p).replace(/[^a-z0-9]/g, '');
 
 const db = createDb({
   host: process.env.DB_HOST,
@@ -46,7 +49,7 @@ const byKey = new Map(); // kulcs -> { nevek: Set }
 for (const [, sql] of sources) {
   const r = await db.prepare(sql).all();
   for (const row of r.results) {
-    const key = partnerKey(row.n);
+    const key = partnerId(row.n);
     if (!key || key.length < 3) continue;
     if (!byKey.has(key)) byKey.set(key, new Set());
     byKey.get(key).add(String(row.n).trim());
@@ -56,6 +59,15 @@ for (const [, sql] of sources) {
 const existing = await db.prepare('SELECT `key`, name, aliases FROM partners').all();
 const partnerByKey = new Map();
 for (const p of existing.results) partnerByKey.set(String(p.key), p);
+// a mar ismert nevek (partnertorzs neve, alternativ nevei): ezekhez nem nyit uj, alkategoria nelkuli partnert
+const known = new Set();
+for (const p of existing.results) {
+  let al = [];
+  try {
+    al = JSON.parse(p.aliases || '[]');
+  } catch {}
+  for (const n of [p.name, ...al]) if (n) known.add(partnerId(n));
+}
 
 let ujPartner = 0;
 let ujAlias = 0;
@@ -69,6 +81,7 @@ for (const [key, nameSet] of byKey) {
   const p = partnerByKey.get(key);
   if (!p) {
     if (names.length < 2) continue; // egyetlen alaknal nincs mit egyseresiteni
+    if (names.some((n) => known.has(partnerId(n)))) continue; // mar egy meglevo partner neve / alternativ neve
     ujPartner++;
     stmts.push(
       db

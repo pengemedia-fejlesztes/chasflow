@@ -273,7 +273,7 @@ export function BreakevenView() {
       ['Bevétel / ügyfélóra', ...report.map((r) => r.revenuePerBillableHour)],
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Fedezeti pont');
-    const proj: (string | number)[][] = [['Hónap', 'Projekt', 'Partner (cashflow)', 'Óra', 'Munkaköltség', 'Bevétel', 'Fedezet']];
+    const proj: (string | number)[][] = [['Hónap', 'Projekt', 'Partner (cashflow)', 'Óra', 'Munkaköltség', 'Alvállalkozó', 'Bevétel', 'Fedezet']];
     for (const r of report)
       for (const p of r.projects)
         proj.push([
@@ -282,8 +282,9 @@ export function BreakevenView() {
           p.leaf ? ix.leafById[p.leaf]?.label || '' : 'belső',
           Math.round(p.minutes / 6) / 10,
           p.laborCost,
+          p.subcontract,
           p.revenue,
-          p.revenue - p.laborCost,
+          p.revenue - p.laborCost - p.subcontract,
         ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(proj), 'Projektek');
     for (const emp of employees) {
@@ -344,7 +345,8 @@ export function BreakevenView() {
       'Költség',
       [
         { label: 'Közvetlen munkaköltség', v: (r) => fmt(r.directLabor), hint: 'ügyfélprojektekre jutó bér (az idő arányában)' },
-        { label: 'Alvállalkozók', v: (r) => fmt(r.subcontract), hint: 'az „Alvállalkozók” mappa kiadásai – változó költség, mint a közvetlen bér' },
+        { label: 'Alvállalkozók', v: (r) => fmt(r.subcontract), hint: 'az „Alvállalkozók” mappa kiadásai – változó költség, mint a közvetlen bér; a projekt fedezetéből az vonódik le, amelynek tétele az ügyfelet megnevezi',
+        },
         { label: 'Fix költség', v: (r) => fmt(r.fixed), hint: 'minden más kiadás (iroda, szoftver, belső munkaidő …)' },
         { label: 'Fedezeti pont', v: (r) => (r.breakeven == null ? '–' : fmt(r.breakeven)), hint: 'ennyi bevétel kell, hogy ne legyen veszteség', bold: true },
       ],
@@ -407,7 +409,8 @@ export function BreakevenView() {
   };
 
   const projRow = (p: ProjectMonth, muted?: boolean) => {
-    const contrib = p.revenue - p.laborCost;
+    // fedezet = bevétel − munkaköltség − az ügyfelet megnevező alvállalkozói díj
+    const contrib = p.revenue - p.laborCost - p.subcontract;
     return (
       <div key={(p.leaf || '') + p.project} style={{ display: 'contents' }}>
         <div style={{ ...td, textAlign: 'left', whiteSpace: 'normal', background: muted ? C.bg3 : undefined }}>
@@ -456,6 +459,7 @@ export function BreakevenView() {
         </div>
         <div style={{ ...td, color: C.muted }}>{p.minutes ? h(p.minutes) : '–'}</div>
         <div style={{ ...td, color: C.muted }}>{p.laborCost ? fmt(p.laborCost) : '–'}</div>
+        <div style={{ ...td, color: C.muted }}>{p.subcontract ? fmt(p.subcontract) : '–'}</div>
         <div style={{ ...td, fontWeight: 700, color: C.navy }}>{p.revenue ? fmt(p.revenue) : '–'}</div>
         <div style={{ ...td, fontWeight: 700, color: p.leaf ? (contrib < 0 ? C.neg : C.inc) : C.muted }}>{p.leaf ? fmt(contrib) : '–'}</div>
         <div style={{ ...td, fontWeight: 700, color: contrib < 0 ? C.neg : GREEN }}>{p.leaf && p.minutes ? fmt(contrib / (p.minutes / 60)) : '–'}</div>
@@ -747,8 +751,8 @@ export function BreakevenView() {
               </span>
             </div>
             <div style={{ overflow: 'auto' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(170px,1.5fr) 56px 96px 100px 100px 84px', minWidth: 610 }}>
-                {['Projekt', 'Óra', 'Munkaköltség', 'Bevétel', 'Fedezet', 'Ft / óra'].map((x, i) => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(170px,1.5fr) 56px 96px 96px 100px 100px 84px', minWidth: 706 }}>
+                {['Projekt', 'Óra', 'Munkaköltség', 'Alvállalk.', 'Bevétel', 'Fedezet', 'Ft / óra'].map((x, i) => (
                   <div key={x} style={{ ...th, textAlign: i ? 'right' : 'left' }}>
                     {x}
                   </div>
@@ -779,9 +783,19 @@ export function BreakevenView() {
                     >
                       {showNoInv ? '▾' : '›'} Számla nélküli munka ebben a hónapban: {noInv.length} projekt · {h(noInvMin)} óra ·{' '}
                       {fmt(noInv.reduce((a, p) => a + p.laborCost, 0))} Ft munkaköltség
+                      {noInv.some((p) => p.subcontract) ? ` · ${fmt(noInv.reduce((a, p) => a + p.subcontract, 0))} Ft alvállalkozói díj` : ''}
                     </button>
                     {showNoInv && noInv.map((p) => projRow(p, true))}
                   </>
+                )}
+                {cur.subcontractUnassigned !== 0 && (
+                  <div
+                    style={{ ...td, gridColumn: '1 / -1', textAlign: 'left', whiteSpace: 'normal', color: C.muted, fontSize: 12.5 }}
+                    title="Az alvállalkozói díj tételének nevében nincs ügyfélnév (pl. „Megbízási díj”) – a havi fedezetben benne van, a projektekében nem"
+                  >
+                    Egyik ügyfélhez sem köthető alvállalkozói díj: <b style={{ color: C.navy }}>{fmt(cur.subcontractUnassigned)} Ft</b> – a projektek
+                    fedezete ezt nem tartalmazza (a tétel nevébe írt ügyfélnév alapján kerülne a projekthez)
+                  </div>
                 )}
               </div>
             </div>
