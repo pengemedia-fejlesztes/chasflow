@@ -1527,7 +1527,7 @@ export function CategoryView({ groupId, openModal }: { groupId: string; openModa
                 {canEdit ? (
                   <button
                     title="Törlés"
-                    onClick={() => confirm('Törlöd ezt a tényleges tételt?') && commit({ delete: [e.id] }, 'Tétel törölve')}
+                    onClick={() => confirm('Törlöd ezt a tényleges tételt?') && commit(deleteEntries(data, [e.id]), 'Tétel törölve')}
                     className="icon-btn"
                     style={{ border: 0, background: 'transparent', color: C.muted, cursor: 'pointer', font: `600 14px ${FONT}` }}
                   >
