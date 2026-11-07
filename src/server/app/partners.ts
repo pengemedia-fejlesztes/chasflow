@@ -66,20 +66,25 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
       newKey = partnerIdOf(n) || key;
     }
   }
-  const kind = b.kind !== undefined ? (KINDS.has(String(b.kind)) ? String(b.kind) : null) : (cur?.kind ?? null);
-  const aliases = b.aliases !== undefined ? cleanAliases(b.aliases) : JSON.parse(cur?.aliases || '[]');
+  // átnevezés egy már meglévő partner nevére = összevonás: a cél partner törzsadatai (adószám, alternatív nevek, típus,
+  // megjegyzés) megmaradnak, a forrásé csak kiegészíti őket – különben az adószám és a felismert nevek elvesznének
+  const into = newKey !== key ? await env.DB.prepare('SELECT * FROM partners WHERE key = ?').bind(newKey).first<any>() : null;
+  const kind =
+    b.kind !== undefined ? (KINDS.has(String(b.kind)) ? String(b.kind) : null) : (into?.kind ?? cur?.kind ?? null);
+  let aliases: string[] = b.aliases !== undefined ? cleanAliases(b.aliases) : JSON.parse(cur?.aliases || '[]');
+  if (into) aliases = cleanAliases([...JSON.parse(into.aliases || '[]'), ...aliases]).filter((a) => partnerIdOf(a) !== newKey);
   const tax =
     b.tax_number !== undefined
       ? String(b.tax_number || '')
           .trim()
           .slice(0, 20) || null
-      : (cur?.tax_number ?? null);
+      : (into?.tax_number || cur?.tax_number || null);
   const note =
     b.note !== undefined
       ? String(b.note || '')
           .trim()
           .slice(0, 1000) || null
-      : (cur?.note ?? null);
+      : [...new Set([into?.note, cur?.note].filter(Boolean))].join('\n').slice(0, 1000) || null;
 
   if (newKey !== key) stmts.push(env.DB.prepare('DELETE FROM partners WHERE key = ?').bind(key));
   stmts.push(
@@ -89,18 +94,18 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
     ).bind(newKey, name, kind, JSON.stringify(aliases), tax, note, t),
   );
 
-  // alternatív nevek → párosítási szabályok a partner minden alkategóriájára (a régi alias-szabályok helyett)
-  const aliasChanged = b.aliases !== undefined;
-  if (aliasChanged && leaves.length)
-    stmts.push(
-      ...aliasRuleStmts(
-        env,
-        leaves.map((l) => l.id),
-        aliases,
-        name,
-        t,
-      ),
-    );
+  // alternatív nevek → párosítási szabályok a partner minden alkategóriájára (a régi alias-szabályok helyett);
+  // összevonáskor a cél partner sorai is az egyesített névlistát kapják
+  const aliasChanged = b.aliases !== undefined || !!into;
+  const ruleLeaves = into
+    ? [
+        ...leaves.map((l) => l.id),
+        ...(await env.DB.prepare('SELECT id, label FROM leaves').all<{ id: string; label: string }>()).results
+          .filter((l) => partnerIdOf(l.label) === newKey && !leaves.some((x) => x.id === l.id))
+          .map((l) => l.id),
+      ]
+    : leaves.map((l) => l.id);
+  if (aliasChanged && ruleLeaves.length) stmts.push(...aliasRuleStmts(env, ruleLeaves, aliases, name, t));
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   await audit(env, u.id, 'partner_updated', { key, newKey, name, kind, aliases: aliases.length });
   // a még jóváhagyásra váró banki tételek és NAV-számlák újrapárosítása az új nevek alapján
