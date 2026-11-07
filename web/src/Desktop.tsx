@@ -1,7 +1,7 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { buildMatrix, fmt, fmtM, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
+import { buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
 import { AlertsView, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
@@ -101,26 +101,34 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
   const sideMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
-  // az Ajánlatok mappa összege mindig az ajánlatokkal együtt (különben ajánlat-szűrő nélkül 0 lenne)
-  const offerTotals = useMemo(() => {
-    const m = buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '', includeOffers: true });
-    return new Map(m.rows.filter((r) => r.type === 'section' && /aj[áa]nlat/i.test(r.label)).map((r) => [r.id, r.total]));
-  }, [ix, filters]);
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
-  // felső szint: Bevétel és Ajánlatok (a partnerek közvetlenül alattuk), a Kiadásnak vannak mappái
-  // mindig látszanak, akkor is, ha a kiválasztott időszakban nincs tételük
-  // a Bevétel alatt a partnerek, mint a Kiadás alatt a mappák
+  // oldalsáv: három főkategória (Ajánlatok, Bevétel, Kiadás), az összegek az aktuális hónapra (tény + nyitott terv)
+  const offerGroup = ix.groups.find((g) => g.section === 'in' && /aj[áa]nlat/i.test(g.label));
+  const incomeGroup = ix.groups.find((g) => g.section === 'in' && g.id !== offerGroup?.id);
+  const curOf = (m: Map<string, Map<string, number>>, leaf: string) => m.get(leaf)?.get(ix.cur) || 0;
+  const leafNow = (leaf: string) => curOf(ix.actual, leaf) + curOf(ix.openPlan, leaf);
+  const sumNow = (pred: (l: (typeof ix.leaves)[number]) => boolean) => ix.leaves.filter(pred).reduce((a, l) => a + leafNow(l.id), 0);
+  const offerNow = ix.leaves.reduce((a, l) => a + curOf(ix.offer, l.id), 0);
+  const inNow = sumNow((l) => ix.groupById[l.group_id]?.section === 'in' && l.group_id !== offerGroup?.id);
+  const outNow = -sumNow((l) => ix.groupById[l.group_id]?.section === 'out');
   const incomeRows = sideMatrix.rows.filter((r) => r.type === 'leaf' && r.top === 'in');
-  const topRows = useMemo(() => {
-    const inG = ix.groups.filter((g) => g.section === 'in');
-    const offer = inG.find((g) => /aj[áa]nlat/i.test(g.label));
-    const income = inG.find((g) => g.id !== offer?.id);
-    const totalOf = (label: string) => sideMatrix.rows.find((r) => r.type === 'section' && r.label === label)?.total ?? 0;
-    return [
-      ...(income ? [{ id: 'in', label: 'Bevétel', groupId: income.id, total: totalOf('Bevétel') }] : []),
-      ...(offer ? [{ id: offer.id, label: 'Ajánlatok', groupId: offer.id, total: offerTotals.get(offer.id) ?? 0 }] : []),
-    ];
-  }, [ix.groups, sideMatrix, offerTotals]);
+  const offerRows = sideMatrix.rows.filter((r) => r.type === 'leaf' && r.section === 'in' && r.top !== 'in');
+  // becsukott főkategóriák – a böngésző megjegyzi
+  const [closedSec, setClosedSec] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('cf-side-closed') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const toggleSec = (k: string) =>
+    setClosedSec((c) => {
+      const n = { ...c, [k]: !c[k] };
+      try {
+        localStorage.setItem('cf-side-closed', JSON.stringify(n));
+      } catch {}
+      return n;
+    });
   const goGroup = (id: string) => {
     setFilters({ groupId: id });
     setView('cat');
@@ -251,84 +259,44 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           }}
         >
           <span>Kategóriák</span>
-          <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{periodLabel(filters, ix.cur, ix.firstActual)}</span>
+          <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{monthLong(ix.cur)}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
-          {topRows.map((g) => (
-            <Fragment key={g.id}>
-              <button
-                className="side-btn"
-                aria-current={view === 'cat' && filters.groupId === g.groupId ? 'page' : undefined}
-                onClick={() => goGroup(g.groupId)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  border: 0,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  padding: '8px 12px',
-                  marginTop: 4,
-                  borderRadius: R.md,
-                  background: view === 'cat' && filters.groupId === g.groupId ? C.navy3 : 'transparent',
-                  color: '#fff',
-                  font: `700 13.5px ${FONT}`,
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0 }}>{g.label}</span>
-                <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
-              </button>
-              {g.id === 'in' &&
-                incomeRows.map((r) => (
-                  <button
-                    key={r.id}
-                    className="side-btn"
-                    onClick={() => st.openPartner(r.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      border: 0,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: R.md,
-                      background: 'transparent',
-                      color: '#fff',
-                      font: `500 13.5px ${FONT}`,
-                    }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
-                    <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(r.total)}</span>
-                  </button>
-                ))}
-            </Fragment>
-          ))}
-          {groupRows.length > 0 && <div style={{ padding: '12px 12px 6px', font: `700 13.5px ${FONT}`, color: '#fff' }}>Kiadás</div>}
-          {groupRows.map((g) => (
-            <button
-              key={g.id}
-              className="side-btn"
-              aria-current={view === 'cat' && filters.groupId === g.id ? 'page' : undefined}
-              onClick={() => goGroup(g.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-                padding: '8px 12px',
-                borderRadius: R.md,
-                background: view === 'cat' && filters.groupId === g.id ? C.navy3 : 'transparent',
-                color: '#fff',
-                font: `500 13.5px ${FONT}`,
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayGroup(g.label)}</span>
-              <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{fmtM(g.total)}</span>
-            </button>
-          ))}
+          <SideSection
+            title="Ajánlatok"
+            total={offerNow}
+            closed={!!closedSec.offers}
+            onToggle={() => toggleSec('offers')}
+            onAll={offerGroup ? () => goGroup(offerGroup.id) : undefined}
+            allActive={view === 'cat' && filters.groupId === offerGroup?.id}
+          >
+            {offerRows.map((r) => (
+              <SideRow key={r.id} label={r.label} value={curOf(ix.offer, r.id)} onClick={() => st.openPartner(r.id)} />
+            ))}
+          </SideSection>
+          <SideSection
+            title="Bevétel"
+            total={inNow}
+            closed={!!closedSec.in}
+            onToggle={() => toggleSec('in')}
+            onAll={incomeGroup ? () => goGroup(incomeGroup.id) : undefined}
+            allActive={view === 'cat' && filters.groupId === incomeGroup?.id}
+          >
+            {incomeRows.map((r) => (
+              <SideRow key={r.id} label={r.label} value={leafNow(r.id)} onClick={() => st.openPartner(r.id)} />
+            ))}
+          </SideSection>
+          <SideSection title="Kiadás" total={outNow} closed={!!closedSec.out} onToggle={() => toggleSec('out')}>
+            {groupRows.map((g) => (
+              <SideRow
+                key={g.id}
+                label={displayGroup(g.label)}
+                value={-sumNow((l) => l.group_id === g.id)}
+                active={view === 'cat' && filters.groupId === g.id}
+                onClick={() => goGroup(g.id)}
+              />
+            ))}
+          </SideSection>
         </div>
         <div
           style={{ marginTop: 'auto', padding: '16px 22px', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 6 }}
@@ -1266,6 +1234,94 @@ function Cell(p: { h: number; bg: string; fg: string; fw: number; children: Reac
     >
       {p.children}
     </div>
+  );
+}
+
+/** Oldalsáv főkategória: a fejlécre kattintva be- és kinyílik; az összeg az aktuális hónapé. */
+function SideSection(p: {
+  title: string;
+  total: number;
+  closed: boolean;
+  onToggle: () => void;
+  onAll?: () => void;
+  allActive?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 6 }}>
+      <button
+        type="button"
+        className="side-btn"
+        aria-expanded={!p.closed}
+        onClick={p.onToggle}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          border: 0,
+          cursor: 'pointer',
+          textAlign: 'left',
+          padding: '9px 12px',
+          borderRadius: R.md,
+          background: 'transparent',
+          color: '#fff',
+          font: `700 14px ${FONT}`,
+        }}
+      >
+        <span aria-hidden style={{ width: 10, fontSize: 10, color: C.muted2 }}>
+          {p.closed ? '▸' : '▾'}
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>{p.title}</span>
+        <span style={{ font: `600 12.5px ${FONT}`, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{p.total ? fmt(p.total) : '–'}</span>
+      </button>
+      {!p.closed && p.children}
+      {!p.closed && p.onAll && (
+        <button
+          type="button"
+          className="side-btn"
+          onClick={p.onAll}
+          style={{
+            border: 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+            padding: '6px 12px 6px 30px',
+            borderRadius: R.md,
+            background: p.allActive ? C.navy3 : 'transparent',
+            color: C.blue2,
+            font: `500 12.5px ${FONT}`,
+          }}
+        >
+          Mind megnyitása ›
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SideRow({ label, value, active, onClick }: { label: string; value: number; active?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="side-btn"
+      aria-current={active ? 'page' : undefined}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        border: 0,
+        cursor: 'pointer',
+        textAlign: 'left',
+        padding: '7px 12px 7px 30px',
+        borderRadius: R.md,
+        background: active ? C.navy3 : 'transparent',
+        color: '#fff',
+        font: `500 13.5px ${FONT}`,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{value ? fmt(value) : '–'}</span>
+    </button>
   );
 }
 
