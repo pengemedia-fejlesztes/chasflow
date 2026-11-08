@@ -191,6 +191,14 @@ export function LineChart({
             strokeDasharray={s.dashed ? '7 5' : undefined}
           />
         ))}
+        {/* magányos pont (előtte és utána nincs adat): vonal nem rajzolható, ezért pont jelzi */}
+        {series.map((s, si) =>
+          s.values.map((v, i) =>
+            v !== null && (s.values[i - 1] ?? null) === null && (s.values[i + 1] ?? null) === null ? (
+              <circle key={si + '-' + i} className="cf-area" cx={x(i)} cy={y(v)} r="5" fill={s.color} stroke="#fff" strokeWidth="2" />
+            ) : null,
+          ),
+        )}
         {hover !== null && (
           <g>
             <line x1={x(hover)} x2={x(hover)} y1={T} y2={H - B} stroke={C.navy} strokeWidth="1" opacity=".35" />

@@ -807,7 +807,7 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         {tab === 'charts' && (
           <>
             <MobileHeader title="Grafikonok" sub="koppints a grafikonra a pontos értékekért" onBack={() => setTab('home')} />
-            <ChartsView mobile />
+            <ChartsView mobile onBank={() => (setNavKey((k) => k + 1), setTab('bank'))} />
           </>
         )}
         {tab === 'tasks' && (

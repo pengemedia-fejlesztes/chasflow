@@ -40,7 +40,7 @@ function Card({ title, sub, children, legend, i, wide }: { title: string; sub: s
 
 const Empty = ({ t }: { t: string }) => <div style={{ padding: '30px 0', textAlign: 'center', color: C.muted, font: `500 13.5px ${FONT}` }}>{t}</div>;
 
-export function ChartsView({ mobile }: { mobile?: boolean } = {}) {
+export function ChartsView({ mobile, onBank }: { mobile?: boolean; onBank?: () => void } = {}) {
   const { ix, data, openPartner } = useStore();
   const cur = ix.cur;
   const sumLeafs = (m: Map<string, Map<string, number>>, ym: string, pred: (leaf: string) => boolean) => {
@@ -151,11 +151,19 @@ export function ChartsView({ mobile }: { mobile?: boolean } = {}) {
     if (!ledger) return null;
     const months = ledger.months.slice(-12);
     const labels = months.map((m) => monthLabel(m.ym));
-    const series = ledger.accounts.map((a, i) => ({
+    // a készpénz csak akkor, ha van mozgása vagy nyitó összege (különben egy üres nulla-vonal)
+    const accs = ledger.accounts.filter(
+      (a) => a.provider !== 'cash' || months.some((m) => m.accounts[a.id]?.n || m.accounts[a.id]?.close?.amount),
+    );
+    const series = accs.map((a, i) => ({
       label: a.bank_name,
       color: SERIES[i % SERIES.length],
       values: months.map((m) => m.accounts[a.id]?.close?.amount ?? null),
     }));
+    // banki adattal rendelkező hónapok (a készpénz nélkül)
+    const bankAccs = ledger.accounts.filter((a) => a.provider !== 'cash');
+    const withData = months.filter((m) => bankAccs.some((a) => m.accounts[a.id]?.close)).map((m) => m.ym);
+    const missing = months.filter((m) => m.ym < cur && bankAccs.some((a) => !m.accounts[a.id]?.close)).length;
     const diff = months
       .map((m) => {
         const full = ledger.accounts.every((a) => m.accounts[a.id]?.open && m.accounts[a.id]?.close);
@@ -165,8 +173,8 @@ export function ChartsView({ mobile }: { mobile?: boolean } = {}) {
         return { ym: m.ym, v: Math.round(change - cf) };
       })
       .filter((x): x is { ym: string; v: number } => !!x);
-    return { labels, series, diff };
-  }, [ledger, ix]);
+    return { labels, series, diff, withData, missing };
+  }, [ledger, ix, cur]);
 
   // 9. költségszerkezet havonta csoportonként
   const cost = useMemo(() => {
@@ -338,6 +346,28 @@ export function ChartsView({ mobile }: { mobile?: boolean } = {}) {
             <LineChart labels={bank.labels} series={bank.series} zero={false} />
           ) : (
             <Empty t="Még nincs mentett banki egyenleg." />
+          )}
+          {bank && bank.missing > 0 && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '10px 12px', borderRadius: 8, background: C.bg, font: `400 12.5px/1.5 ${FONT}`, color: C.ink }}>
+              <span style={{ flex: '1 1 240px' }}>
+                Banki egyenleg eddig csak erre van: <b>{bank.withData.map((ym) => monthLong(ym)).join(', ') || '–'}</b>. A bank a szinkronkor csak a mai
+                egyenleget adja meg; a korábbi hónapok záró egyenlegét a bankszámlakivonatból kell rögzíteni ({bank.missing} hónap hiányzik).
+              </span>
+              <button
+                onClick={() => {
+                  try {
+                    sessionStorage.setItem('cf-bank-tab', 'ledger');
+                  } catch {
+                    /* marad az alapfül */
+                  }
+                  if (onBank) onBank();
+                  else location.hash = '#/bank';
+                }}
+                style={{ border: `1px solid ${C.line2}`, background: '#fff', color: C.navy, borderRadius: 999, padding: '7px 14px', font: `600 12.5px ${FONT}`, cursor: 'pointer' }}
+              >
+                Kivonat rögzítése
+              </button>
+            </div>
           )}
         </Card>
 
