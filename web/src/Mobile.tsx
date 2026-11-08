@@ -7,6 +7,7 @@ import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, useFlags } from './AlertsView';
 import { useBack } from './back';
 import { StatsHub } from './StatsHub';
+import { ChartsView } from './ChartsView';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
@@ -24,7 +25,7 @@ import { SettingsView } from './SettingsView';
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted, R } from './ui';
 
-type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
+type Tab = 'home' | 'alerts' | 'charts' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
 type Sheet =
   | {
       kind: 'new';
@@ -489,6 +490,35 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                   Ebben a hónapban nincs tétel.
                 </div>
               )}
+              {(!data.myAccess || data.myAccess.menus.includes('charts')) && (
+                <button
+                  onClick={() => setTab('charts')}
+                  style={{
+                    border: `1px solid ${C.line}`,
+                    background: '#fff',
+                    borderRadius: R.lg,
+                    padding: '12px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    textAlign: 'left',
+                    font: `600 14.5px ${FONT}`,
+                    color: C.navy,
+                  }}
+                >
+                  <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true">
+                    <rect x="1" y="12" width="5" height="9" rx="1.5" fill="#2a78d6" />
+                    <rect x="8" y="6" width="5" height="15" rx="1.5" fill="#1baf7a" />
+                    <rect x="15" y="9" width="5" height="12" rx="1.5" fill="#eb6834" />
+                    <path d="M2 9 L10 3 L17 6 L25 1" stroke="#14233a" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+                  </svg>
+                  <span style={{ flex: 1 }}>
+                    Grafikonok
+                    <span style={{ display: 'block', font: `400 12.5px ${FONT}`, color: C.muted }}>előrejelzés, bevétel–kiadás, tölcsér, bankszámlák…</span>
+                  </span>
+                  <span style={{ color: C.muted, fontSize: 18 }}>›</span>
+                </button>
+              )}
               {/* a hónap ütemezése külön képernyőn: minden bevétel és kiadás napokra bontva */}
               <button
                 onClick={() => (setSchedSec(null), setTab('sched'))}
@@ -756,6 +786,12 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
+        {tab === 'charts' && (
+          <>
+            <MobileHeader title="Grafikonok" sub="koppints a grafikonra a pontos értékekért" onBack={() => setTab('home')} />
+            <ChartsView mobile />
+          </>
+        )}
         {tab === 'stats' && (
           <>
             <MobileHeader title="Statisztika" sub="Partner" onBack={() => (setPartnerKey(null), setTab('home'))} />

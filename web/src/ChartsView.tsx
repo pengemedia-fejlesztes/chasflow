@@ -19,7 +19,7 @@ function Card({ title, sub, children, legend, i, wide }: { title: string; sub: s
       className="cf-card"
       style={{
         ...card,
-        padding: '18px 20px',
+        padding: 'clamp(14px, 3.5vw, 18px) clamp(12px, 3.5vw, 20px)',
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
@@ -40,7 +40,7 @@ function Card({ title, sub, children, legend, i, wide }: { title: string; sub: s
 
 const Empty = ({ t }: { t: string }) => <div style={{ padding: '30px 0', textAlign: 'center', color: C.muted, font: `500 13.5px ${FONT}` }}>{t}</div>;
 
-export function ChartsView() {
+export function ChartsView({ mobile }: { mobile?: boolean } = {}) {
   const { ix, data, openPartner } = useStore();
   const cur = ix.cur;
   const sumLeafs = (m: Map<string, Map<string, number>>, ym: string, pred: (leaf: string) => boolean) => {
@@ -227,14 +227,14 @@ export function ChartsView() {
 
   let n = 0;
   return (
-    <div style={{ padding: '24px 28px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div>
+    <div style={{ padding: mobile ? '12px 12px 28px' : '24px 28px 40px', display: 'flex', flexDirection: 'column', gap: mobile ? 12 : 16 }}>
+      <div style={{ display: mobile ? 'none' : undefined }}>
         <h1 style={{ margin: 0, font: `800 32px/1.05 ${FONT_H}`, color: C.navy }}>Grafikonok</h1>
         <p style={{ margin: '8px 0 0', font: `400 14px/1.5 ${FONT}`, color: C.muted }}>
           Vigye az egeret a grafikonra a pontos értékekért. A számok ugyanazokból az adatokból jönnek, mint az Áttekintés, a Fedezeti pont és a Bankszinkron.
         </p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 560px), 1fr))', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 560px), 1fr))', gap: mobile ? 12 : 16 }}>
         <Card
           i={n++}
           wide

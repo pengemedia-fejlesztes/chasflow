@@ -133,14 +133,14 @@ export function LineChart({
     });
     return d;
   };
-  const onMove = (e: React.MouseEvent) => {
+  const onMove = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W;
     const i = Math.round(((px - L) / (W - L - R)) * (labels.length - 1));
     setHover(Math.max(0, Math.min(labels.length - 1, i)));
   };
   return (
-    <div ref={ref} style={{ position: 'relative' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+    <div ref={ref} style={{ position: 'relative', touchAction: 'pan-y' }} onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={(e) => e.pointerType === 'mouse' && setHover(null)}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         width={W}
@@ -158,7 +158,7 @@ export function LineChart({
           </g>
         ))}
         {labels.map((l, i) =>
-          labels.length <= 13 || i % 2 === 0 ? (
+          i % Math.max(1, Math.ceil((labels.length * 40) / Math.max(1, W - L - R))) === 0 ? (
             <text key={i} x={x(i)} y={H - 8} textAnchor="middle" style={{ font: `400 11px ${FONT}`, fill: C.muted }}>
               {l}
             </text>
@@ -319,14 +319,14 @@ export function BarChart({
       );
     });
   });
-  const onMove = (e: React.MouseEvent) => {
+  const onMove = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W;
     const i = Math.floor((px - L) / band);
     setHover(i >= 0 && i < labels.length ? i : null);
   };
   return (
-    <div ref={ref} style={{ position: 'relative' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+    <div ref={ref} style={{ position: 'relative', touchAction: 'pan-y' }} onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={(e) => e.pointerType === 'mouse' && setHover(null)}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         width={W}
@@ -360,7 +360,7 @@ export function BarChart({
           <circle key={i} cx={L + i * band + band / 2} cy={y(v)} r="3.5" fill={line.color} stroke="#fff" strokeWidth="1.5" className="cf-area" />
         ))}
         {labels.map((l, i) =>
-          labels.length <= 13 || i % 2 === 0 ? (
+          i % Math.max(1, Math.ceil((labels.length * 40) / Math.max(1, W - L - R))) === 0 ? (
             <text key={i} x={L + i * band + band / 2} y={H - 8} textAnchor="middle" style={{ font: `400 11px ${FONT}`, fill: C.muted }}>
               {l}
             </text>
@@ -406,11 +406,14 @@ export function HBars({
   fmtV?: (v: number) => string;
   onClick?: (i: number) => void;
 }) {
-  // a leghosszabb sáv mellett is maradjon hely az értéknek
-  const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)), threshold?.value || 0) * (rows.some((r) => r.value < 0) ? 1.6 : 1.45);
+  const [ref, cw] = useWidth();
+  const narrow = cw < 520;
   const signed = rows.some((r) => r.value < 0);
+  // a leghosszabb sáv mellett is maradjon hely az értéknek
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.value)), threshold?.value || 0) * (signed ? (narrow ? 2.1 : 1.6) : narrow ? 1.75 : 1.45);
+  const show = (v: number) => (narrow && Math.abs(v) >= 1e5 && fmtV(v).endsWith(' Ft') ? short(v) + ' Ft' : fmtV(v));
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}>
+    <div ref={ref} style={{ display: 'flex', flexDirection: 'column', gap: narrow ? 8 : 6, position: 'relative' }}>
       {rows.map((r, i) => {
         const w = (Math.abs(r.value) / max) * (signed ? 50 : 100);
         return (
@@ -419,7 +422,13 @@ export function HBars({
             onClick={onClick ? () => onClick(i) : undefined}
             role={onClick ? 'button' : undefined}
             title={`${r.label}: ${fmtV(r.value)}${r.note ? ' · ' + r.note : ''}`}
-            style={{ display: 'grid', gridTemplateColumns: 'minmax(110px, 30%) 1fr', gap: 10, alignItems: 'center', cursor: onClick ? 'pointer' : 'default' }}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: narrow ? '1fr' : 'minmax(110px, 30%) 1fr',
+              gap: narrow ? 2 : 10,
+              alignItems: 'center',
+              cursor: onClick ? 'pointer' : 'default',
+            }}
           >
             <span style={{ font: `500 13px ${FONT}`, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
             <div style={{ position: 'relative', height: 22 }}>
@@ -449,7 +458,7 @@ export function HBars({
                   ...(signed ? (r.value < 0 ? { right: `${50 + w + 1}%` } : { left: `${50 + w + 1}%` }) : { left: `calc(${w}% + 6px)` }),
                 }}
               >
-                {fmtV(r.value)}
+                {show(r.value)}
                 {r.note ? <span style={{ fontWeight: 400, color: C.muted }}> · {r.note}</span> : null}
               </span>
             </div>
@@ -463,7 +472,7 @@ export function HBars({
             position: 'absolute',
             top: -4,
             bottom: -4,
-            left: `calc(30% + 10px + (70% - 10px) * ${threshold.value / max})`,
+            left: narrow ? `${(100 * threshold.value) / max}%` : `calc(30% + 10px + (70% - 10px) * ${threshold.value / max})`,
             width: 0,
             borderLeft: `2px dashed ${BAD}`,
           }}
