@@ -1,6 +1,6 @@
 // További statisztikák: likviditás (runway), bevétel-trend, költségszerkezet, ügyfélkoncentráció, kintlévőségek kora.
 import { baseName } from './monthname';
-import { addMonths, monthRange, sumMonths, type Index } from './model';
+import { addMonths, monthRange, openAmount, partialPaid, sumMonths, type Index } from './model';
 import type { BillingoDoc, Entry, Section } from './types';
 
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
@@ -104,11 +104,13 @@ export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => 
     b.items.push({ ...e, days: d });
   };
   const open = new Set<string>();
+  const paid = partialPaid(entries);
   for (const e of entries) {
     if (e.kind !== 'plan' || e.done || e.tentative || sectionOf(e.leaf_id) !== 'in' || !e.amount) continue;
     open.add(e.id);
-    // kiszámlázott tervnél a kintlévőség a számla összege (a terv összege nem változik)
-    add(e.bill_amount != null ? { ...e, amount: e.bill_amount } : e);
+    // kiszámlázott tervnél a kintlévőség a számla összege (a terv összege nem változik), a részfizetés nélkül
+    const base = e.bill_amount != null ? { ...e, amount: e.bill_amount } : e;
+    add({ ...base, amount: openAmount(base, paid) });
   }
   const byId = new Map(entries.map((e) => [e.id, e]));
   for (const doc of billingo) {

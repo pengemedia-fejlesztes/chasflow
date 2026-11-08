@@ -3,6 +3,7 @@
 //   GET  /documents?page=&per_page=&start_date=   – bizonylatok listája (lapozva)
 //   GET  /documents/{id}                          – egy bizonylat (az automatikus „fizetve” előtti friss állapot)
 //   GET  /documents/{id}/public-url               – nyilvános számlakép link
+//   GET  /documents/{id}/payments                 – a számla fizetései (részfizetésnél a befolyt összeg)
 //   PUT  /documents/{id}/payments                 – fizetés(ek) rögzítése (az app „fizetve”-jelölése) → `payments` naplóba
 // Minden más kérés a mock alatt hangos hibát dob. Hibaszimuláció: `fail(429 | 500 | 401 | 'timeout' | 'network' | 'bad-json')`.
 // Csak kitalált adat! Önállóan is fut (Node típuseltávolítással): scripts/dev/mock-external.mjs.
@@ -250,6 +251,8 @@ export function mockBillingo(opts: { base?: string; apiKey?: string; perPage?: n
         const d = docs.find((x) => x.id === Number(m[1]));
         if (!d) return json({ error: { message: 'Document not found.' } }, 404);
         if (req.method === 'GET' && !m[2]) return json(view(d));
+        if (req.method === 'GET' && m[2] === '/payments')
+          return json(d.payments.map((p, i) => ({ id: i + 1, ...p, conversion_rate: d.conversion_rate, is_conciliated: false })));
         if (req.method === 'GET' && m[2] === '/public-url') return json({ public_url: `${base.replace(/\/v3$/, '')}/public/${d.id}.pdf` });
         if (req.method === 'PUT' && m[2] === '/payments') {
           if (!Array.isArray(body)) return json({ error: { message: 'The given data was invalid.' } }, 422);

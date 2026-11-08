@@ -251,9 +251,11 @@ export async function linkSameMonthActuals(env: Env): Promise<number> {
     env.DB.prepare(
       "SELECT id, leaf_id, date, period, amount, name FROM entries WHERE kind = 'plan' AND done = 0 AND COALESCE(tentative, 0) = 0 AND amount <> 0 AND date >= date('now', '-150 days') AND date <= date('now', '+40 days')",
     ),
+    // a tervhez már kötött tény (link_id, pl. részfizetés a még nyitott tervhez) nem köthető másik tervhez
     env.DB.prepare(
       `SELECT a.id, a.leaf_id, a.date, a.amount FROM entries a WHERE a.kind = 'actual' AND a.date >= date('now', '-150 days')
-       AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)`,
+       AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)
+       AND a.link_id IS NULL`,
     ),
     env.DB.prepare('SELECT id, label FROM leaves'),
   ]);

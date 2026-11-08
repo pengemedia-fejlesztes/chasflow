@@ -4,6 +4,9 @@
 // tény lesz, a terv lezárul és a tényhez kötődik (link_id). A terv összege a számla miatt nem változik (bill_amount).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reconcileInvoicePlans, syncBillingo } from '../../src/server/app/billingo';
+import { computeFlags } from '../../src/shared/flags';
+import { receivablesAging } from '../../src/shared/insights';
+import { buildIndex } from '../../src/shared/model';
 import { createTestApp, type TestApp } from '../helpers/app';
 import { installMocks, mockBillingo, type BillingoMock } from '../helpers/mocks';
 
@@ -99,18 +102,76 @@ describe('Billingo szinkron – nyitott számlák a tervezett bevételbe', () =>
     expect(entries("kind = 'actual'").length).toBe(1);
   });
 
-  it('részben fizetett számla: a terv nyitva marad (nincs tény), a számla állapota látszik', async () => {
+  it('részben fizetett számla: a befolyt összeg részleges tény (a tervhez kötve), a terv a maradékkal nyitva marad', async () => {
     await setup();
     billingo.addDocument({ id: 9013, number: 'MNT-2026-000113', partner: 'Minta Kft.', gross: 500_000, dueDate: day(3) });
     await sync();
     billingo.pay(9013, { date: day(-1), amount: 200_000 });
     await sync();
-    expect(entry('b9013')).toMatchObject({ done: 0, amount: 500_000 });
     expect(doc(9013).payment_status).toBe('partially_paid');
-    expect(entries("kind = 'actual'")).toEqual([]);
+    // a terv (és a számla összege) nem változik, nyitva marad
+    expect(entry('b9013')).toMatchObject({ done: 0, amount: 500_000, bill_amount: 500_000, link_id: null });
+    expect(entries("kind = 'actual'")).toEqual([
+      expect.objectContaining({ id: 'bp9013_1', date: day(-1), amount: 200_000, leaf_id: 'l_minta', source: 'billingo', ext_ref: 'bpaid:9013_1', link_id: 'b9013' }),
+    ]);
+    // az előrejelzésben csak a még kintlévő 300 000 várható (a 200 000 már tény), a kintlévőségben is
+    const data = (await t!.get('/api/data')).data;
+    const ix = buildIndex(data);
+    expect(ix.openPlan.get('l_minta')?.get(day(3).slice(0, 7))).toBe(300_000);
+    expect(ix.actual.get('l_minta')?.get(day(-1).slice(0, 7))).toBe(200_000);
+    expect(receivablesAging(data.entries, ix.sectionOf, data.today).buckets.reduce((s, b) => s + b.sum, 0)).toBe(300_000);
+    // a részfizetés nem „eltérés” és nem „nem tervezett” tétel
+    expect(computeFlags(data.entries, [], ix.sectionOf, data.today).filter((f) => f.entry_id === 'bp9013_1')).toEqual([]);
+
+    // ismételt szinkron nem dupláz
+    await sync();
+    expect(entries("kind = 'actual'").length).toBe(1);
+
+    // második részlet: újabb részleges tény, a maradék 200 000
+    billingo.pay(9013, { date: day(0), amount: 100_000 });
+    await sync();
+    expect(entry('bp9013_2')).toMatchObject({ amount: 100_000, link_id: 'b9013' });
+    expect(buildIndex((await t!.get('/api/data')).data).openPlan.get('l_minta')?.get(day(3).slice(0, 7))).toBe(200_000);
+
+    // a maradék is befolyik: a fizetett számla ténye csak a maradék, a terv lezárul – összesen a számla összege
+    billingo.pay(9013, { date: day(0), amount: 200_000 });
+    await sync();
+    expect(doc(9013).payment_status).toBe('paid');
+    expect(entry('b9013')).toMatchObject({ done: 1, link_id: 'bp9013' });
+    expect(entry('bp9013')).toMatchObject({ kind: 'actual', amount: 200_000, link_id: 'b9013', ext_ref: 'bpaid:9013' });
+    expect(entries("kind = 'actual'").reduce((s, e) => s + e.amount, 0)).toBe(500_000);
+    const end = (await t!.get('/api/data')).data;
+    const ix2 = buildIndex(end);
+    expect(ix2.openPlan.get('l_minta')?.get(day(3).slice(0, 7)) || 0).toBe(0);
+    // a tervhez kötött tények együtt adják ki a számlát: nincs eltérés-riasztás
+    expect(computeFlags(end.entries, [], ix2.sectionOf, end.today).filter((f) => f.entry_id.startsWith('bp9013'))).toEqual([]);
   });
 
-  it.todo('részfizetés: a még kintlévő összeg legyen a terv (bill_amount) – vagy a teljes számla marad? (kérdés Lacinak)');
+  it('részfizetés a meglévő (saját) tervhez: a már rögzített azonos tény (pl. banki tétel) kötődik hozzá, nem lesz második', async () => {
+    await setup();
+    plan('p_havi', 'l_minta', day(5), 400_000, 'Fejlesztés – 2026. november');
+    plan('a_bank', 'l_minta', day(-2), 150_000, 'Minta Kft.', { kind: 'actual', source: 'bank', ext_ref: 'bank:tx1' });
+    billingo.addDocument({ id: 9014, number: 'MNT-2026-000114', partner: 'Minta Kft.', gross: 400_000, dueDate: day(5) });
+    billingo.pay(9014, { date: day(-2), amount: 150_000 });
+    await sync();
+    expect(entry('p_havi')).toMatchObject({ done: 0, amount: 400_000, bill_amount: 400_000, ext_ref: 'billingo:9014' });
+    expect(entry('a_bank')).toMatchObject({ link_id: 'p_havi', amount: 150_000 });
+    expect(entries("kind = 'actual'").map((e) => e.id)).toEqual(['a_bank']);
+    const ix = buildIndex((await t!.get('/api/data')).data);
+    expect(ix.openPlan.get('l_minta')?.get(day(5).slice(0, 7))).toBe(250_000);
+  });
+
+  it('a fizetések lekérése hibára fut: a szinkron lefut, a terv a teljes összeggel nyitva marad, a következő kör pótolja', async () => {
+    await setup();
+    billingo.addDocument({ id: 9015, number: 'MNT-2026-000115', partner: 'Minta Kft.', gross: 300_000, dueDate: day(4) });
+    billingo.pay(9015, { date: day(-1), amount: 100_000 });
+    billingo.fail(500, { match: /\/payments$/ });
+    await sync();
+    expect(entry('b9015')).toMatchObject({ done: 0, amount: 300_000 });
+    expect(entries("kind = 'actual'")).toEqual([]);
+    await sync();
+    expect(entry('bp9015_1')).toMatchObject({ amount: 100_000, link_id: 'b9015' });
+  });
 
   it('fizetett számla, ha a tény már megvan (pl. xls import): ahhoz kötődik, nem lesz második tény', async () => {
     await setup();

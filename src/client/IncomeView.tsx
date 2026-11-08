@@ -2,7 +2,7 @@
 // a sorra állva műveletek (bank párosítás, dátum, +1 hó); jobbra a hónapban beérkezett tételek.
 import { hasMonth } from '../shared/monthname';
 import { useState } from 'react';
-import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../shared/model';
+import { addMonths, endOfMonth, fmt, monthLabel, monthLong, openAmount, partialPaid, ymOf } from '../shared/model';
 import type { Entry, Section } from '../shared/types';
 import { api } from './api';
 import { BankPickDialog } from './BankPick';
@@ -56,7 +56,9 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   const overdue = open.filter(isLate);
   const invoiced = open.filter((e) => isInvoiced(e) && !e.tentative);
   const offers = open.filter((e) => e.tentative);
-  const sumAbs = (es: Entry[]) => es.reduce((s, e) => s + Math.abs(e.amount), 0);
+  // a nyitott tétel még várható összege (részben fizetett számlánál a maradék)
+  const paid = partialPaid(data.entries);
+  const sumAbs = (es: Entry[]) => es.reduce((s, e) => s + Math.abs(openAmount(e, paid)), 0);
   const shown = open.filter((e) =>
     focus === 'open'
       ? !e.tentative
@@ -309,7 +311,7 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                           }}
                         >
                           {out ? '−' : ''}
-                          {fmt(Math.abs(e.amount))}
+                          {fmt(Math.abs(openAmount(e, paid)))}
                         </b>
                         {showAct && (
                           <span
