@@ -3,6 +3,7 @@ import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
+import { loadCatalog } from './catalog';
 import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
@@ -92,6 +93,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name'),
     env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym'),
   ]);
+  const catalog = await loadCatalog(env);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -116,6 +118,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     partners: (partners.results as any[]).map((p) => ({ ...p, aliases: JSON.parse(p.aliases || '[]') })),
     employees: employees.results as any,
     worktime: worktime.results as any,
+    ...catalog,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }

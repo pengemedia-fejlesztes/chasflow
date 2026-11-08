@@ -16,6 +16,7 @@ import { acceptOffer, payDefaults, rowKey } from './logic';
 import { MobilePartnerScreen } from './MobileFlows';
 import { PartnerModal } from './PartnerModal';
 import { PartnerSheet } from './PartnerSheet';
+import { PartnerServicesSummary } from './PartnerBilling';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle, R } from './ui';
 
@@ -2058,6 +2059,14 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
               </div>
               <div style={{ padding: '0 22px', overflowY: 'auto', flex: 1 }}>
                 <PartnerEditor key={selP.key + (selP.info?.updated_at || 0)} p={selP} part="panel" onSaved={(nk) => setSel(nk)} onPick={(k) => setSel(k)} />
+                <PartnerServicesSummary
+                  p={selP}
+                  onOpen={() => {
+                    // az adatlap a „Szolgáltatások és számlázás” fülön nyílik (a fület a címsorból olvassa)
+                    history.pushState(null, '', `#/partners?p=${encodeURIComponent(selP.key)}&t=srv`);
+                    openPartner(selP.key);
+                  }}
+                />
               </div>
               <div
                 style={{

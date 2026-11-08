@@ -12,6 +12,7 @@ import type { EditTarget } from './EntryModal';
 import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
+import { CatalogView } from './CatalogView';
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
 import { IncomeView } from './IncomeView';
@@ -21,8 +22,8 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'breakeven' | 'settings';
-const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'breakeven', 'settings'];
+export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'breakeven', 'settings'];
 
 /** #/nézet[/kategória][?p=partner&t=fül] */
 export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
@@ -139,6 +140,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     ['income', 'Tervezett bevételek, kiadások', openIncome],
     ['bank', 'Bankszinkron', newTx],
     ['partners', 'Partnertörzs', 0],
+    ['products', 'Termékek, szolgáltatások', 0],
     ['breakeven', 'Fedezeti pont', 0],
     ['settings', 'Beállítások', 0],
   ];
@@ -353,6 +355,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'income' && <IncomeView />}
         {view === 'bank' && <BankView />}
         {view === 'partners' && <PartnerRegistry page />}
+        {view === 'products' && <CatalogView />}
         {view === 'breakeven' && <BreakevenView />}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>

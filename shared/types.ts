@@ -191,6 +191,11 @@ export interface DataBundle {
   /** munkatársak és ledolgozott idejük (fedezeti pont) */
   employees?: import('./worktime').Employee[];
   worktime?: import('./worktime').WorktimeRow[];
+  /** termék- és szolgáltatástörzs, partnerhez rendelt termékek, partnerek számlázási adatai */
+  products?: import('./catalog').Product[];
+  partnerProducts?: import('./catalog').PartnerProduct[];
+  partnerProfiles?: Record<string, import('./catalog').PartnerProfile>;
+  catalogError?: string;
 }
 
 export interface LostOffer {

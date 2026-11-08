@@ -1084,7 +1084,7 @@ const groupDigits = (d: string) => d.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
  * Forint-összeg mező: gépelés közben ezres tagolással mutat („1 635 000”), a kurzor a beírt számjegy mögött marad;
  * az onChange a tagolás nélküli egész számot adja („1635000”).
  */
-function MoneyInput({
+export function MoneyInput({
   value,
   onChange,
   ...rest
