@@ -196,6 +196,16 @@ dialog::backdrop {
 .cf-line { stroke-dasharray: 1; animation: cf-draw 1.2s cubic-bezier(.4,0,.2,1) both; }
 .cf-area { animation: cf-fade 1s ease .3s both; }
 .cf-card { animation: cf-rise .5s ease both; }
+@keyframes cf-slide-in { from { transform: translateX(-100%); } to { transform: none; } }
+.cf-fade { animation: cf-fade .2s ease both; }
+.cf-drawer { animation: cf-slide-in .25s cubic-bezier(.2,.8,.2,1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .cf-bar, .cf-hbar, .cf-line, .cf-area, .cf-card { animation: none !important; }
+  .cf-bar, .cf-hbar, .cf-line, .cf-area, .cf-card, .cf-fade, .cf-drawer { animation: none !important; }
 }
+
+/* gépi nézetek telefonon (Feladatok, Partnertörzs, Termékek, Raktár, Fedezeti pont): a cím a mobil fejlécben van */
+.cf-mview { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.cf-mview > div { padding: 12px 12px 28px !important; gap: 12px !important; }
+.cf-mview h1 { display: none; }
+.cf-mview > div > div:first-child > div:first-child { flex: 1 1 100% !important; }
+.cf-mview > div > div:first-child p { font-size: 12.5px !important; margin-top: 0 !important; }

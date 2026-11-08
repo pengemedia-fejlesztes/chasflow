@@ -15,6 +15,7 @@ import { PartnerRegistry } from './PartnerCard';
 import { CatalogView } from './CatalogView';
 import { StockView } from './StockView';
 import { ChartsView } from './ChartsView';
+import { NavMenu, applySub } from './NavMenu';
 import { TasksView, useMyTaskCount } from './TasksView';
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
@@ -149,19 +150,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     const ok = !data.myAccess || data.myAccess.menus.includes(view);
     if (!ok && data.myAccess?.menus.length) setView(data.myAccess.menus.find((m) => m !== 'cat') as View);
   }, [view, data.myAccess]);
-  const nav: [View, string, number][] = [
-    ['overview', 'Áttekintés', 0],
-    ['charts', 'Grafikonok', 0],
-    ['tasks', 'Feladatok', myTasks],
-    ['alerts', 'Összevonás', flags.length + mc.billingo + mc.bank + mc.names],
-    ['income', 'Tervezett bevételek, kiadások', openIncome],
-    ['bank', 'Bankszinkron', newTx],
-    ['partners', 'Partnertörzs', 0],
-    ['products', 'Termékek, szolgáltatások', 0],
-    ['stock', 'Raktárkészlet', 0],
-    ['breakeven', 'Fedezeti pont', 0],
-    ['settings', 'Beállítások', 0],
-  ].filter((n) => !data.myAccess || data.myAccess.menus.includes(n[0] as string)) as [View, string, number][];
+  const [navKey, setNavKey] = useState(0);
+  const badges = { tasks: myTasks, alerts: flags.length + mc.billingo + mc.bank + mc.names, income: openIncome, bank: newTx };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '256px minmax(0,1fr)', minHeight: '100vh', alignItems: 'start' }}>
@@ -226,46 +216,16 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             </button>
           </div>
         )}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '0 10px' }}>
-          {nav.map(([v, label, badge]) => (
-            <button
-              key={v}
-              className="side-btn"
-              aria-current={view === v ? 'page' : undefined}
-              onClick={() => setView(v)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-                padding: '10px 12px',
-                borderRadius: R.md,
-                background: view === v ? C.navy3 : 'transparent',
-                color: '#fff',
-                font: `600 14px ${FONT}`,
-              }}
-            >
-              <span style={{ flex: 1 }}>{label}</span>
-              {badge > 0 && (
-                <span
-                  style={{
-                    minWidth: 22,
-                    textAlign: 'center',
-                    background: v === 'alerts' ? C.negLight : C.blue2,
-                    color: C.navy,
-                    borderRadius: 999,
-                    padding: '1px 7px',
-                    font: `700 11.5px ${FONT}`,
-                  }}
-                >
-                  {badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
+        <NavMenu
+          view={view}
+          badges={badges}
+          allowed={(v) => !data.myAccess || data.myAccess.menus.includes(v)}
+          onPick={(l) => {
+            applySub(l);
+            setView(l.view);
+            setNavKey((k) => k + 1);
+          }}
+        />
         {canCat && (
           <>
             <div
@@ -372,12 +332,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
           />
         )}
         {view === 'charts' && <ChartsView />}
-        {view === 'tasks' && <TasksView />}
+        {view === 'tasks' && <TasksView key={navKey} />}
         {view === 'alerts' && <AlertsView />}
         {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
         {view === 'income' && <IncomeView />}
-        {view === 'bank' && <BankView />}
+        {view === 'bank' && <BankView key={navKey} />}
         {view === 'partners' && <PartnerRegistry page />}
         {view === 'products' && <CatalogView />}
         {view === 'stock' && <StockView />}
