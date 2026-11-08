@@ -1450,7 +1450,7 @@ function SheetLink({ leafId }: { leafId: string }) {
         {missing && <span style={{ font: `600 12px ${FONT}`, color: C.neg }}> – kötelező, még nincs megadva</span>}
       </b>
       <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
-        Ebből számolja a program havonta, melyik projekten mennyi munka volt. A táblát „Bárki, akinek megvan a link” – Megtekintő megosztásra kell állítani.
+        Ebből számolja a program havonta, melyik projekten mennyi munka volt. Használj privát Drive-kapcsolatot, vagy töltsd fel az XLS-fájlt a saját fiókodból.
       </span>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input

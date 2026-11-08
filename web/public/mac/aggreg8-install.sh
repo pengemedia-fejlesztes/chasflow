@@ -4,6 +4,14 @@
 # Telepítés:  bash <(curl -fsSL https://pmdev.hu/Cashflow/mac/aggreg8-install.sh)
 # Eltávolítás: bash <(curl -fsSL https://pmdev.hu/Cashflow/mac/aggreg8-install.sh) --uninstall
 set -e
+# A build a teljes futtatható csomagot beágyazza. Nyers forrásból nem telepítünk.
+DOWNLOAD_B64='__CF_MAC_DOWNLOAD_B64__'
+CDP_B64='__CF_MAC_CDP_B64__'
+EXPORT_B64='__CF_MAC_EXPORT_B64__'
+if [ "$1" != "--uninstall" ] && [[ "$DOWNLOAD_B64" == __CF_MAC_* ]]; then
+  echo "A kész Cashflow-kiadás telepítőjét használd." >&2
+  exit 1
+fi
 URL="https://pmdev.hu/Cashflow"
 LABEL="hu.pengemedia.cashflow-aggreg8"
 SCRIPT="$HOME/Library/Scripts/cashflow-aggreg8.sh"
@@ -34,6 +42,13 @@ else
 fi
 
 mkdir -p "$HOME/Library/Scripts" "$HOME/Library/LaunchAgents"
+STATE="$HOME/Library/Application Support/cashflow-aggreg8"
+mkdir -p "$STATE"
+chmod 700 "$STATE"
+printf '%s' "$DOWNLOAD_B64" | base64 -D > "$STATE/aggreg8-download.sh"
+printf '%s' "$CDP_B64" | base64 -D > "$STATE/aggreg8-cdp.mjs"
+printf '%s' "$EXPORT_B64" | base64 -D > "$STATE/aggreg8-export.js"
+chmod 600 "$STATE/aggreg8-download.sh" "$STATE/aggreg8-cdp.mjs" "$STATE/aggreg8-export.js"
 cat > "$SCRIPT" <<SH
 #!/bin/bash
 # Új aggreg8 export a Letöltésekben → feltöltés a Cashflow tervezőbe (egy fájlt egyszer).
@@ -83,10 +98,10 @@ launchctl load "$PLIST"
 # --- letöltés: a saját, bejelentkezett Chrome-ban megnyitja az aggreg8-at, frissít, és közvetlenül feltölti a tranzakciókat ---
 cat > "$DSCRIPT" <<'SH'
 #!/bin/bash
-# Mindig a legfrissebb letöltő fut (a javításokhoz nem kell újratelepíteni); ha a szerver nem érhető el, a legutóbbi helyi példány.
-STATE="$HOME/Library/Application Support/cashflow-aggreg8"; mkdir -p "$STATE"
+# A telepített csomag fut; frissítéshez a felhasználó újra futtatja a telepítőt.
+STATE="$HOME/Library/Application Support/cashflow-aggreg8"
 F="$STATE/aggreg8-download.sh"
-if curl -fsS -m 30 "https://pmdev.hu/Cashflow/mac/aggreg8-download.sh" -o "$F.new" && bash -n "$F.new"; then mv "$F.new" "$F"; else rm -f "$F.new"; fi
+[ -f "$F" ] || { echo "Telepítsd újra a Cashflow bankfeltöltőt." >&2; exit 1; }
 exec /bin/bash "$F" "$@"
 SH
 chmod 700 "$DSCRIPT"

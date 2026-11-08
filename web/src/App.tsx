@@ -138,6 +138,8 @@ export function App() {
   if (phase.k === 'reset') return <ResetPw token={phase.token} onDone={() => setPhase({ k: 'login', setup: false })} />;
   if (phase.k === 'setup2fa') return <Setup2fa me={phase.me} onDone={boot} onLogout={doLogout} />;
   if (phase.k === 'changePw') return <ChangePw me={phase.me} onDone={boot} onLogout={doLogout} />;
+  if (phase.data.myAccess && phase.data.myAccess.menus.length === 0)
+    return <Splash><p>A fiókodhoz még nincs használható hozzáférés beállítva. Kérd az adminisztrátort.</p><button onClick={doLogout} style={btn}>Kilépés</button></Splash>;
   return (
     <StoreProvider initial={phase.data}>
       <BackHandling />

@@ -17,11 +17,13 @@ import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { handleChangelog } from './changelog';
-import { Env, HttpError, audit, getSetting, json, readJson, safeEqual, setSetting, withSecurityHeaders } from './util';
+import { Env, HttpError, audit, enforceHttps, getSetting, json, readJson, safeEqual, setSetting, withSecurityHeaders } from './util';
 import { SYNC_HOURS } from '../shared/aggreg8';
 import { isWorkday } from '../shared/workdays';
 
 async function route(req: Request, env: Env): Promise<Response> {
+  const transport = enforceHttps(req);
+  if (transport) return transport;
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
 

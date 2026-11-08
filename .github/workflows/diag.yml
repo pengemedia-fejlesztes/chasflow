@@ -4,10 +4,6 @@ name: Diagnosztika
 on:
   workflow_dispatch:
     inputs:
-      sql:
-        description: 'Csak olvasó (SELECT) lekérdezés az éles adatbázison'
-        required: false
-        default: ''
       nav_test:
         description: 'NAV szinkron próba'
         type: boolean
@@ -52,16 +48,6 @@ jobs:
           # csak időpont, darabszámok és az utolsó tétel dátuma – tételadat nélkül
           npx wrangler d1 execute cashflow --remote --json --command "SELECT key, value FROM settings WHERE key IN ('ingest_last', 'ingest_report', 'ingest_request')" | jq -c '.[0].results[]'
           npx wrangler d1 execute cashflow --remote --json --command "SELECT bank_name, provider, datetime(last_sync/1000,'unixepoch') AS last_sync, (SELECT MAX(date) FROM bank_tx t WHERE t.account_id = a.id) AS last_tx FROM bank_accounts a" | jq -c '.[0].results[]'
-      - name: Lekérdezés
-        if: ${{ inputs.sql != '' }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          SQL: ${{ inputs.sql }}
-        run: |
-          # csak SELECT engedett (nincs írás); több utasítás nem
-          if ! printf '%s' "$SQL" | grep -qiE '^[[:space:]]*select[[:space:]]' || printf '%s' "$SQL" | grep -q ';'; then echo "Csak egyetlen SELECT engedett."; exit 1; fi
-          npx wrangler d1 execute cashflow --remote --json --command "$SQL" | jq -c '.[0].results[]'
       - name: NAV szinkron próba
         if: ${{ inputs.nav_test }}
         env:

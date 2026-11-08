@@ -8,6 +8,7 @@ import { loadTasks } from './tasks';
 import { loadAccessMap, twofaMode } from './access';
 import { a8KeepAlive, a8Status } from './aggreg8srv';
 import { accessOf } from '../shared/access';
+import { visibleBundle } from './visibility';
 import { loadStock } from './stock';
 import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
@@ -375,13 +376,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const access = accessOf(u, await loadAccessMap(env));
     // a Cashflow megnyitásakor is megújítjuk az aggreg8-belépést, ha 6 óránál régebbi (háttérben, nem várunk rá)
     a8KeepAlive(env).catch(() => null);
-    const b: any = await loadBundle(env, u);
-    if (!access.data.bank) Object.assign(b, { accounts: [], bankTx: [] });
-    if (!access.data.payroll) Object.assign(b, { employees: [], worktime: [] });
-    if (!access.data.invoices) Object.assign(b, { billingo: [], navInvoices: [] });
-    if (!access.menus.includes('tasks')) Object.assign(b, { tasks: [] });
-    if (!access.menus.includes('stock')) Object.assign(b, { warehouses: [], stockLevels: [], stockMoves: [] });
-    b.myAccess = access;
+    const b = visibleBundle(await loadBundle(env, u), access);
     if (u.role === 'admin') {
       b.userAccess = await loadAccessMap(env);
       b.twofaMode = await twofaMode(env);
@@ -550,12 +545,16 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       .first<{ name: string; sheet_url: string | null }>();
     const id = sheetIdOf(row?.sheet_url);
     if (!row || !id) throw new HttpError(400, 'Ehhez a partnerhez nincs megadva elszámoló tábla link.');
-    const res = await fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`, { redirect: 'follow' });
+    // Privát táblázatokhoz hitelesített Drive-kapcsolat kell; névtelen exportot nem támogatunk.
+    if (!env.GOOGLE_DRIVE_ACCESS_TOKEN) throw new HttpError(503, 'A privát Drive-kapcsolat nincs beállítva. Töltsd fel az XLS-fájlt a saját fiókodból.');
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application%2Fvnd.openxmlformats-officedocument.spreadsheetml.sheet`, {
+      headers: { Authorization: `Bearer ${env.GOOGLE_DRIVE_ACCESS_TOKEN}` }, redirect: 'error',
+    });
     const type = res.headers.get('content-type') || '';
     if (!res.ok || !type.includes('spreadsheetml'))
       throw new HttpError(
         400,
-        `${row.name}: nem érem el a táblát. A Google-táblázatban: Megosztás → Általános hozzáférés → „Bárki, akinek megvan a link” – Megtekintő.`,
+        `${row.name}: nem érem el a privát táblát. Ellenőrizd a Drive-kapcsolat jogosultságát, vagy töltsd fel az XLS-fájlt.`,
       );
     const bytes = new Uint8Array(await res.arrayBuffer());
     let bin = '';

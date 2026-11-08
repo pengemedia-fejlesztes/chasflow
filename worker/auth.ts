@@ -5,8 +5,8 @@ import { changedMail, mailEnabled, resetMail, sendMail } from './mail';
 import { Env, HttpError, audit, b64decode, b64url, clientIp, json, now, randomBytes, readJson, safeEqual, sha256 } from './util';
 
 const COOKIE = '__Host-cf_session';
-const SESSION_TTL = 30 * 86400_000; // abszolút lejárat
-const IDLE_TTL = 7 * 86400_000; // inaktivitás után kilép
+const SESSION_TTL = 12 * 3600_000; // abszolút lejárat
+const IDLE_TTL = 30 * 60_000; // inaktivitás után kilép
 const PBKDF2_ITER = 100_000; // a Workers futtatókörnyezet maximuma
 const MAX_IP_ATTEMPTS = 20; // 15 percen belül
 const MAX_USER_FAILS = 5;
@@ -126,12 +126,12 @@ export async function currentUser(env: Env, req: Request): Promise<User | null> 
   const token = getCookie(req, COOKIE);
   if (!token || token.length > 100) return null;
   const th = await sha256(token);
-  const row = await env.DB.prepare(`SELECT s.expires_at, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
+  const row = await env.DB.prepare(`SELECT s.created_at AS session_created_at, s.expires_at, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
     .bind(th)
-    .first<User & { expires_at: number; last_seen: number }>();
+    .first<User & { session_created_at: number; expires_at: number; last_seen: number }>();
   if (!row) return null;
   const t = now();
-  if (row.expires_at < t || row.last_seen + IDLE_TTL < t || row.disabled) {
+  if (row.expires_at < t || row.session_created_at + SESSION_TTL < t || row.last_seen + IDLE_TTL < t || row.disabled) {
     await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(th).run();
     return null;
   }
