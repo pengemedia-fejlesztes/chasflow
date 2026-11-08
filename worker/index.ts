@@ -9,6 +9,7 @@ import { handleIngest, handleIngestToken } from './ingest';
 import { handlePartners } from './partners';
 import { handleCatalog } from './catalog';
 import { handleTasks } from './tasks';
+import { handleLedger } from './ledger';
 import { handleAccess, loadAccessMap, twofaMode } from './access';
 import { a8KeepAlive, handleAggreg8Server } from './aggreg8srv';
 import { accessOf, allowed, needs2fa } from '../shared/access';
@@ -125,6 +126,8 @@ async function route(req: Request, env: Env): Promise<Response> {
   }
   const rr = await handleRules(env, req, path, u, () => reapplyRules(env));
   if (rr) return rr;
+  const lg = await handleLedger(env, req, path, u);
+  if (lg) return lg;
   const b = await handleBank(env, req, path, u, url);
   if (b) return b;
   throw new HttpError(404, 'Nincs ilyen végpont.');

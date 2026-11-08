@@ -10,6 +10,7 @@ const MONTH_HU = ['január', 'február', 'március', 'április', 'május', 'jún
 import { api } from './api';
 import { rowsOfSheet } from './sheetCore';
 import { useStore } from './store';
+import { useLedger } from './LedgerView';
 import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle, R } from './ui';
 
 const h = (min: number) => (min / 60).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
@@ -964,6 +965,124 @@ export function BreakevenView() {
             )}
           </>
         )}
+      </div>
+      <BankMonths />
+    </div>
+  );
+}
+
+/** bankszámlák havonta: nyitó és záró egyenleg számlánként, összesen, és a havi banki változás összevetése a cashflow-val (tény) */
+function BankMonths() {
+  const { data, ix } = useStore();
+  const { r, err } = useLedger(data.today.slice(0, 7), '');
+  const [n, setN] = useState(12);
+  if (err) return <div style={{ ...card, padding: 14, color: C.neg, font: `500 14px ${FONT}` }}>Bankszámlák: {err}</div>;
+  if (!r) return null;
+  const accs = r.accounts;
+  const months = r.months.slice(-n).reverse();
+  // a havi cashflow (tény): az összes tény-tétel előjeles összege a hónapban (bevétel +, kiadás −)
+  const cf = (ym: string) => {
+    let s = 0;
+    for (const [, m] of ix.actual) s += m.get(ym) || 0;
+    return s;
+  };
+  const th: CSSProperties = {
+    font: `600 11px ${FONT}`,
+    letterSpacing: '.08em',
+    textTransform: 'uppercase',
+    color: C.muted,
+    padding: '10px 8px',
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+  };
+  const td: CSSProperties = {
+    padding: '9px 8px',
+    textAlign: 'right',
+    font: `400 13.5px ${FONT}`,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+    borderTop: `1px solid ${C.line3}`,
+  };
+  const sgn = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v));
+  return (
+    <div style={{ ...card, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <b style={{ font: `700 20px ${FONT_H}`, color: C.navy, flex: 1 }}>Bankszámlák havonta</b>
+        <select value={n} onChange={(e) => setN(Number(e.target.value))} aria-label="Hónapok száma" style={{ ...inputStyle, height: 34, width: 150 }}>
+          <option value={6}>Utolsó 6 hónap</option>
+          <option value={12}>Utolsó 12 hónap</option>
+          <option value={24}>Utolsó 24 hónap</option>
+        </select>
+      </div>
+      <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
+        Nyitó és záró egyenleg számlánként (a mostani egyenlegből visszaszámolva a banki tételek alapján). A „Különbség” a havi banki változás és a cashflow-ban
+        rögzített tények eltérése: ha nem nulla, van jóváhagyásra váró, kihagyott vagy hiányzó tétel abban a hónapban (a tételek a Bankszinkron › Számlatörténet
+        alatt).
+      </span>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 + accs.length * 220 }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: 'left' }} rowSpan={2}>
+                Hónap
+              </th>
+              {accs.map((a) => (
+                <th key={a.id} style={{ ...th, textAlign: 'center', color: C.navy }} colSpan={2}>
+                  {a.bank_name}
+                </th>
+              ))}
+              <th style={{ ...th, textAlign: 'center', color: C.navy }} colSpan={2}>
+                Összesen
+              </th>
+              <th style={th} rowSpan={2}>
+                Banki változás
+              </th>
+              <th style={th} rowSpan={2}>
+                Cashflow (tény)
+              </th>
+              <th style={th} rowSpan={2}>
+                Különbség
+              </th>
+            </tr>
+            <tr>
+              {[...accs.map((a) => a.id), 'sum'].map((id) => [
+                <th key={id + 'o'} style={th}>
+                  nyitó
+                </th>,
+                <th key={id + 'c'} style={th}>
+                  záró
+                </th>,
+              ])}
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((m) => {
+              const open = accs.reduce((s, a) => s + (m.accounts[a.id]?.open || 0), 0);
+              const close = accs.reduce((s, a) => s + (m.accounts[a.id]?.close || 0), 0);
+              const change = close - open;
+              const c = Math.round(cf(m.ym));
+              const diff = change - c;
+              return (
+                <tr key={m.ym}>
+                  <td style={{ ...td, textAlign: 'left', fontWeight: 600, color: C.navy }}>{monthLong(m.ym)}</td>
+                  {accs.map((a) => [
+                    <td key={a.id + 'o'} style={{ ...td, color: C.muted }}>
+                      {fmt(m.accounts[a.id]?.open || 0)}
+                    </td>,
+                    <td key={a.id + 'c'} style={td}>
+                      {fmt(m.accounts[a.id]?.close || 0)}
+                    </td>,
+                  ])}
+                  <td style={{ ...td, color: C.muted }}>{fmt(open)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: C.navy }}>{fmt(close)}</td>
+                  <td style={{ ...td, color: change < 0 ? C.neg : C.inc }}>{sgn(change)}</td>
+                  <td style={{ ...td, color: c < 0 ? C.neg : C.inc }}>{sgn(c)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: Math.abs(diff) < 1000 ? C.faint : C.neg }}>{Math.abs(diff) < 1 ? '0' : sgn(diff)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

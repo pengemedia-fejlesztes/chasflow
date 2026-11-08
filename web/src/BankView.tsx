@@ -5,10 +5,11 @@ import { SYNC_HOURS } from '../../shared/aggreg8';
 import { fmt } from '../../shared/model';
 import { api } from './api';
 import { useStore } from './store';
+import { LedgerView } from './LedgerView';
 import { BANK_COLS, BANK_MINW, TxCard } from './TxCard';
 import { C, FONT, FONT_H, Pill, card, eyebrow, shortDate, stamp, SyncPill, R } from './ui';
 
-export function BankView({ mobile }: { mobile?: boolean }) {
+function BankInbox({ mobile }: { mobile?: boolean }) {
   const { ix, data, run, canEdit } = useStore();
   const inbox = data.bankTx.filter((t) => t.status === 'new').sort((a, b) => b.date.localeCompare(a.date));
   const done = data.bankTx.filter((t) => t.status !== 'new').slice(0, 30);
@@ -259,4 +260,49 @@ export function useFrequentLeaves(): [string[], string[]] {
         .slice(0, 6);
     return [top('in'), top('out')];
   }, [data.entries, data.today, ix]);
+}
+
+/** Bankszinkron: beérkezett tételek (jóváhagyás) és számlatörténet (havi lapozás, nyitó/záró, kapcsolt számlák) */
+export function BankView({ mobile }: { mobile?: boolean }) {
+  const [tab, setTab0] = useState<'inbox' | 'ledger'>(() => (sessionStorage.getItem('cf-bank-tab') as any) || 'inbox');
+  const setTab = (t: 'inbox' | 'ledger') => {
+    setTab0(t);
+    try {
+      sessionStorage.setItem('cf-bank-tab', t);
+    } catch {
+      /* privát mód */
+    }
+  };
+  if (mobile) return <BankInbox mobile />;
+  return (
+    <div>
+      <div style={{ padding: '18px 28px 0', display: 'flex', gap: 4, borderBottom: `1px solid ${C.line}` }}>
+        {(
+          [
+            ['inbox', 'Beérkezett tételek'],
+            ['ledger', 'Számlatörténet és készpénz'],
+          ] as const
+        ).map(([k, l]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTab(k)}
+            style={{
+              border: 0,
+              background: 'transparent',
+              padding: '10px 22px 12px',
+              font: `600 15px ${FONT}`,
+              color: tab === k ? C.navy : C.muted,
+              borderBottom: `3px solid ${tab === k ? C.blue : 'transparent'}`,
+              marginBottom: -1,
+              cursor: 'pointer',
+            }}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+      {tab === 'inbox' ? <BankInbox /> : <LedgerView />}
+    </div>
+  );
 }
