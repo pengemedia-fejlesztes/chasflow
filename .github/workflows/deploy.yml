@@ -102,13 +102,14 @@ jobs:
           WEB_CONFIG=""
           for PUBLIC_ROOT in "$HOME/public_html" "$HOME/pmdev.hu" "$HOME/domains/pmdev.hu/public_html"; do
             [ -d "$PUBLIC_ROOT" ] || continue
+            find -L "$PUBLIC_ROOT" -maxdepth 6 -type f -name .htaccess -print0 > "$NEW/web-configs.list" 2>/dev/null || true
             while IFS= read -r -d '' CONFIG; do
               if awk -v expected="$HOME/$APP_DIR" '$1 == "PassengerAppRoot" {gsub(/"/, "", $2); if ($2 == expected) found=1} END {exit !found}' "$CONFIG"; then
                 CANONICAL=$(readlink -f "$CONFIG")
                 if [ -n "$WEB_CONFIG" ] && [ "$WEB_CONFIG" != "$CANONICAL" ]; then echo "Több Passenger konfiguráció illeszkedik; kézi ellenőrzés kell."; exit 1; fi
                 WEB_CONFIG="$CANONICAL"
               fi
-            done < <(find -L "$PUBLIC_ROOT" -maxdepth 6 -type f -name .htaccess -print0 2>/dev/null)
+            done < "$NEW/web-configs.list"
           done
           [ -n "$WEB_CONFIG" ] || { echo "A Cashflow Passenger-konfiguráció nem található a publikus webgyökerekben."; exit 1; }
           # Az SSH shell nem aktiválja a cPanel Node-környezetet.
