@@ -32,9 +32,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run audit:security
       - run: npm run typecheck
       - run: npm test
       - run: npx vite build
+      - run: node tools/package-mac.mjs
 
   deploy:
     needs: check
@@ -54,9 +56,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run audit:security
       - name: Build (felület /Cashflow/ alá + szerveroldali csomag)
         run: |
           npx vite build --base /Cashflow/
+          node tools/package-mac.mjs
           npm run build:server
       - name: SSH beállítása
         env:
@@ -94,6 +98,9 @@ jobs:
           TS=$(date +%Y%m%d-%H%M%S)
           BK=.backup/$TS
           mkdir -p "$BK"
+          WEB_CONFIG="$HOME/public_html/Cashflow/.htaccess"
+          # A tárhely útvonalát még az alkalmazás cseréje előtt ellenőrizzük.
+          node "$NEW/server/enforce-https.mjs" "$WEB_CONFIG" "$BK/public-htaccess"
           mv dist "$BK/dist"
           cp -a dist-worker server "$BK/"
           [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
@@ -103,6 +110,9 @@ jobs:
           cp "$NEW/dist-worker/worker.mjs" dist-worker/worker.mjs
           cp "$NEW"/server/*.mjs server/
           rm -rf "$NEW"
+          # Passenger útvonal: a HTTPS-átirányítás a publikus webrootban is kötelező.
+          # Előbb száraz próba, majd mentés és célzott, visszavonható beillesztés.
+          node server/enforce-https.mjs "$WEB_CONFIG" "$BK/public-htaccess" --apply
           echo "$SHA" > .deployed-sha
           mkdir -p tmp && touch tmp/restart.txt
           # az utolsó 5 mentés marad meg
@@ -112,7 +122,7 @@ jobs:
       - name: Éles felület és API ellenőrzése
         run: |
           python3 - <<'PYSMOKE'
-          import hashlib, json, os, pathlib, time, urllib.request
+          import hashlib, json, os, pathlib, time, urllib.request, urllib.error
           from html.parser import HTMLParser
           class Scripts(HTMLParser):
               def __init__(self): super().__init__(); self.paths = []
@@ -137,6 +147,14 @@ jobs:
                       assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
                   status = json.loads(get(site + '/api/auth/status'))
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
+                  assert status.get('twofaMode') in ('admin', 'all'), 'Admin 2FA enforcement is missing'
+                  class NoRedirect(urllib.request.HTTPRedirectHandler):
+                      def redirect_request(self, *args): return None
+                  try:
+                      response = urllib.request.build_opener(NoRedirect).open(site.replace('https://', 'http://') + '/', timeout=30)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  assert response.code in (301, 302, 307, 308) and response.headers.get('Location', '').startswith(site), 'HTTP must redirect to the HTTPS application'
                   print('pmdev.hu/Cashflow: HTML, application assets and authentication API verified.')
                   break
               except Exception as error:

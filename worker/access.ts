@@ -22,8 +22,7 @@ export async function setUserAccess(env: Env, userId: number, a: unknown) {
 /** kötelező 2FA: a beállítás, különben a régi környezeti kapcsoló (csak adminoknak) */
 export async function twofaMode(env: Env): Promise<TwoFaMode> {
   const v = await getSetting(env, 'require_2fa').catch(() => null);
-  if (v === 'off' || v === 'admin' || v === 'all') return v;
-  return (env as any).REQUIRE_ADMIN_2FA === '1' ? 'admin' : 'off';
+  return v === 'all' ? 'all' : 'admin';
 }
 
 /**
@@ -44,7 +43,7 @@ export async function handleAccess(env: Env, req: Request, path: string, u: User
   if (path === '/api/security' && req.method === 'PUT') {
     requireRole(u, 'admin');
     const b = await readJson(req);
-    const mode = ['off', 'admin', 'all'].includes(b.require_2fa) ? (b.require_2fa as TwoFaMode) : null;
+    const mode = ['admin', 'all'].includes(b.require_2fa) ? (b.require_2fa as TwoFaMode) : null;
     if (!mode) throw new HttpError(400, 'Hibás beállítás.');
     if (mode !== 'off' && !u.totp_enabled)
       throw new HttpError(400, 'Előbb kapcsold be a saját kétlépcsős azonosításodat (Beállítások › Fiók), különben kizárnád magad.');

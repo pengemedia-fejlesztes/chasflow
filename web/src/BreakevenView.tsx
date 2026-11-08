@@ -857,8 +857,7 @@ export function BreakevenView() {
             {srcOpen ? '▾' : '▸'} Adatforrás · munkaidő-táblák
           </button>
           <span style={{ flex: 1, minWidth: 220, font: `500 12px/1.4 ${FONT}`, color: C.muted }}>
-            Clockify-export („ÉÉÉÉ.HH-Feladatok” lapok · Tag · Projekt · Idő) · a Google-táblát „Bárki, akinek megvan a link – Megtekintő” megosztásra kell
-            állítani
+            Clockify-export („ÉÉÉÉ.HH-Feladatok” lapok · Tag · Projekt · Idő) · privát Drive-kapcsolat, vagy XLS-feltöltés a saját fiókodból
           </span>
           {isAdmin && withSheet.length > 0 && (
             <Pill kind="dark" onClick={() => !busy && refresh(withSheet)}>

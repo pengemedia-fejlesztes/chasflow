@@ -1397,7 +1397,7 @@ function InviteBox({ email, link }: { email: string; link: string }) {
 /** admin: kinek kötelező a kétlépcsős azonosítás */
 function TwoFaPolicy() {
   const { data, run } = useStore();
-  const mode = data.twofaMode || 'off';
+  const mode = data.twofaMode || 'admin';
   return (
     <Section
       title="Kétlépcsős azonosítás"
@@ -1410,7 +1410,6 @@ function TwoFaPolicy() {
           onChange={(e) => run(() => api('/api/security', { method: 'PUT', body: { require_2fa: e.target.value } }), 'Kétlépcsős azonosítás beállítva')}
           style={{ ...inputStyle, height: 38, width: 240 }}
         >
-          <option value="off">Senkinek (önkéntes)</option>
           <option value="admin">Adminisztrátoroknak</option>
           <option value="all">Mindenkinek</option>
         </select>
