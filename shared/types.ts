@@ -212,6 +212,8 @@ export interface DataBundle {
   myAccess?: import('./access').Access;
   userAccess?: Record<string, import('./access').Access>;
   twofaMode?: import('./access').TwoFaMode;
+  /** szerveroldali aggreg8-szinkron állapota (admin) */
+  aggreg8Server?: { connected: boolean; exp: number | null; lastRun: number | null; ok: boolean | null; message: string; needsAction?: string | null; banks?: string[] } | null;
 }
 
 export interface LostOffer {

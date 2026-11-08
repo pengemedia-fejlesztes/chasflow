@@ -1,3 +1,4 @@
+import { syncAggreg8Server } from './aggreg8srv';
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import { normalizeText, parseAmount, parseDate } from '../shared/categories';
 import { namesMatch } from '../shared/billingopay';
@@ -337,6 +338,12 @@ export async function syncAll(env: Env) {
     } catch (e: any) {
       res.billingoError = e.message;
     }
+  }
+  // aggreg8 a szerverről (ha át van adva a munkamenet): banki frissítés + letöltés, a Mac nélkül
+  try {
+    res.aggreg8 = await syncAggreg8Server(env);
+  } catch (e: any) {
+    res.aggreg8Error = e.message;
   }
   if (env.EB_APP_ID && env.EB_PRIVATE_KEY) {
     try {

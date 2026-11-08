@@ -598,6 +598,7 @@ function Integrations() {
           </div>
         ))}
       </Section>
+      <ServerAggreg8 />
       <AutoUpload />
       <Section
         title="Banki kivonat import (CSV / XLSX / aggreg8 XML)"
@@ -1415,6 +1416,94 @@ function TwoFaPolicy() {
         </select>
         {!data.me.totp_enabled && <span style={{ font: `500 13px ${FONT}`, color: C.neg }}>Előbb a saját fiókodnál kapcsold be (Fiók fül).</span>}
       </div>
+    </Section>
+  );
+}
+
+/** Szerveroldali aggreg8: a böngészőben lévő aggreg8-belépés egyszeri átadása könyvjelzővel; utána a szerver frissít és tölt le */
+function ServerAggreg8() {
+  const { data, run } = useStore();
+  const st = data.aggreg8Server;
+  const target = `${location.origin}${location.pathname}`;
+  // a könyvjelző az aggreg8 oldalán fut: a belépési tokent a címsor # része viszi át (az a szerverre nem jut el), a Cashflow azonnal törli
+  const bookmarklet = `javascript:(function(){var t=localStorage.getItem('token');if(!t||location.host.indexOf('aggreg8')<0){alert('Előbb nyisd meg és jelentkezz be: standalone.aggreg8.hu');return;}window.open('${target}#a8='+t,'_blank');})();`;
+  const dt = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString('hu-HU', { dateStyle: 'medium', timeStyle: 'short' }) : '–');
+  return (
+    <Section
+      title="Bankszinkron a szerverről (aggreg8)"
+      sub="A szerver maga indítja az aggreg8-ban a MagNet és a BiNX frissítését, és letölti a tételeket – munkanapokon 5, 13 és 17 órakor és a „Szinkron most” gombra –, a Mac nélkül. A Google-belépést a szerver nem tudja elvégezni, ezért egyszer át kell adni a belépést (lásd lent); utána a szerver magától megújítja."
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', font: `500 14px ${FONT}` }}>
+        <span
+          style={{
+            padding: '4px 12px',
+            borderRadius: 999,
+            background: st?.connected ? (st.ok === false ? C.negBg : C.incBg) : C.bg,
+            color: st?.connected ? (st.ok === false ? C.neg : C.inc) : C.muted,
+            fontWeight: 600,
+          }}
+        >
+          {st?.connected ? (st.ok === false ? 'Hiba' : 'Bekapcsolva') : 'Nincs beállítva'}
+        </span>
+        {st?.connected && <span style={{ color: C.muted }}>belépés érvényes: {dt(st.exp)}</span>}
+        {st?.lastRun && (
+          <span style={{ color: C.muted }}>
+            utolsó futás: {dt(st.lastRun)} · {st.message}
+          </span>
+        )}
+      </div>
+      {st?.needsAction && (
+        <div style={{ background: C.negBg, color: C.neg, borderRadius: R.lg, padding: 12, font: `500 14px/1.5 ${FONT}` }}>{st.needsAction}</div>
+      )}
+      <ol style={{ margin: 0, paddingLeft: 20, font: `400 14px/1.7 ${FONT}`, color: C.ink }}>
+        <li>
+          Húzd ezt a gombot a böngésző könyvjelzősávjára:{' '}
+          <a
+            href={bookmarklet}
+            onClick={(e) => (e.preventDefault(), alert('Ne kattints rá itt: húzd a könyvjelzősávra, és az aggreg8 oldalán kattints rá.'))}
+            style={{
+              display: 'inline-block',
+              padding: '4px 12px',
+              borderRadius: 999,
+              background: C.blue,
+              color: '#fff',
+              font: `600 13px ${FONT}`,
+              textDecoration: 'none',
+            }}
+          >
+            aggreg8 → Cashflow
+          </a>
+        </li>
+        <li>
+          Nyisd meg a{' '}
+          <a href="https://standalone.aggreg8.hu/synchronizations" target="_blank" rel="noreferrer">
+            standalone.aggreg8.hu
+          </a>{' '}
+          oldalt, és jelentkezz be (Google).
+        </li>
+        <li>Ott kattints a könyvjelzőre: új lapon megnyílik a Cashflow, és beállítja a kapcsolatot. Jelszót, kódot senkinek nem kell begépelned.</li>
+      </ol>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {st?.connected && (
+          <Pill kind="primary" onClick={() => run(() => api('/api/aggreg8/sync', { body: {} }), 'aggreg8: szinkron kész')}>
+            ↻ Szinkron most (szerver)
+          </Pill>
+        )}
+        {st?.connected && (
+          <Pill
+            kind="danger"
+            onClick={() =>
+              confirm('Leválasztod a szerveroldali aggreg8-kapcsolatot?') && run(() => api('/api/aggreg8/session', { method: 'DELETE' }), 'Leválasztva')
+            }
+          >
+            Leválasztás
+          </Pill>
+        )}
+      </div>
+      <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted }}>
+        A belépést a szerver titkos táblában tárolja (a böngészőkbe nem kerül ki), és lejárat előtt megújítja. Ha a bank 90/180 naponta új jóváhagyást kér, itt
+        jelzi: akkor az aggreg8-ban kell frissíteni a bankkapcsolatot. A lenti Mac-es feltöltés tartaléknak megmaradhat.
+      </span>
     </Section>
   );
 }

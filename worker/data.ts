@@ -6,6 +6,7 @@ import { partnerIdOf } from '../shared/partners';
 import { loadCatalog, syncCatalog } from './catalog';
 import { loadTasks } from './tasks';
 import { loadAccessMap, twofaMode } from './access';
+import { a8Status } from './aggreg8srv';
 import { accessOf } from '../shared/access';
 import { loadStock } from './stock';
 import { sheetIdOf } from '../shared/worktime';
@@ -382,6 +383,7 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     if (u.role === 'admin') {
       b.userAccess = await loadAccessMap(env);
       b.twofaMode = await twofaMode(env);
+      b.aggreg8Server = await a8Status(env).catch(() => null);
     }
     return json(b);
   }

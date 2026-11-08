@@ -50,7 +50,7 @@ async function tokenUser(env: Env, req: Request): Promise<number> {
   return st.user_id;
 }
 
-export type IngestLast = { at: number; source: 'xml' | 'json'; ok: boolean; accounts: unknown[]; error?: string };
+export type IngestLast = { at: number; source: 'xml' | 'json' | 'server'; ok: boolean; accounts: unknown[]; error?: string };
 
 export async function handleIngest(env: Env, req: Request, path: string): Promise<Response | null> {
   // a Mac-bot innen olvassa, mikor kell feltöltenie (= a banki szinkron órái), és mikor sikerült utoljára
@@ -105,6 +105,19 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
     await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: false, accounts: [], error } satisfies IngestLast));
     throw new HttpError(400, error);
   }
+  const { accounts: out, billingo_paid } = await ingestAggreg8Accounts(env, userId, accs, balances, skipped, isJson ? 'json' : 'xml');
+  return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS, billingo_paid });
+}
+
+/** az aggreg8-ból kapott számlák és egyenlegek beolvasása (a Mac-es feltöltés és a szerveroldali lekérés közös része) */
+export async function ingestAggreg8Accounts(
+  env: Env,
+  userId: number,
+  accs: A8Account[],
+  balances: Record<string, number>,
+  skipped: number,
+  source: 'json' | 'xml' | 'server',
+): Promise<{ accounts: unknown[]; billingo_paid: unknown }> {
   const manual = (
     await env.DB.prepare("SELECT bank_name, label, iban FROM bank_accounts WHERE provider = 'manual'").all<{
       bank_name: string;
@@ -153,11 +166,16 @@ export async function handleIngest(env: Env, req: Request, path: string): Promis
       .run();
     out.push({ bank: m.bank_name, rows: 0, balance: amount });
   }
-  await audit(env, userId, 'ingest_aggreg8', { source: isJson ? 'json' : 'xml', skipped, accounts: out });
-  await setSetting(env, LAST, JSON.stringify({ at: now(), source: isJson ? 'json' : 'xml', ok: true, accounts: out } satisfies IngestLast));
+  await audit(env, userId, 'ingest_aggreg8', { source, skipped, accounts: out });
+  await setSetting(env, LAST, JSON.stringify({ at: now(), source, ok: true, accounts: out } as IngestLast));
   await refreshLastDates(env);
   const billingo_paid = await payBillingoFromBank(env).catch((e) => ({ error: String(e?.message || e) }));
-  return json({ ok: true, accounts: out, skipped, sync_hours: SYNC_HOURS, billingo_paid });
+  return { accounts: out, billingo_paid };
+}
+
+/** bankonként az utolsó banki tétel napja (a lekérés kezdőnapjához) */
+export async function lastBankDates(env: Env): Promise<Record<string, string>> {
+  return JSON.parse((await getSetting(env, LAST_DATES)) || 'null') || (await refreshLastDates(env));
 }
 
 /** Kulcs létrehozása (a régi érvényét veszti) / visszavonása – adminnak. */

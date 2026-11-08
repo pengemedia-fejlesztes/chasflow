@@ -40,6 +40,16 @@ export function App() {
 
   const boot = useCallback(async () => {
     try {
+      // aggreg8-munkamenet átadása a könyvjelzőből (#a8=…): azonnal kivesszük a címsorból, belépés után küldjük a szervernek
+      const a8 = location.hash.match(/^#a8=([\w.-]+)$/);
+      if (a8) {
+        try {
+          sessionStorage.setItem('cf-a8', a8[1]);
+        } catch {
+          /* privát mód */
+        }
+        history.replaceState(null, '', location.pathname + '#/settings');
+      }
       const resetToken = new URLSearchParams(location.search).get('reset');
       if (resetToken) {
         // a token ne maradjon a címsorban / előzményekben
@@ -59,6 +69,21 @@ export function App() {
       if (s.me.must_change_pw) return setPhase({ k: 'changePw', me: s.me });
       if (!s.me.totp_enabled && (s.twofaMode === 'all' || ((s.twofaMode === 'admin' || (!s.twofaMode && s.require2fa)) && s.me.role === 'admin')))
         return setPhase({ k: 'setup2fa', me: s.me });
+      let a8tok: string | null = null;
+      try {
+        a8tok = sessionStorage.getItem('cf-a8');
+        sessionStorage.removeItem('cf-a8');
+      } catch {
+        /* privát mód */
+      }
+      if (a8tok) {
+        try {
+          await api('/api/aggreg8/session', { body: { token: a8tok } });
+          alert('Az aggreg8-kapcsolat beállítva: a bankszinkron mostantól a szerverről fut (Beállítások › Bekötések).');
+        } catch (e: any) {
+          alert('Az aggreg8-kapcsolat beállítása nem sikerült: ' + e.message);
+        }
+      }
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
     } catch (e: any) {
       setPhase({ k: 'error', msg: e.message });

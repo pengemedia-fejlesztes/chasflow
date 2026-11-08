@@ -10,6 +10,7 @@ import { handlePartners } from './partners';
 import { handleCatalog } from './catalog';
 import { handleTasks } from './tasks';
 import { handleAccess, loadAccessMap, twofaMode } from './access';
+import { a8KeepAlive, handleAggreg8Server } from './aggreg8srv';
 import { accessOf, allowed, needs2fa } from '../shared/access';
 import { handleStock } from './stock';
 import { notifyUnplanned } from './notify';
@@ -94,7 +95,18 @@ async function route(req: Request, env: Env): Promise<Response> {
   const access = accessOf(u, await loadAccessMap(env));
   if (!allowed(path, access)) throw new HttpError(403, 'Ehhez nincs jogosultságod. Kérd az adminisztrátort.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleAccess, handleCatalog, handleTasks, handleStock, handleChangelog]) {
+  for (const h of [
+    handleUsers,
+    handleData,
+    handleIngestToken,
+    handlePartners,
+    handleAccess,
+    handleAggreg8Server,
+    handleCatalog,
+    handleTasks,
+    handleStock,
+    handleChangelog,
+  ]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }
@@ -142,6 +154,11 @@ export default {
   },
 
   async scheduled(ev: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // aggreg8-munkamenet életben tartása (4 óránként, hétvégén is): csak megújít, nem szinkronizál
+    if ((ev as any).cron === 'keepalive') {
+      ctx.waitUntil(a8KeepAlive(env).then((r) => console.log('aggreg8 keepalive', r)));
+      return;
+    }
     // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),

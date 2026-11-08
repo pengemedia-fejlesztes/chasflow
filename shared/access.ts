@@ -51,7 +51,7 @@ export function accessOf(u: { id: number; role: string }, all: Record<string, Ac
 
 /** melyik menüpont / adatkör kell a végponthoz (null: nincs külön feltétel) */
 export function requirementOf(path: string): { menu?: string[]; data?: DataScope } | null {
-  if (/^\/api\/bank/.test(path)) return { data: 'bank', menu: ['bank'] };
+  if (/^\/api\/(bank|aggreg8)/.test(path)) return { data: 'bank', menu: ['bank', 'settings'] };
   if (/^\/api\/(worktime|employees)/.test(path)) return { data: 'payroll', menu: ['breakeven'] };
   if (/^\/api\/(billingo|nav)\//.test(path)) return { data: 'invoices' };
   if (/^\/api\/(tasks|task-perms)/.test(path)) return { menu: ['tasks'] };
