@@ -599,6 +599,7 @@ function Integrations() {
         ))}
       </Section>
       <ServerAggreg8 />
+      <DriveSettings />
       <AutoUpload />
       <Section
         title="Banki kivonat import (CSV / XLSX / aggreg8 XML)"
@@ -1503,6 +1504,149 @@ function ServerAggreg8() {
         A belépést a szerver titkos táblában tárolja (a böngészőkbe nem kerül ki), és lejárat előtt megújítja. Ha a bank 90/180 naponta új jóváhagyást kér, itt
         jelzi: akkor az aggreg8-ban kell frissíteni a bankkapcsolatot. A lenti Mac-es feltöltés tartaléknak megmaradhat.
       </span>
+    </Section>
+  );
+}
+
+/** Google Drive: a tételekhez feltöltött számlák másolata a kiválasztott fiók kiválasztott mappájába */
+function DriveSettings() {
+  const { run, showToast } = useStore();
+  const [st, setSt] = useState<{ clientSet: boolean; email: string | null; folder: { id: string; name: string } | null; redirectUri?: string } | null>(null);
+  const [cid, setCid] = useState('');
+  const [sec, setSec] = useState('');
+  const [q, setQ] = useState('');
+  const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
+  const load = () => api<any>('/api/google/status').then(setSt, () => setSt(null));
+  useEffect(() => {
+    load();
+    const g = new URLSearchParams(location.search).get('google');
+    if (g) {
+      showToast(g === 'ok' ? 'Google-fiók összekötve – válaszd ki a mappát' : { msg: 'Google: ' + g, error: true });
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+  }, []);
+  const search = () =>
+    api<{ folders: { id: string; name: string }[] }>(`/api/google/folders?q=${encodeURIComponent(q)}`).then(
+      (r) => setFolders(r.folders),
+      (e) => showToast({ msg: e.message, error: true }),
+    );
+  const inp: React.CSSProperties = { ...inputStyle, height: 38 };
+  return (
+    <Section
+      title="Számlák mentése Google Drive-ba"
+      sub="A Bankszinkron › Számlatörténet alatt a tételekhez feltöltött számlák másolata automatikusan a kiválasztott Google-fiók kiválasztott mappájába kerül (név: dátum – partner – összeg – eredeti fájlnév)."
+    >
+      {!st?.clientSet && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ font: `400 13.5px/1.6 ${FONT}`, color: C.ink }}>
+            1. lépés: a Google Cloud Console-ban (console.cloud.google.com › API-k és szolgáltatások) kapcsold be a <b>Google Drive API</b>-t, és hozz létre egy{' '}
+            <b>OAuth-ügyfélazonosítót</b> (típus: Webalkalmazás). Engedélyezett átirányítási URI:{' '}
+            <code style={{ userSelect: 'all', background: C.bg, padding: '2px 6px', borderRadius: 4 }}>{st?.redirectUri || ''}</code>. Az OAuth-hozzájárulási
+            képernyőt állítsd „Éles” (In production) állapotba, különben a hozzáférés 7 nap után lejár. Utána másold ide az azonosítót és a titkot:
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={cid}
+              onChange={(e) => setCid(e.target.value)}
+              placeholder="Ügyfélazonosító (….apps.googleusercontent.com)"
+              style={{ ...inp, flex: '2 1 320px' }}
+            />
+            <input
+              value={sec}
+              onChange={(e) => setSec(e.target.value)}
+              type="password"
+              placeholder="Ügyfélkulcs (titok)"
+              style={{ ...inp, flex: '1 1 200px' }}
+            />
+            <Pill
+              kind="primary"
+              onClick={() =>
+                run(() => api('/api/google/client', { method: 'PUT', body: { client_id: cid, client_secret: sec } }), 'OAuth-kliens mentve').then(load)
+              }
+            >
+              Mentés
+            </Pill>
+          </div>
+        </div>
+      )}
+      {st?.clientSet && !st.email && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ font: `400 14px ${FONT}` }}>2. lépés: kösd össze a Google-fiókot, amelynek a Drive-jába a számlák kerüljenek.</span>
+          <Pill
+            kind="primary"
+            onClick={() =>
+              api<{ url: string }>('/api/google/auth').then(
+                (r) => (location.href = r.url),
+                (e) => showToast({ msg: e.message, error: true }),
+              )
+            }
+          >
+            Google-fiók összekötése
+          </Pill>
+        </div>
+      )}
+      {st?.email && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ font: `500 14px ${FONT}`, color: C.ink }}>
+            Fiók: <b>{st.email}</b> · Mappa: <b>{st.folder ? st.folder.name || st.folder.id : 'még nincs kiválasztva'}</b>
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && search()}
+              placeholder="Mappa keresése név szerint…"
+              style={{ ...inp, flex: '1 1 260px' }}
+            />
+            <Pill onClick={search}>Keresés</Pill>
+            <Pill onClick={() => api<{ url: string }>('/api/google/auth').then((r) => (location.href = r.url))}>Másik fiók</Pill>
+            <Pill
+              kind="danger"
+              onClick={() => confirm('Leválasztod a Google-fiókot?') && run(() => api('/api/google', { method: 'DELETE' }), 'Leválasztva').then(load)}
+            >
+              Leválasztás
+            </Pill>
+          </div>
+          {folders && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
+              {!folders.length && <span style={{ color: C.muted, font: `400 13px ${FONT}` }}>Nincs ilyen nevű mappa.</span>}
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => run(() => api('/api/google/folder', { method: 'PUT', body: f }), `Számlák mappája: ${f.name}`).then(load)}
+                  style={{
+                    textAlign: 'left',
+                    border: `1px solid ${C.line}`,
+                    background: st.folder?.id === f.id ? C.bg2 : '#fff',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    font: `500 13.5px ${FONT}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  📁 {f.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {st.folder && (
+            <div>
+              <Pill
+                small
+                onClick={() =>
+                  api<{ uploaded: number; pending: number; errors: string[] }>('/api/google/sync-files', { body: {} }).then(
+                    (r) => showToast(r.errors.length ? { msg: r.errors[0], error: true } : `${r.uploaded} korábbi számla átmásolva a Drive-ba`),
+                    (e) => showToast({ msg: e.message, error: true }),
+                  )
+                }
+              >
+                Korábban feltöltött számlák másolása
+              </Pill>
+            </div>
+          )}
+        </div>
+      )}
     </Section>
   );
 }

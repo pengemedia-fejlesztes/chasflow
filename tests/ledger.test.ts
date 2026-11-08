@@ -22,7 +22,7 @@ describe('számlatörténet', () => {
       CREATE TABLE bank_tx (id TEXT PRIMARY KEY, account_id TEXT, ext_id TEXT, date TEXT, amount INTEGER, currency TEXT, partner TEXT, memo TEXT, status TEXT, leaf_id TEXT, plan_id TEXT, actual_id TEXT, created_at INTEGER);
       CREATE TABLE billingo_docs (id INTEGER PRIMARY KEY, number TEXT, plan_id TEXT, paid_by_tx TEXT, cancelled INTEGER DEFAULT 0);
       CREATE TABLE nav_invoices (id TEXT, invoice_number TEXT, plan_id TEXT, actual_id TEXT);
-      INSERT INTO bank_accounts VALUES ('m','manual','MagNet','Üzleti',NULL,'HUF',1000,1,1);`);
+      INSERT INTO bank_accounts VALUES ('m','manual','MagNet','Üzleti',NULL,'HUF',1000,${Date.now()},1);`);
     const cur = todayHu().slice(0, 7);
     const [y, mo] = cur.split('-').map(Number);
     const prev = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`;
@@ -31,12 +31,31 @@ describe('számlatörténet', () => {
     ins.run('t2', 'e2', cur + '-02', -200, 'OMV', null, 'a2');
     db.exec("INSERT INTO billingo_docs (number, plan_id) VALUES ('PENGE-1', 'p1'); INSERT INTO nav_invoices VALUES ('n','NAV-9',NULL,'a2');");
     const env = { DB: d1(db) } as any;
-    const s = await ledgerSummary(env);
-    const m = Object.fromEntries(s.months.map((x) => [x.ym, x.accounts.m]));
-    expect(m[cur]).toMatchObject({ open: 1200, close: 1000, out: -200 });
-    expect(m[prev]).toMatchObject({ open: 700, inc: 500, close: 1200 });
+    // a mostani, bank által jelentett egyenleg a mai nappal; a korábbi hónapok a banki tételekkel visszavezetve
+    let s = await ledgerSummary(env);
+    let m = Object.fromEntries(s.months.map((x) => [x.ym, x.accounts.m]));
+    expect(m[cur].close).toMatchObject({ amount: 1000, source: 'aggreg8' });
+    if (todayHu() >= cur + '-02') {
+      // 1000 − (−200 a hónap 2-án) = 1200 az előző hónap végén
+      expect(m[cur].open).toMatchObject({ amount: 1200, source: 'visszavezetve' });
+      expect(m[prev].close).toMatchObject({ amount: 1200, source: 'visszavezetve' });
+    }
+    // az első banki tétel előtti napra nincs banki előzmény → nem vezethető vissza
+    expect(m[prev]).toMatchObject({ open: null, inc: 500 });
+    // kivonat szerinti záró egyenleg az előző hónapra → ez lesz az előző záró és a mostani nyitó
+    const u0 = { id: 1, role: 'admin' } as any;
+    await handleLedger(
+      env,
+      new Request('https://x/api/bank/statement', { method: 'PUT', body: JSON.stringify({ account_id: 'm', date: prev + '-28', amount: 1200 }) }),
+      '/api/bank/statement',
+      u0,
+    );
+    s = await ledgerSummary(env);
+    m = Object.fromEntries(s.months.map((x) => [x.ym, x.accounts.m]));
+    expect(m[prev].close).toMatchObject({ amount: 1200, source: 'kivonat' });
+    expect(m[cur].open).toMatchObject({ amount: 1200, source: 'kivonat' });
     const tx = await ledgerMonth(env, prev);
-    expect(tx[0].invoices).toEqual([{ kind: 'billingo', number: 'PENGE-1' }]);
+    expect(tx[0].invoices).toEqual([{ kind: 'billingo', number: 'PENGE-1', id: 1 }]);
     expect((await ledgerMonth(env, cur))[0].invoices).toEqual([{ kind: 'nav', number: 'NAV-9' }]);
     // készpénz: nyitó + tételek
     const u = { id: 1, role: 'admin' } as any;

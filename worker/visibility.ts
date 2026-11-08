@@ -20,7 +20,7 @@ export function visibleBundle(bundle: DataBundle, a: Access): DataBundle {
   const b = { ...bundle, settings: {} as Record<string, string> };
   const settings = bundle.settings as Record<string, string | undefined>;
   const ledger = hasLedgerAccess(a);
-  b.myAccess = { ...a, menus: a.menus.filter((m) => !['overview', 'alerts', 'income', 'cat', 'breakeven'].includes(m) || ledger) };
+  b.myAccess = { ...a, menus: a.menus.filter((m) => !['overview', 'charts', 'alerts', 'income', 'cat', 'breakeven'].includes(m) || ledger) };
   if (ledger) for (const k of DISPLAY_SETTINGS) if (typeof settings[k] === 'string') b.settings[k] = settings[k]!;
   if (bundle.me.role === 'admin') for (const k of ADMIN_SETTINGS) if (typeof settings[k] === 'string') b.settings[k] = settings[k]!;
   if (!ledger) Object.assign(b, { groups: [], leaves: [], entries: [], series: [], deleted: [], lostOffers: [], monthStats: [], partnerNames: [] });

@@ -67,12 +67,15 @@ export function PartnerSheet({
   onNewItem,
   onEditItem,
   onRenamed,
+  embedded,
 }: {
   p: PartnerStat;
   onClose: () => void;
   onNewItem: (leaf: string) => void;
   onEditItem: (leaf: string, key?: string) => void;
   onRenamed: (key: string) => void;
+  /** az új partner adatlap „Értékesítések” fülén: fejléc nélkül, csak Áttekintés / Számlák / Szolgáltatások */
+  embedded?: boolean;
 }) {
   const { data, ix, commit, canEdit, showToast } = useStore();
   const openTasks = (data.tasks || []).filter((t) => t.partner_key === p.key && (t.status === 'nyitott' || t.status === 'folyamatban')).length;
@@ -255,8 +258,8 @@ export function PartnerSheet({
   );
 
   return (
-    <div style={{ padding: '26px 30px 30px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+    <div style={{ padding: embedded ? 0 : '26px 30px 30px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: embedded ? 'none' : 'flex', alignItems: 'flex-start', gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <PartnerTitle p={p} onSaved={onRenamed} />
@@ -300,7 +303,9 @@ export function PartnerSheet({
             ['srv', 'Szolgáltatások és számlázás'],
             ['set', 'Beállítások'],
           ] as const
-        ).map(([k, l]) => (
+        )
+          .filter(([k]) => !embedded || k === 'main' || k === 'inv' || k === 'srv')
+          .map(([k, l]) => (
           <button
             key={k}
             type="button"

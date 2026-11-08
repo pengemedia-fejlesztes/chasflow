@@ -7,6 +7,14 @@ import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, useFlags } from './AlertsView';
 import { useBack } from './back';
 const StatsHub = lazy(() => import('./StatsHub').then((m) => ({ default: m.StatsHub })));
+const ChartsView = lazy(() => import('./ChartsView').then((m) => ({ default: m.ChartsView })));
+const TasksView = lazy(() => import('./TasksView').then((m) => ({ default: m.TasksView })));
+const CatalogView = lazy(() => import('./CatalogView').then((m) => ({ default: m.CatalogView })));
+const StockView = lazy(() => import('./StockView').then((m) => ({ default: m.StockView })));
+const BreakevenView = lazy(() => import('./BreakevenView').then((m) => ({ default: m.BreakevenView })));
+import { NavMenu, applySub, type NavView } from './NavMenu';
+import { useMyTaskCount } from './useMyTaskCount';
+import { PartnerRegistry } from './PartnerCard';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
@@ -24,7 +32,28 @@ const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default:
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted, R } from './ui';
 
-type Tab = 'home' | 'alerts' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
+const screenLoading = (
+  <div role="status" style={{ padding: 24 }}>
+    Betöltés…
+  </div>
+);
+
+type Tab =
+  | 'home'
+  | 'alerts'
+  | 'charts'
+  | 'tasks'
+  | 'partners'
+  | 'products'
+  | 'stock'
+  | 'breakeven'
+  | 'stats'
+  | 'cat'
+  | 'income'
+  | 'out'
+  | 'bank'
+  | 'more'
+  | 'sched';
 type Sheet =
   | {
       kind: 'new';
@@ -71,6 +100,9 @@ type Sheet =
 export function Mobile({ onLogout }: { onLogout: () => void }) {
   const st = useStore();
   const { ix, data, filters, commit, toast, canEdit, run } = st;
+  const [drawer, setDrawer] = useState(false);
+  const [navKey, setNavKey] = useState(0);
+  const myTasks = useMyTaskCount();
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') === 'alerts' ? 'alerts' : 'home'));
   const flags = useFlags();
   const [partnerKey, setPartnerKey] = useState<string | null>(null);
@@ -255,6 +287,25 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <div style={{ background: C.navy, color: '#fff', padding: '10px 20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={() => setDrawer(true)}
+                  aria-label="Menü"
+                  style={{
+                    height: 36,
+                    width: 36,
+                    border: 0,
+                    borderRadius: 999,
+                    background: C.navy3,
+                    color: '#fff',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flex: 'none',
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M4 7h16M4 12h16M4 17h16" />
+                  </svg>
+                </button>
                 <span style={{ font: `700 20px ${FONT_H}` }} title={APP_VERSION}>
                   {monthLong(m)
                     .replace(/^\d{4}\.\s*/, '')
@@ -488,6 +539,35 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 >
                   Ebben a hónapban nincs tétel.
                 </div>
+              )}
+              {(!data.myAccess || data.myAccess.menus.includes('charts')) && (
+                <button
+                  onClick={() => setTab('charts')}
+                  style={{
+                    border: `1px solid ${C.line}`,
+                    background: '#fff',
+                    borderRadius: R.lg,
+                    padding: '12px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    textAlign: 'left',
+                    font: `600 14.5px ${FONT}`,
+                    color: C.navy,
+                  }}
+                >
+                  <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true">
+                    <rect x="1" y="12" width="5" height="9" rx="1.5" fill="#2a78d6" />
+                    <rect x="8" y="6" width="5" height="15" rx="1.5" fill="#1baf7a" />
+                    <rect x="15" y="9" width="5" height="12" rx="1.5" fill="#eb6834" />
+                    <path d="M2 9 L10 3 L17 6 L25 1" stroke="#14233a" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+                  </svg>
+                  <span style={{ flex: 1 }}>
+                    Grafikonok
+                    <span style={{ display: 'block', font: `400 12.5px ${FONT}`, color: C.muted }}>előrejelzés, bevétel–kiadás, tölcsér, bankszámlák…</span>
+                  </span>
+                  <span style={{ color: C.muted, fontSize: 18 }}>›</span>
+                </button>
               )}
               {/* a hónap ütemezése külön képernyőn: minden bevétel és kiadás napokra bontva */}
               <button
@@ -756,6 +836,62 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           </>
         )}
 
+        {tab === 'charts' && (
+          <>
+            <MobileHeader title="Grafikonok" sub="koppints a grafikonra a pontos értékekért" onBack={() => setTab('home')} />
+            <Suspense fallback={screenLoading}>
+              <ChartsView mobile onBank={() => (setNavKey((k) => k + 1), setTab('bank'))} />
+            </Suspense>
+          </>
+        )}
+        {tab === 'tasks' && (
+          <>
+            <MobileHeader title="Feladatok" sub="Feladatok" onBack={() => setTab('home')} />
+            <div className="cf-mview">
+              <Suspense fallback={screenLoading}>
+                <TasksView key={navKey} />
+              </Suspense>
+            </div>
+          </>
+        )}
+        {tab === 'partners' && (
+          <>
+            <MobileHeader title="Partnertörzs" sub="Ügyfelek" onBack={() => setTab('home')} />
+            <div className="cf-mview">
+              <PartnerRegistry page />
+            </div>
+          </>
+        )}
+        {tab === 'products' && (
+          <>
+            <MobileHeader title="Termékek, szolgáltatások" sub="Termékek, raktár" onBack={() => setTab('home')} />
+            <div className="cf-mview">
+              <Suspense fallback={screenLoading}>
+                <CatalogView />
+              </Suspense>
+            </div>
+          </>
+        )}
+        {tab === 'stock' && (
+          <>
+            <MobileHeader title="Raktárkészlet" sub="Termékek, raktár" onBack={() => setTab('home')} />
+            <div className="cf-mview">
+              <Suspense fallback={screenLoading}>
+                <StockView />
+              </Suspense>
+            </div>
+          </>
+        )}
+        {tab === 'breakeven' && (
+          <>
+            <MobileHeader title="Fedezeti pont" sub="Áttekintés" onBack={() => setTab('home')} />
+            <div className="cf-mview">
+              <Suspense fallback={screenLoading}>
+                <BreakevenView />
+              </Suspense>
+            </div>
+          </>
+        )}
         {tab === 'stats' && (
           <>
             <MobileHeader title="Statisztika" sub="Partner" onBack={() => (setPartnerKey(null), setTab('home'))} />
@@ -809,17 +945,36 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         {tab === 'bank' && (
           <>
             <MobileHeader title="Bankszinkron" sub={data.accounts.map((a) => a.bank_name).join(' · ') || 'Bank'} onBack={() => setTab('home')} />
-            <BankView mobile />
+            <Suspense fallback={screenLoading}>
+              <BankView key={navKey} mobile />
+            </Suspense>
           </>
         )}
         {tab === 'more' && (
           <>
             <MobileHeader title="Beállítások" sub={data.me.name} onBack={() => setTab('home')} />
-            <SettingsView mobile onLogout={onLogout} />
+            <Suspense fallback={screenLoading}>
+              <SettingsView mobile onLogout={onLogout} />
+            </Suspense>
           </>
         )}
       </div>
 
+      {drawer && (
+        <MobileDrawer
+          onClose={() => setDrawer(false)}
+          view={TAB_VIEW[tab] || 'overview'}
+          badges={{ tasks: myTasks, alerts: 0, income: 0, bank: newTx }}
+          allowed={(v) => !data.myAccess || data.myAccess.menus.includes(v)}
+          name={data.me.name}
+          onPick={(l) => {
+            applySub(l);
+            setNavKey((k) => k + 1);
+            setDrawer(false);
+            setTab(VIEW_TAB[l.view] || 'home');
+          }}
+        />
+      )}
       {tab === 'cat' && selMode && selIds.length > 0 && (
         <div
           style={{
@@ -954,6 +1109,81 @@ function TabBtn({ active, label, onClick }: { active: boolean; label: string; on
       <i style={{ width: 22, height: 4, borderRadius: 999, background: active ? C.blue : 'transparent' }} />
       <span style={{ font: `600 12px ${FONT}` }}>{label}</span>
     </button>
+  );
+}
+
+const VIEW_TAB: Partial<Record<NavView, Tab>> = {
+  overview: 'home',
+  charts: 'charts',
+  breakeven: 'breakeven',
+  income: 'income',
+  alerts: 'alerts',
+  bank: 'bank',
+  partners: 'partners',
+  tasks: 'tasks',
+  products: 'products',
+  stock: 'stock',
+  settings: 'more',
+};
+const TAB_VIEW: Partial<Record<Tab, NavView>> = Object.fromEntries(Object.entries(VIEW_TAB).map(([v, t]) => [t, v]));
+
+/** balról kicsúszó főmenü – ugyanaz a csoportos, almenüs szerkezet, mint a gépi oldalsávban */
+function MobileDrawer({
+  onClose,
+  view,
+  badges,
+  allowed,
+  onPick,
+  name,
+}: {
+  onClose: () => void;
+  view: NavView;
+  badges: { tasks: number; alerts: number; income: number; bank: number };
+  allowed: (v: NavView) => boolean;
+  onPick: Parameters<typeof NavMenu>[0]['onPick'];
+  name: string;
+}) {
+  useBack(true, onClose);
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 20 }}>
+      <div className="cf-fade" onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(20,35,58,.45)' }} />
+      <aside
+        className="cf-drawer"
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 'min(86vw, 340px)',
+          background: `linear-gradient(165deg, ${C.navy2} 0%, ${C.navy} 70%)`,
+          color: '#fff',
+          overflowY: 'auto',
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom) + 24px)',
+          boxShadow: '8px 0 30px rgba(0,0,0,.25)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '18px 18px 16px' }}>
+          <div style={{ width: 34, height: 34, borderRadius: 999, background: C.blue, display: 'grid', placeItems: 'center', font: `800 11px ${FONT_H}` }}>
+            CF
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+            <span style={{ font: `700 16px ${FONT_H}` }}>
+              Cashflow <b style={{ color: C.blue2 }}>tervező</b>
+            </span>
+            <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>{name}</span>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Menü bezárása"
+            style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', font: `400 26px ${FONT}` }}
+          >
+            ×
+          </button>
+        </div>
+        <NavMenu view={view} badges={badges} allowed={allowed} onPick={onPick} />
+      </aside>
+    </div>
   );
 }
 

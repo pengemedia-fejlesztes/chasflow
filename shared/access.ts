@@ -3,6 +3,7 @@
 
 export const MENUS: [string, string][] = [
   ['overview', 'Áttekintés'],
+  ['charts', 'Grafikonok'],
   ['tasks', 'Feladatok'],
   ['alerts', 'Összevonás'],
   ['income', 'Tervezett bevételek, kiadások'],
@@ -52,7 +53,7 @@ export function accessOf(u: { id: number; role: string }, all: Record<string, Ac
 
 // A közös főkönyv és a belőle számolt összesítések több érzékeny adatkört kevernek.
 // Amíg nincs megbízható, soronkénti adatbesorolás, csak az összes érintett engedéllyel adhatók ki.
-export const LEDGER_MENUS = ['overview', 'alerts', 'income', 'cat', 'breakeven', 'partners'];
+export const LEDGER_MENUS = ['overview', 'charts', 'alerts', 'income', 'cat', 'breakeven', 'partners'];
 const ALL_SCOPES: DataScope[] = ['bank', 'payroll', 'invoices'];
 export const hasMenu = (a: Access, menus: string[]) => menus.some((m) => a.menus.includes(m));
 export const hasLedgerAccess = (a: Access) => hasMenu(a, LEDGER_MENUS) && ALL_SCOPES.every((s) => a.data[s]);
@@ -61,6 +62,7 @@ export const hasLedgerAccess = (a: Access) => hasMenu(a, LEDGER_MENUS) && ALL_SC
 export function requirementOf(path: string): { menu?: string[]; data?: DataScope | DataScope[] } | null {
   if (path === '/api/data' || path === '/api/version') return {};
   if (/^\/api\/(users|security)(?:\/|$)/.test(path)) return { menu: ['settings'] };
+  if (/^\/api\/google(?:\/|$)/.test(path)) return { menu: ['settings'] };
   if (/^\/api\/(entries|leaves|groups)(?:\/|$)/.test(path)) return { menu: ['income', 'cat', 'partners', 'alerts'], data: ALL_SCOPES };
   if (path === '/api/series') return { menu: LEDGER_MENUS, data: ALL_SCOPES };
   if (/^\/api\/(trash|changelog)(?:\/|$)/.test(path)) return { menu: ['settings'], data: ALL_SCOPES };

@@ -10,7 +10,7 @@ const MONTH_HU = ['január', 'február', 'március', 'április', 'május', 'jún
 import { api } from './api';
 import { rowsOfSheet } from './sheetCore';
 import { useStore } from './store';
-import { useLedger } from './LedgerView';
+import { balNote, useLedger, type BankBal } from './LedgerView';
 import { C, FONT, FONT_H, LeafSelect, Pill, card, eyebrow, inputStyle, R } from './ui';
 
 const h = (min: number) => (min / 60).toLocaleString('hu-HU', { maximumFractionDigits: 1 });
@@ -1057,27 +1057,41 @@ function BankMonths() {
           </thead>
           <tbody>
             {months.map((m) => {
-              const open = accs.reduce((s, a) => s + (m.accounts[a.id]?.open || 0), 0);
-              const close = accs.reduce((s, a) => s + (m.accounts[a.id]?.close || 0), 0);
-              const change = close - open;
+              // csak banki adatból: ha bármelyik számlához hiányzik, az összeg és a különbség nem számolható
+              const all = (k: 'open' | 'close') =>
+                accs.every((a) => m.accounts[a.id]?.[k]) ? accs.reduce((s, a) => s + m.accounts[a.id][k]!.amount, 0) : null;
+              const open = all('open');
+              const close = all('close');
+              const change = open !== null && close !== null ? close - open : null;
               const c = Math.round(cf(m.ym));
-              const diff = change - c;
+              const diff = change === null ? null : change - c;
+              const cell = (b: BankBal | null | undefined, bold?: boolean) =>
+                b ? (
+                  <span title={balNote(b)} style={{ fontWeight: bold ? 700 : 400 }}>
+                    {fmt(b.amount)}
+                    {b.source === 'kivonat' ? ' ✓' : ''}
+                  </span>
+                ) : (
+                  <span style={{ color: C.faint }}>nincs adat</span>
+                );
               return (
                 <tr key={m.ym}>
                   <td style={{ ...td, textAlign: 'left', fontWeight: 600, color: C.navy }}>{monthLong(m.ym)}</td>
                   {accs.map((a) => [
                     <td key={a.id + 'o'} style={{ ...td, color: C.muted }}>
-                      {fmt(m.accounts[a.id]?.open || 0)}
+                      {cell(m.accounts[a.id]?.open)}
                     </td>,
                     <td key={a.id + 'c'} style={td}>
-                      {fmt(m.accounts[a.id]?.close || 0)}
+                      {cell(m.accounts[a.id]?.close)}
                     </td>,
                   ])}
-                  <td style={{ ...td, color: C.muted }}>{fmt(open)}</td>
-                  <td style={{ ...td, fontWeight: 700, color: C.navy }}>{fmt(close)}</td>
-                  <td style={{ ...td, color: change < 0 ? C.neg : C.inc }}>{sgn(change)}</td>
+                  <td style={{ ...td, color: C.muted }}>{open === null ? '–' : fmt(open)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: C.navy }}>{close === null ? '–' : fmt(close)}</td>
+                  <td style={{ ...td, color: change === null ? C.faint : change < 0 ? C.neg : C.inc }}>{change === null ? '–' : sgn(change)}</td>
                   <td style={{ ...td, color: c < 0 ? C.neg : C.inc }}>{sgn(c)}</td>
-                  <td style={{ ...td, fontWeight: 700, color: Math.abs(diff) < 1000 ? C.faint : C.neg }}>{Math.abs(diff) < 1 ? '0' : sgn(diff)}</td>
+                  <td style={{ ...td, fontWeight: 700, color: diff === null || Math.abs(diff) < 1000 ? C.faint : C.neg }}>
+                    {diff === null ? '–' : Math.abs(diff) < 1 ? '0' : sgn(diff)}
+                  </td>
                 </tr>
               );
             })}

@@ -66,6 +66,18 @@ describe('adatcsomag: adatkörök és másodlagos adatutak', () => {
     for (const k of ['entries', 'series', 'deleted', 'lostOffers', 'monthStats', 'partnerNames']) expect((b as any)[k]).toEqual([]);
     expect(b.settings).toEqual({});
     expect(b.myAccess?.menus).not.toContain('income');
+    expect(b.myAccess?.menus).not.toContain('charts');
+  });
+  it('a Grafikonok önálló menüje csak teljes pénzügyi adatkörrel kap főkönyvet', () => {
+    const access = { menus: ['charts'], data: { ...FULL_ACCESS.data } };
+    const granted = visibleBundle(fixture(), access);
+    expect(granted.entries).toHaveLength(1);
+    expect(granted.myAccess?.menus).toEqual(['charts']);
+    for (const scope of ['bank', 'payroll', 'invoices'] as const) {
+      const denied = visibleBundle(fixture(), { ...access, data: { ...access.data, [scope]: false } });
+      expect(denied.entries).toEqual([]);
+      expect(denied.myAccess?.menus).not.toContain('charts');
+    }
   });
   it('teljes engedélynél megmarad a főkönyv, de a belső settings nem kerül ki', () => {
     const original = fixture();

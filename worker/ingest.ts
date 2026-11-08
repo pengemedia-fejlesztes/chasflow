@@ -4,6 +4,7 @@ import { isWorkday } from '../shared/workdays';
 import { A8_LIMITS, SYNC_HOURS, bankOfAccount, parseAggreg8, parseAggreg8Json, type A8Account } from '../shared/aggreg8';
 import { requireRole, type User } from './auth';
 import { importManualRows, payBillingoFromBank } from './bank';
+import { snapshotBankBalances } from './ledger';
 import { Env, HttpError, audit, getSetting, json, now, randomId, safeEqual, setSetting, sha256 } from './util';
 
 const KEY = 'import_token';
@@ -118,6 +119,7 @@ export async function ingestAggreg8Accounts(
   skipped: number,
   source: 'json' | 'xml' | 'server',
 ): Promise<{ accounts: unknown[]; billingo_paid: unknown }> {
+  const t0 = now();
   const manual = (
     await env.DB.prepare("SELECT bank_name, label, iban FROM bank_accounts WHERE provider = 'manual'").all<{
       bank_name: string;
@@ -169,6 +171,8 @@ export async function ingestAggreg8Accounts(
   await audit(env, userId, 'ingest_aggreg8', { source, skipped, accounts: out });
   await setSetting(env, LAST, JSON.stringify({ at: now(), source, ok: true, accounts: out } as IngestLast));
   await refreshLastDates(env);
+  // a bank által most jelentett egyenlegek mentése dátummal (a havi nyitó/záró egyenleg forrása)
+  await snapshotBankBalances(env, t0, 'aggreg8').catch((e) => console.error('balance snapshot', e));
   const billingo_paid = await payBillingoFromBank(env).catch((e) => ({ error: String(e?.message || e) }));
   return { accounts: out, billingo_paid };
 }

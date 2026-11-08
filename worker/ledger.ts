@@ -1,7 +1,8 @@
 // Számlatörténet: bankszámlánként havi nyitó / bejövő / kimenő / záró egyenleg és a hónap tranzakciói (kapcsolt számlával),
-// valamint a készpénz-„bankszámla” (kézi készpénzes tételek). A múltbeli egyenleg a mostani egyenlegből visszafelé számolt:
-// záró(hónap) = mostani egyenleg − a hónap utáni tételek összege.
+// valamint a készpénz-„bankszámla” (kézi készpénzes tételek). Egyenleg CSAK banki adatból: a bank által szinkronkor jelentett
+// könyvelt egyenleg (dátummal mentve) vagy a bankszámlakivonat szerinti záró egyenleg (kézzel rögzítve). Nem számolunk vissza.
 import { requireRole, type User } from './auth';
+import { filesFor } from './txfiles';
 import { logChange } from './changelog';
 import { Env, HttpError, getSetting, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
@@ -21,6 +22,7 @@ const lastDay = (ym: string) => {
   const [y, m] = ym.split('-').map(Number);
   return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 };
+const prevDay = (d: string) => new Date(Date.parse(d + 'T12:00:00Z') - 86400000).toISOString().slice(0, 10);
 const prevYm = (ym: string) => {
   const [y, m] = ym.split('-').map(Number);
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
@@ -30,13 +32,64 @@ const nextYm = (ym: string) => {
   return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
 };
 
-export interface LedgerMonth {
-  ym: string;
-  accounts: Record<string, { open: number; inc: number; out: number; close: number; n: number }>;
+const BAL_DDL = `CREATE TABLE IF NOT EXISTS bank_balances (
+  id VARCHAR(40) NOT NULL PRIMARY KEY,
+  account_id VARCHAR(40) NOT NULL,
+  date VARCHAR(10) NOT NULL,
+  balance DOUBLE NOT NULL,
+  source VARCHAR(12) NOT NULL,
+  created_at BIGINT NOT NULL
+)`;
+let balReady: Promise<boolean> | null = null;
+function ensureBalances(env: Env): Promise<boolean> {
+  if (!balReady)
+    balReady = env.DB.prepare(BAL_DDL)
+      .run()
+      .then(() => true)
+      .catch((e) => {
+        balReady = null;
+        console.error('bank_balances ddl', e);
+        return false;
+      });
+  return balReady;
 }
 
-/** havi összesítés minden számlára, a legkorábbi tétel hónapjától a mostaniig */
+/** a bank által jelentett egyenlegek mentése (a since óta frissített számlákra), naponta számlánként a legutolsó */
+export async function snapshotBankBalances(env: Env, since: number, source: 'aggreg8' | 'kivonat') {
+  if (!(await ensureBalances(env))) return;
+  const accs = (
+    await env.DB.prepare("SELECT id, balance, balance_at FROM bank_accounts WHERE provider <> 'cash' AND balance IS NOT NULL AND balance_at >= ?")
+      .bind(since)
+      .all<{ id: string; balance: number; balance_at: number }>()
+  ).results;
+  const day = todayHu();
+  for (const a of accs) {
+    await env.DB.prepare('DELETE FROM bank_balances WHERE account_id = ? AND date = ? AND source = ?').bind(a.id, day, source).run();
+    await env.DB.prepare('INSERT INTO bank_balances (id, account_id, date, balance, source, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(randomId('bb'), a.id, day, Number(a.balance), source, now())
+      .run();
+  }
+}
+
+/** egy banki egyenleg-adat: összeg, nap, forrás (aggreg8 = szinkronkor a bank jelentette; kivonat = bankszámlakivonat) */
+export interface BankBal {
+  amount: number;
+  date: string;
+  source: string;
+}
+
+export interface LedgerMonth {
+  ym: string;
+  accounts: Record<string, { open: BankBal | null; close: BankBal | null; inc: number; out: number; n: number }>;
+}
+
+/**
+ * Havi összesítés számlánként. Bejövő / kimenő: a hónap banki tételeinek összege. Záró egyenleg: a kivonat szerinti
+ * záró egyenleg, ha rögzítették; különben a hónapon belüli utolsó, a bank által jelentett egyenleg (dátummal).
+ * Nyitó egyenleg: az előző hónap záró egyenlege (kivonat), vagy a hónap első napja előtti utolsó banki egyenleg.
+ */
 export async function ledgerSummary(env: Env): Promise<{ accounts: Acc[]; months: LedgerMonth[] }> {
+  await ensureBalances(env);
   const accounts = (
     await env.DB.prepare('SELECT id, provider, bank_name, label, iban, balance, balance_at FROM bank_accounts WHERE active = 1 ORDER BY bank_name').all<Acc>()
   ).results.map((a) => ({ ...a, balance: a.balance === null ? null : Number(a.balance) }));
@@ -45,26 +98,92 @@ export async function ledgerSummary(env: Env): Promise<{ accounts: Acc[]; months
       'SELECT account_id, substr(date, 1, 7) AS ym, SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS inc, SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) AS outv, COUNT(*) AS n FROM bank_tx GROUP BY account_id, substr(date, 1, 7)',
     ).all<{ account_id: string; ym: string; inc: number; outv: number; n: number }>()
   ).results;
+  // kiinduló adat: ha egy bankszámlához még nincs mentett banki egyenleg, a legutóbb jelentett egyenleg a jelentés napjával
+  for (const ac of accounts) {
+    if (ac.provider === 'cash' || ac.balance === null || !ac.balance_at || Number(ac.balance_at) < Date.UTC(2020, 0, 1)) continue;
+    const has = await env.DB.prepare('SELECT id FROM bank_balances WHERE account_id = ? LIMIT 1').bind(ac.id).first();
+    if (!has) {
+      const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest' }).format(new Date(Number(ac.balance_at)));
+      await env.DB.prepare('INSERT INTO bank_balances (id, account_id, date, balance, source, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(randomId('bb'), ac.id, day, Number(ac.balance), 'aggreg8', now())
+        .run();
+    }
+  }
+  const bals = (
+    await env.DB.prepare('SELECT account_id, date, balance, source FROM bank_balances ORDER BY date, created_at').all<{
+      account_id: string;
+      date: string;
+      balance: number;
+      source: string;
+    }>()
+  ).results.map((b) => ({ ...b, balance: Number(b.balance) }));
   const cur = todayHu().slice(0, 7);
-  const first = rows.reduce((m, r) => (r.ym < m ? r.ym : m), cur);
+  const first = [...rows.map((r) => r.ym), ...bals.map((b) => b.date.slice(0, 7))].reduce((m, x) => (x < m ? x : m), cur);
   const yms: string[] = [];
   for (let ym = first; ym <= cur; ym = nextYm(ym)) yms.push(ym);
-  const byAcc = new Map<string, Map<string, { inc: number; out: number; n: number }>>();
-  for (const r of rows) {
-    const m = byAcc.get(r.account_id) || new Map();
-    m.set(r.ym, { inc: Number(r.inc) || 0, out: Number(r.outv) || 0, n: Number(r.n) || 0 });
-    byAcc.set(r.account_id, m);
-  }
+  const flow = new Map<string, { inc: number; out: number; n: number }>();
+  for (const r of rows) flow.set(r.account_id + '|' + r.ym, { inc: Number(r.inc) || 0, out: Number(r.outv) || 0, n: Number(r.n) || 0 });
+  const cashOpening = Number((await getSetting(env, 'cash_opening')) || 0);
   const months: LedgerMonth[] = yms.map((ym) => ({ ym, accounts: {} }));
+  // napi banki tételek számlánként: a visszavezetéshez (egy későbbi banki egyenlegből a közbeeső banki tételek levonásával)
+  const txs = (
+    await env.DB.prepare("SELECT account_id, date, amount FROM bank_tx WHERE account_id <> 'cash' ORDER BY date").all<{
+      account_id: string;
+      date: string;
+      amount: number;
+    }>()
+  ).results;
   for (const a of accounts) {
-    const m = byAcc.get(a.id) || new Map();
-    // visszafelé: a mostani egyenlegből (a jövőbeli dátumú tételek nélkül) a hónapok záró egyenlege
-    let close = Number(a.balance || 0);
-    for (let i = yms.length - 1; i >= 0; i--) {
-      const x = m.get(yms[i]) || { inc: 0, out: 0, n: 0 };
-      const open = close - x.inc - x.out;
-      months[i].accounts[a.id] = { open, inc: x.inc, out: x.out, close, n: x.n };
-      close = open;
+    const mine = bals.filter((b) => b.account_id === a.id);
+    // a hónap záró egyenlege: kivonat (a hónapra), különben a hónapon belüli utolsó banki egyenleg
+    const closeOf = (ym: string): BankBal | null => {
+      const st = mine.filter((b) => b.source === 'kivonat' && b.date.slice(0, 7) === ym).pop();
+      if (st) return { amount: st.balance, date: st.date, source: 'kivonat' };
+      const last = mine.filter((b) => b.date.slice(0, 7) === ym).pop();
+      return last ? { amount: last.balance, date: last.date, source: last.source } : null;
+    };
+    const myTx = txs.filter((t) => t.account_id === a.id).map((t) => ({ date: t.date, amount: Number(t.amount) || 0 }));
+    const firstTx = myTx[0]?.date || null;
+    /** a nap végi egyenleg visszavezetve: a legközelebbi későbbi banki egyenlegből levonva a közbeeső banki tételek
+     *  (csak ha arra a napra már van banki tétel-előzmény, különben nem tudható) */
+    const derive = (day: string): BankBal | null => {
+      if (!firstTx || day < prevDay(firstTx)) return null;
+      const anchor = mine.find((b) => b.date >= day);
+      if (!anchor) return null;
+      const between = myTx.filter((t) => t.date > day && t.date <= anchor.date).reduce((x, t) => x + t.amount, 0);
+      return { amount: Math.round(anchor.balance - between), date: day, source: 'visszavezetve' };
+    };
+    let cashRun = cashOpening;
+    for (const [i, ym] of yms.entries()) {
+      const f = flow.get(a.id + '|' + ym) || { inc: 0, out: 0, n: 0 };
+      if (a.provider === 'cash') {
+        // a házipénztár a saját nyilvántartásunk: nyitó összeg + a rögzített készpénzes tételek
+        const open = { amount: cashRun, date: ym + '-01', source: 'pénztár' };
+        cashRun += f.inc + f.out;
+        months[i].accounts[a.id] = { open, close: { amount: cashRun, date: lastDay(ym), source: 'pénztár' }, inc: f.inc, out: f.out, n: f.n };
+        continue;
+      }
+      const prevSt = mine.filter((b) => b.source === 'kivonat' && b.date.slice(0, 7) === prevYm(ym)).pop();
+      const before = mine.filter((b) => b.date < ym + '-01').pop();
+      const open: BankBal | null = prevSt
+        ? { amount: prevSt.balance, date: prevSt.date, source: 'kivonat' }
+        : before
+          ? { amount: before.balance, date: before.date, source: before.source }
+          : null;
+      // nyitó: az előző havi kivonat, különben visszavezetve az előző hónap utolsó napjára, végül az utolsó korábbi banki egyenleg
+      const stClose = mine.filter((b) => b.source === 'kivonat' && b.date.slice(0, 7) === ym).pop();
+      const close: BankBal | null = stClose
+        ? { amount: stClose.balance, date: stClose.date, source: 'kivonat' }
+        : ym === cur
+          ? closeOf(ym)
+          : derive(lastDay(ym)) || closeOf(ym);
+      months[i].accounts[a.id] = {
+        open: open?.source === 'kivonat' ? open : derive(prevDay(ym + '-01')) || open,
+        close,
+        inc: f.inc,
+        out: f.out,
+        n: f.n,
+      };
     }
   }
   return { accounts, months };
@@ -81,7 +200,8 @@ export interface LedgerTx {
   leaf_id: string | null;
   plan_id: string | null;
   actual_id: string | null;
-  invoices: { kind: 'billingo' | 'nav'; number: string }[];
+  invoices: { kind: 'billingo' | 'nav'; number: string; id?: string | number }[];
+  files: import('./txfiles').TxFile[];
 }
 
 /** a hónap tranzakciói (egy vagy minden számlán), a kapcsolt Billingo- és NAV-számlákkal */
@@ -106,10 +226,10 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
   const ph = (n: number) => Array(n).fill('?').join(',');
   const bill = (
     await env.DB.prepare(
-      `SELECT number, plan_id, paid_by_tx FROM billingo_docs WHERE cancelled = 0 AND (paid_by_tx IN (${ph(ids.length)})${plans.length ? ` OR plan_id IN (${ph(plans.length)})` : ''})`,
+      `SELECT id, number, plan_id, paid_by_tx FROM billingo_docs WHERE cancelled = 0 AND (paid_by_tx IN (${ph(ids.length)})${plans.length ? ` OR plan_id IN (${ph(plans.length)})` : ''})`,
     )
       .bind(...ids, ...plans)
-      .all<{ number: string; plan_id: string | null; paid_by_tx: string | null }>()
+      .all<{ id: number; number: string; plan_id: string | null; paid_by_tx: string | null }>()
   ).results;
   const nav =
     plans.length || actuals.length
@@ -121,9 +241,10 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
             .all<{ invoice_number: string; plan_id: string | null; actual_id: string | null }>()
         ).results
       : [];
+  const files = await filesFor(env, ids);
   return tx.map((t) => {
     const inv: LedgerTx['invoices'] = [];
-    for (const b of bill) if (b.number && (b.paid_by_tx === t.id || (t.plan_id && b.plan_id === t.plan_id))) inv.push({ kind: 'billingo', number: b.number });
+    for (const b of bill) if (b.number && (b.paid_by_tx === t.id || (t.plan_id && b.plan_id === t.plan_id))) inv.push({ kind: 'billingo', number: b.number, id: b.id });
     for (const n of nav)
       if (n.invoice_number && ((t.plan_id && n.plan_id === t.plan_id) || (t.actual_id && n.actual_id === t.actual_id)))
         inv.push({ kind: 'nav', number: n.invoice_number });
@@ -132,6 +253,7 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
       ...t,
       amount: Number(t.amount),
       invoices: inv.filter((x) => (seen.has(x.number) ? false : (seen.add(x.number), true))),
+      files: files.get(t.id) || [],
     };
   });
 }
@@ -218,6 +340,36 @@ export async function handleLedger(env: Env, req: Request, path: string, u: User
     await env.DB.prepare('DELETE FROM bank_tx WHERE id = ?').bind(t.id).run();
     await recalcCash(env);
     await logChange(env, u.id, 'cash_tx_deleted', `Készpénzes tétel törölve: ${t.amount} Ft (${t.date})`, [], null);
+    return json({ ok: true });
+  }
+  if (path === '/api/bank/statement' && req.method === 'PUT') {
+    // bankszámlakivonat szerinti záró egyenleg egy hónapra (a kivonat dátumával)
+    requireRole(u, 'admin');
+    const b = await readJson(req);
+    const account = String(b.account_id || '');
+    const date = String(b.date || '');
+    const amount = Math.round(
+      Number(
+        String(b.amount ?? '')
+          .replace(/\s/g, '')
+          .replace(',', '.'),
+      ),
+    );
+    if (!DATE.test(date)) throw new HttpError(400, 'Hibás kivonat-dátum.');
+    if (!Number.isFinite(amount)) throw new HttpError(400, 'Hibás egyenleg.');
+    const acc = await env.DB.prepare("SELECT id, bank_name FROM bank_accounts WHERE id = ? AND provider <> 'cash'")
+      .bind(account)
+      .first<{ id: string; bank_name: string }>();
+    if (!acc) throw new HttpError(404, 'Nincs ilyen bankszámla.');
+    await ensureBalances(env);
+    await env.DB.prepare("DELETE FROM bank_balances WHERE account_id = ? AND source = 'kivonat' AND substr(date, 1, 7) = ?")
+      .bind(account, date.slice(0, 7))
+      .run();
+    if (b.clear) return json({ ok: true });
+    await env.DB.prepare('INSERT INTO bank_balances (id, account_id, date, balance, source, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(randomId('bb'), account, date, amount, 'kivonat', now())
+      .run();
+    await logChange(env, u.id, 'bank_statement', `Kivonat szerinti záró egyenleg: ${acc.bank_name} ${date} · ${amount} Ft`, [], null);
     return json({ ok: true });
   }
   if (path === '/api/bank/cash/opening' && req.method === 'PUT') {

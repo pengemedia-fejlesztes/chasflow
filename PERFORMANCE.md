@@ -17,3 +17,13 @@ Successful task and warehouse/stock writes, including undo and partially failed 
 ## Remaining work
 
 The initial financial bundle and global revision polling still load full financial history. Date-bound financial queries require opening-balance carry amounts, per-category historical first/last dates, future plan horizons, linked transactions and year-expanded filters to remain exact. This package deliberately does not trim historical entries or claim an authenticated production speed-up. Further extraction of shared view hooks can reduce the first authenticated download.
+
+## Structure recheck (base b6b11d4)
+
+The current application adds grouped navigation, mobile drawers, ChartsView and a new PartnerView. Desktop/mobile merge conflicts were resolved preserving the new menu, chart routes, task submenu remount keys, and partner details/timeline/sales tabs. ChartsView and PartnerView are deferred imports. Mobile screen boundaries preserve the surrounding navigation during lazy loading.
+
+The new `useLedger` hook now reloads only when its financial dependencies change, avoiding a bank-history query after task/stock-only updates. A regression test checks both skipped auxiliary refreshes and necessary financial refreshes. The new charts menu is included in the existing all-financial-scopes ledger gate; missing any financial grant also removes the menu from the effective response.
+
+Validation after integration: 186 tests / 44 files, frontend typecheck/build and server build pass. Synthetic browser checks cover grouped desktop navigation, charts, partner details/timeline/sales, the mobile partner view, mobile drawer/charts, and the daily task submenu at 390×844.
+
+The live anonymous bundle at recheck was v1.256 / b6b11d4, 941,426 bytes. The integrated local main chunk is approximately 208.6 kB (gzip 68.9 kB), with charts (~23.5 kB) and partner view (~45.3 kB) in deferred chunks. These are code-size measurements, not authenticated production latency. Anonymous live scoped data requests return HTTP 401. No production merge or deployment was performed.
