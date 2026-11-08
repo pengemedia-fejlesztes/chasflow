@@ -82,9 +82,23 @@ export interface PartnerProfile {
   /** fizetési határidő napokban (számla kelte + N nap) */
   pay_days: number | null;
   bank_account: string;
+  website: string;
+  /** további kapcsolattartók */
+  contacts: PartnerContact[];
+  /** a partnerért felelős / őt követő felhasználók */
+  followers: number[];
+  /** egyéni mezők (pl. beosztás, érdeklődési kör) */
+  custom: { label: string; value: string }[];
 }
 
-export const PROFILE_FIELDS: [Exclude<keyof PartnerProfile, 'pay_days'>, string, number][] = [
+export interface PartnerContact {
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+}
+
+export const PROFILE_FIELDS: [Exclude<keyof PartnerProfile, 'pay_days' | 'contacts' | 'followers' | 'custom'>, string, number][] = [
   ['company', 'Hivatalos cégnév', 160],
   ['zip', 'Irányítószám', 12],
   ['city', 'Település', 80],
@@ -96,6 +110,7 @@ export const PROFILE_FIELDS: [Exclude<keyof PartnerProfile, 'pay_days'>, string,
   ['contact', 'Kapcsolattartó', 120],
   ['eu_tax', 'Közösségi adószám', 20],
   ['bank_account', 'Bankszámlaszám', 40],
+  ['website', 'Weboldal', 160],
 ];
 
 export function emptyProfile(): PartnerProfile {
@@ -112,6 +127,10 @@ export function emptyProfile(): PartnerProfile {
     eu_tax: '',
     pay_days: null,
     bank_account: '',
+    website: '',
+    contacts: [],
+    followers: [],
+    custom: [],
   };
 }
 
@@ -126,6 +145,25 @@ export function cleanProfile(v: unknown): PartnerProfile {
       .trim()
       .slice(0, max);
   }
+  const str = (x: unknown, max: number) =>
+    String(x ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, max);
+  if (Array.isArray(src.contacts))
+    out.contacts = src.contacts
+      .filter((c) => c && typeof c === 'object')
+      .map((c: any) => ({ name: str(c.name, 120), role: str(c.role, 80), email: str(c.email, 160), phone: str(c.phone, 40) }))
+      .filter((c) => c.name || c.email || c.phone)
+      .slice(0, 30);
+  if (Array.isArray(src.followers))
+    out.followers = [...new Set(src.followers.map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 30);
+  if (Array.isArray(src.custom))
+    out.custom = src.custom
+      .filter((c) => c && typeof c === 'object')
+      .map((c: any) => ({ label: str(c.label, 60), value: str(c.value, 300) }))
+      .filter((c) => c.label)
+      .slice(0, 40);
   const d = Number(src.pay_days);
   out.pay_days =
     src.pay_days === null || src.pay_days === '' || src.pay_days === undefined || !Number.isFinite(d) ? null : Math.max(0, Math.min(365, Math.round(d)));

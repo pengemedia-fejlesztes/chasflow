@@ -13,9 +13,8 @@ import { sheetIdOf } from '../../shared/worktime';
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
-import { MobilePartnerScreen } from './MobileFlows';
+import { PartnerView } from './PartnerView';
 import { PartnerModal } from './PartnerModal';
-import { PartnerSheet } from './PartnerSheet';
 import { PartnerServicesSummary } from './PartnerBilling';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle, R } from './ui';
@@ -1660,11 +1659,21 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const close = () => openPartner(null);
   if (task) return <PartnerModal leaf={task.leaf} edit={task.key ? { key: task.key } : null} onClose={() => setTask(null)} />;
   // mobilon teljes képernyős adatlap: lejárt · átl. késés · 12 hó, következő tétel, előzmények, „hogyan fizet?” naptár
-  if (mobile && p) return <MobilePartnerScreen p={p} onClose={close} onNewItem={(leaf) => setTask({ leaf })} onEditItem={(leaf) => setTask({ leaf })} />;
+  if (mobile && p)
+    return (
+      <PartnerView
+        p={p}
+        mobile
+        onClose={close}
+        onNewItem={(leaf) => setTask({ leaf })}
+        onEditItem={(leaf, key) => setTask({ leaf, key })}
+        onRenamed={(k) => openPartner(k)}
+      />
+    );
   return (
     <Modal onClose={close} width={1180}>
       {p ? (
-        <PartnerSheet
+        <PartnerView
           p={p}
           onClose={close}
           onNewItem={(leaf) => setTask({ leaf })}
@@ -1948,7 +1957,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                 return (
                   <div
                     key={p.key}
-                    onClick={() => setSel(p.key)}
+                    onClick={() => (window.matchMedia('(max-width: 900px)').matches ? openPartner(p.key) : setSel(p.key))}
                     role="button"
                     tabIndex={0}
                     aria-pressed={on}
