@@ -5,6 +5,7 @@ import { BILLING_STEP, VATS, cleanProfile, deriveCatalog, type Billing, type Par
 import { requireRole, type User } from './auth';
 import { logChange } from './changelog';
 import { partnerIdOf } from '../shared/partners';
+import { defaultCallDays } from '../shared/tasks';
 import { Env, HttpError, getSetting, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
 const DDL = [
@@ -21,6 +22,7 @@ const DDL = [
     note TEXT,
     stock DOUBLE,
     grp VARCHAR(80),
+    call_days INTEGER,
     archived INTEGER NOT NULL DEFAULT 0,
     updated_at BIGINT NOT NULL
   )`,
@@ -61,6 +63,16 @@ export function ensureCatalog(env: Env): Promise<boolean> {
         .then(() => true)
         .catch(() => false);
       if (!hasGrp) await env.DB.prepare('ALTER TABLE products ADD COLUMN grp VARCHAR(80)').run();
+      // telefonos emlékeztető a számlázás előtt (nap); bevezetéskor az ütem szerinti alapértékkel
+      const hasCall = await env.DB.prepare('SELECT call_days FROM products LIMIT 1')
+        .all()
+        .then(() => true)
+        .catch(() => false);
+      if (!hasCall) {
+        await env.DB.prepare('ALTER TABLE products ADD COLUMN call_days INTEGER').run();
+        await env.DB.prepare("UPDATE products SET call_days = 30 WHERE billing = 'eves'").run();
+        await env.DB.prepare("UPDATE products SET call_days = 7 WHERE billing IN ('negyedeves', 'felevi')").run();
+      }
       return true;
     })().catch((e) => {
       ready = null;
@@ -86,7 +98,7 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
     await setSetting(env, 'catalog_seeded', String(now()));
   }
   const [p, a, f] = await env.DB.batch([
-    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, grp, archived, updated_at FROM products ORDER BY name'),
+    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, grp, call_days, archived, updated_at FROM products ORDER BY name'),
     env.DB.prepare('SELECT id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at FROM partner_products ORDER BY start_ym'),
     env.DB.prepare('SELECT partner_key, data FROM partner_profiles'),
   ]);
@@ -98,9 +110,8 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
       /* hibás sor: kihagyjuk */
     }
   }
-  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
-    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), archived: Number(r.archived) })),
+    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), call_days: num(r.call_days), archived: Number(r.archived) })),
     partnerProducts: (a.results as any[]).map((r) => ({ ...r, qty: Number(r.qty), price: num(r.price) })),
     partnerProfiles: profiles,
   };
@@ -161,7 +172,7 @@ export async function syncCatalog(env: Env): Promise<{ products: number; assigns
     byName.set(lc(p.name), { id, price: p.price });
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, call_days, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(
         id,
         p.name.slice(0, 200),
@@ -173,6 +184,7 @@ export async function syncCatalog(env: Env): Promise<{ products: number; assigns
         p.billing,
         null,
         'A partnereknél felvitt tételekből',
+        defaultCallDays(p.billing),
         0,
         t,
       ),
@@ -207,6 +219,7 @@ const money = (v: unknown, what: string) => {
   if (!Number.isFinite(n) || Math.abs(n) > 1e11) throw new HttpError(400, `Hibás ${what}.`);
   return Math.round(n * 100) / 100;
 };
+const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 const billingOf = (v: unknown): Billing | null => (typeof v === 'string' && v in BILLING_STEP ? (v as Billing) : null);
 
 export async function handleCatalog(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
@@ -254,6 +267,14 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
       billing: b.billing !== undefined ? billingOf(b.billing) || 'havi' : cur?.billing || 'havi',
       sku: b.sku !== undefined ? str(b.sku, 60) || null : (cur?.sku ?? null),
       grp: b.grp !== undefined ? str(b.grp, 80) || null : (cur?.grp ?? null),
+      call_days:
+        b.call_days !== undefined
+          ? b.call_days === null || b.call_days === '' || !Number(b.call_days)
+            ? null
+            : Math.max(1, Math.min(365, Math.round(Number(b.call_days))))
+          : cur
+            ? num(cur.call_days)
+            : defaultCallDays(billingOf(b.billing) || 'havi'),
       note:
         b.note !== undefined
           ? String(b.note ?? '')
@@ -269,11 +290,11 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
     if (clash) throw new HttpError(409, `Már van „${v.name}” nevű termék vagy szolgáltatás.`);
     const nid = id || randomId('p');
     await env.DB.prepare(
-      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, grp, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, grp, call_days, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind, unit = excluded.unit, price = excluded.price, vat = excluded.vat,
-         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, grp = excluded.grp, archived = excluded.archived, updated_at = excluded.updated_at`,
+         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, grp = excluded.grp, call_days = excluded.call_days, archived = excluded.archived, updated_at = excluded.updated_at`,
     )
-      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.grp, v.archived, t)
+      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.grp, v.call_days, v.archived, t)
       .run();
     await logChange(
       env,

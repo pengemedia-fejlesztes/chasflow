@@ -98,6 +98,8 @@ jobs:
           cp -a dist-worker server "$BK/"
           [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
           mv "$NEW/dist" dist
+          # a korábbi verzió részfájljai is maradjanak (a nyitva hagyott lapok ezeket kérhetik)
+          cp -n "$BK/dist/assets/"* dist/assets/ 2>/dev/null || true
           cp "$NEW/dist-worker/worker.mjs" dist-worker/worker.mjs
           cp "$NEW"/server/*.mjs server/
           rm -rf "$NEW"

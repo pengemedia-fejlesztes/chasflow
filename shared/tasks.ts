@@ -1,6 +1,6 @@
 // Feladatok (CRM-események): telefon, e-mail, megbeszélés, megrendelés, szerződés – partnerhez és felhasználóhoz kötve,
 // határidővel (nap + óra), opcionális záró nappal (a heti nézetben sávként), állapottal.
-import { addDays } from './workdays';
+import { addDays, firstWorkday, isWorkday } from './workdays';
 
 export type TaskType = 'telefon' | 'email' | 'megbeszeles' | 'megrendeles' | 'szerzodes' | 'egyeb';
 export type TaskStatus = 'nyitott' | 'kesz' | 'elmaradt';
@@ -94,4 +94,19 @@ export function cleanTask(b: Record<string, unknown>, cur?: Partial<Task>): Omit
     end_date: end && end !== due ? end : null,
     status: (STATUSES.has(status) ? status : 'nyitott') as TaskStatus,
   };
+}
+
+// ── telefonos emlékeztető a számlázás előtt ──
+
+/** a választható előfutási idők (nap) */
+export const CALL_DAYS = [1, 3, 5, 7, 14, 21, 30, 45, 60];
+
+/** alapértelmezés az ütem szerint (évente 30 nap, negyed- és félévente 7 nap; havi és egyszeri: nincs) */
+export const defaultCallDays = (billing: string): number | null => (billing === 'eves' ? 30 : billing === 'negyedeves' || billing === 'felevi' ? 7 : null);
+
+/** hívás napja: a számlázási hónap első munkanapja előtt N nappal, a megelőző munkanapra igazítva */
+export function callDate(billingYm: string, days: number): string {
+  let d = addDays(firstWorkday(billingYm), -days);
+  for (let i = 0; i < 10 && !isWorkday(d); i++) d = addDays(d, -1);
+  return d;
 }

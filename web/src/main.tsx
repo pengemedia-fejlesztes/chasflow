@@ -13,6 +13,19 @@ if (BASE) {
   };
 }
 
+// élesítés után a régi, nyitva maradt lap a már nem létező részfájlt kérné (pl. Fedezeti pont / XLS): egyszer újratöltjük
+window.addEventListener('vite:preloadError', (e) => {
+  try {
+    const last = Number(sessionStorage.getItem('cf-reload') || 0);
+    if (Date.now() - last < 30000) return;
+    sessionStorage.setItem('cf-reload', String(Date.now()));
+  } catch {
+    /* privát mód */
+  }
+  e.preventDefault();
+  location.reload();
+});
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

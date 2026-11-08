@@ -27,7 +27,7 @@ export const VATS: [Vat, string][] = [
   ['EUFAD37', 'EU fordított adózás'],
   ['FAD', 'Fordított adózás'],
 ];
-export const UNITS = ['db', 'hó', 'óra', 'nap', 'alkalom', 'csomag', 'projekt'];
+export const UNITS = ['db', 'hó', 'óra', 'nap', 'év', 'alkalom', 'csomag', 'projekt'];
 export const CURRENCIES = ['HUF', 'EUR', 'USD'];
 
 export interface Product {
@@ -45,6 +45,8 @@ export interface Product {
   note: string | null;
   /** termékcsoport (pl. Késztermékek, Szolgáltatások) */
   grp?: string | null;
+  /** telefonos emlékeztető ennyi nappal a számlázás előtt (null: nincs) */
+  call_days?: number | null;
   archived: number;
   updated_at: number;
 }

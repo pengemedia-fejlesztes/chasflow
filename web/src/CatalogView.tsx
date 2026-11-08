@@ -23,6 +23,7 @@ import { money } from './PartnerBilling';
 import { useAllPartners } from './PartnerCard';
 import { MoneyInput } from './PartnerModal';
 import { useStore } from './store';
+import { CALL_DAYS, defaultCallDays } from '../../shared/tasks';
 import { availOf, useInventory } from './StockView';
 import { C, FONT, FONT_H, Field, Pill, Seg, card, inputStyle } from './ui';
 import { fmt } from '../../shared/model';
@@ -177,6 +178,7 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
                     {KIND_LABEL[p.kind]}
                     {p.sku ? ` · ${p.sku}` : ''}
                     {p.archived ? ' · archivált' : ''}
+                    {p.call_days ? ` · hívás ${p.call_days} nappal előtte` : ''}
                   </span>
                 </span>
                 <span style={{ font: `400 13.5px ${FONT}`, color: C.ink }}>{BILLING_LABEL[p.billing]}</span>
@@ -226,6 +228,7 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
   const [billing, setBilling] = useState<Billing>(p?.billing || 'havi');
   const [sku, setSku] = useState(p?.sku || '');
   const [grp, setGrp] = useState(p?.grp || '');
+  const [callDays, setCallDays] = useState<string>(p ? String(p.call_days ?? '') : '');
   const inv = useInventory();
   const [note, setNote] = useState(p?.note || '');
   const [busy, setBusy] = useState(false);
@@ -239,7 +242,20 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       async () => {
         const r = await api<{ id: string }>(p ? `/api/products/${encodeURIComponent(p.id)}` : '/api/products', {
           method: p ? 'PUT' : 'POST',
-          body: { name, kind, unit, price: Number(price || 0), vat, currency, billing, sku, note, grp, ...extra },
+          body: {
+            name,
+            kind,
+            unit,
+            price: Number(price || 0),
+            vat,
+            currency,
+            billing,
+            sku,
+            note,
+            grp,
+            call_days: callDays === '' ? null : Number(callDays),
+            ...extra,
+          },
         });
         id = r.id;
       },
@@ -275,12 +291,13 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
           </select>
         </Field>
         <Field label="Mennyiségi egység">
-          <input value={unit} onChange={(e) => setUnit(e.target.value)} list="cf-units" maxLength={20} disabled={!canEdit} style={sel} />
-          <datalist id="cf-units">
-            {UNITS.map((u) => (
-              <option key={u} value={u} />
+          <select value={unit} onChange={(e) => setUnit(e.target.value)} disabled={!canEdit} style={sel}>
+            {[...new Set([...UNITS, unit])].map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
             ))}
-          </datalist>
+          </select>
         </Field>
         <Field label="Nettó egységár">
           <MoneyInput value={price} onChange={setPrice} disabled={!canEdit} placeholder="0" style={sel} />
@@ -302,7 +319,17 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
           </select>
         </Field>
         <Field label="Számlázás">
-          <select value={billing} onChange={(e) => setBilling(e.target.value as Billing)} disabled={!canEdit} style={sel}>
+          <select
+            value={billing}
+            onChange={(e) => {
+              const b = e.target.value as Billing;
+              setBilling(b);
+              // új tételnél az ütemhez illő alapértelmezett emlékeztető (évente 30, negyed-/félévente 7 nap)
+              if (!p) setCallDays(String(defaultCallDays(b) ?? ''));
+            }}
+            disabled={!canEdit}
+            style={sel}
+          >
             {BILLINGS.map(([k, l]) => (
               <option key={k} value={k}>
                 {l}
@@ -312,6 +339,16 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
         </Field>
         <Field label="Cikkszám / belső kód">
           <input value={sku} onChange={(e) => setSku(e.target.value)} maxLength={60} disabled={!canEdit} style={sel} />
+        </Field>
+        <Field label="Hívás a számlázás előtt">
+          <select value={callDays} onChange={(e) => setCallDays(e.target.value)} disabled={!canEdit} style={sel}>
+            <option value="">Nincs emlékeztető</option>
+            {CALL_DAYS.map((d) => (
+              <option key={d} value={String(d)}>
+                {d} nappal előtte (Telefon feladat)
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Termékcsoport">
           <input
