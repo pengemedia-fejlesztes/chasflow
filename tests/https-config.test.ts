@@ -7,6 +7,7 @@ describe('Passenger HTTPS config', () => {
     const config = httpsConfig(original);
     expect(config).toContain(original);
     expect(config).toContain('RewriteCond %{HTTPS} !=on');
+    expect(config).toContain('RewriteCond %{REQUEST_URI} ^/Cashflow(?:/|$)');
     expect(config).toContain('https://pmdev.hu%{REQUEST_URI}');
     expect(httpsConfig(config)).toBe(config);
   });

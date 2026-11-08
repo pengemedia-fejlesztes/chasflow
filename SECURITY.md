@@ -24,9 +24,9 @@ internal permission maps and unknown future settings must not be added to that a
 
 The Worker redirects non-local HTTP reads and rejects HTTP writes. Passenger's
 internal connection can hide the original scheme, so production deployment also
-installs a managed HTTPS block in `~/public_html/Cashflow/.htaccess`, preserving
+identifies the public configuration by its exact PassengerAppRoot in the domain webroots and installs a managed HTTPS block for `/Cashflow` only, preserving
 the existing Passenger configuration and backing it up under `.backup/<release>/public-htaccess`.
-If the public webroot differs, adjust the workflow before deployment; never
+If the public webroot cannot be identified uniquely, deployment stops before swapping the application; never
 disable the HTTP smoke check. Roll back that block using the release backup.
 
 ## Private worktime sheets

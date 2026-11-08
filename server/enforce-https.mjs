@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 const BEGIN = '# BEGIN CASHFLOW HTTPS';
 const END = '# END CASHFLOW HTTPS';
 export function httpsConfig(previous) {
-  const block = `${BEGIN}\nRewriteEngine On\nRewriteCond %{HTTPS} !=on\nRewriteRule ^ https://pmdev.hu%{REQUEST_URI} [R=308,L,NE]\n${END}\n`;
+  const block = `${BEGIN}\nRewriteEngine On\nRewriteCond %{REQUEST_URI} ^/Cashflow(?:/|$)\nRewriteCond %{HTTPS} !=on\nRewriteRule ^ https://pmdev.hu%{REQUEST_URI} [R=308,L,NE]\n${END}\n`;
   const old = previous.replace(/# BEGIN CASHFLOW HTTPS\n[\s\S]*?# END CASHFLOW HTTPS\n?/g, '');
   return block + old;
 }
