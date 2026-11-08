@@ -1267,18 +1267,20 @@ function SheetView({
                     ['once', 'Egyszeri'],
                     ['monthly', 'Havi'],
                     ['quarterly', 'Negyedéves'],
+                    ['yearly', 'Évente'],
                   ] as [Rep, string][]
                 ).map(([v, l]) => (
-                  <button key={v} onClick={() => set({ rep: v })} style={seg(f.rep === v)}>
+                  // éves ütemezésnél az időtartam években értendő (alapból 3 év); visszaváltáskor a havi alapérték
+                  <button key={v} onClick={() => set({ rep: v, ...(v === 'yearly' ? { count: 36 } : f.rep === 'yearly' ? { count: 12 } : {}) })} style={seg(f.rep === v)}>
                     {l}
                   </button>
                 ))}
               </div>
               {f.rep !== 'once' && (
                 <div style={{ display: 'flex', background: C.bg, border: `1px solid ${C.line}`, borderRadius: R.lg, padding: 3, gap: 2 }}>
-                  {[3, 6, 12, 24].map((c) => (
+                  {(f.rep === 'yearly' ? [12, 24, 36] : [3, 6, 12, 24]).map((c) => (
                     <button key={c} onClick={() => set({ count: c })} style={seg(f.count === c)}>
-                      {c} hó
+                      {f.rep === 'yearly' ? `${c / 12} év` : `${c} hó`}
                     </button>
                   ))}
                 </div>
@@ -1290,7 +1292,7 @@ function SheetView({
             </label>
             <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, marginTop: -6 }}>
               {ruleOf(ix, f.leaf) ? `Fizetés: ${payRuleLabel(ruleOf(ix, f.leaf))} (szabály) · ` : ''}
-              {n > 1 ? ` és utána ${f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
+              {n > 1 ? ` és utána ${f.rep === 'yearly' ? 'évente' : f.rep === 'quarterly' ? 'negyedévente' : 'havonta'}, összesen ${n} tétel` : ''}
             </span>
           </>
         )}

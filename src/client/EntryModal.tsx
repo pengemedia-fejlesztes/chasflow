@@ -226,6 +226,13 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                 )}
               </div>
             )}
+            {edit && series && series.rep !== 'once' && (
+              // az ütemezés szerkesztéskor csak látszik: váltása a meglévő hónapok dátumát is újraosztaná
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={eyebrow}>Ütemezés</span>
+                <span style={{ font: `600 13.5px ${FONT}`, color: C.ink }}>{REP[series.rep]}</span>
+              </div>
+            )}
             {edit && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={eyebrow}>Fizetési nap</span>
@@ -243,11 +250,13 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                   <span style={eyebrow}>Ütemezés</span>
                   <Seg
                     value={f.rep}
-                    onChange={(v) => set({ rep: v })}
+                    // éves ütemezésnél az időtartam években értendő (alapból 3 év); visszaváltáskor a havi alapérték
+                    onChange={(v) => set({ rep: v, ...(v === 'yearly' ? { count: 36 } : f.rep === 'yearly' ? { count: 6 } : {}) })}
                     options={[
                       ['once', 'Egyszeri'],
                       ['monthly', 'Havi'],
                       ['quarterly', 'Negyedéves'],
+                      ['yearly', 'Évente'],
                     ]}
                   />
                 </div>
@@ -257,12 +266,20 @@ export function EntryModal({ leaf, edit, onClose }: { leaf?: string | null; edit
                     <Seg
                       value={f.count}
                       onChange={(v) => set({ count: v })}
-                      options={[
-                        [3, '3 hó'],
-                        [6, '6 hó'],
-                        [12, '12 hó'],
-                        [24, '24 hó'],
-                      ]}
+                      options={
+                        f.rep === 'yearly'
+                          ? [
+                              [12, '1 év'],
+                              [24, '2 év'],
+                              [36, '3 év'],
+                            ]
+                          : [
+                              [3, '3 hó'],
+                              [6, '6 hó'],
+                              [12, '12 hó'],
+                              [24, '24 hó'],
+                            ]
+                      }
                     />
                   </div>
                 )}
