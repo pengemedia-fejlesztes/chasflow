@@ -2,7 +2,7 @@
 // múltbeli tények, várható tételek (terv, ajánlat), összetevők, számlázási nevek, Billingo számlák és késések.
 import { partnerKey } from './match';
 import { baseName } from './monthname';
-import { addMonths, monthRange, ymOf } from './model';
+import { addMonths, monthRange, openAmount, partialPaid, ymOf } from './model';
 import type { BillingoDoc, Entry, Group, Leaf, Partner, Section } from './types';
 
 export interface PartnerInvoice {
@@ -95,6 +95,7 @@ export function partnerStats(
   const p12 = new Set(monthRange(addMonths(cur, -23), addMonths(cur, -12)));
   const m24 = monthRange(addMonths(cur, -23), cur);
   const entryById = new Map(entries.map((e) => [e.id, e]));
+  const paidTo = partialPaid(entries);
 
   // partner = azonos (normalizált) nevű alkategóriák
   const byKey = new Map<string, Leaf[]>();
@@ -168,7 +169,9 @@ export function partnerStats(
     for (const e of future) {
       const sec = sectionOf(e.leaf_id);
       const s = (sides[sec] ||= { total: 0, last12: 0, prev12: 0, count: 0, share12: 0, openPlan: 0, offers: 0 });
-      const v = sec === 'in' ? e.amount : -e.amount;
+      // nyitott tervnél a még várható összeg (kiszámlázott tervnél a számla összege, a részfizetés nélkül)
+      const amt = e.tentative ? e.amount : openAmount(e, paidTo);
+      const v = sec === 'in' ? amt : -amt;
       if (e.tentative) s.offers += v;
       else s.openPlan += v;
     }

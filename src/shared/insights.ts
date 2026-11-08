@@ -109,8 +109,7 @@ export function receivablesAging(entries: Entry[], sectionOf: (leaf: string) => 
     if (e.kind !== 'plan' || e.done || e.tentative || sectionOf(e.leaf_id) !== 'in' || !e.amount) continue;
     open.add(e.id);
     // kiszámlázott tervnél a kintlévőség a számla összege (a terv összege nem változik), a részfizetés nélkül
-    const base = e.bill_amount != null ? { ...e, amount: e.bill_amount } : e;
-    add({ ...base, amount: openAmount(base, paid) });
+    add({ ...e, amount: openAmount(e, paid) });
   }
   const byId = new Map(entries.map((e) => [e.id, e]));
   for (const doc of billingo) {

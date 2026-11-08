@@ -72,9 +72,12 @@ export function partialPaid(entries: Pick<Entry, 'id' | 'kind' | 'done' | 'link_
   return out;
 }
 
-/** Nyitott terv még várható összege: a terv, a részfizetés(ek) nélkül (az előjel nem fordulhat át). */
-export function openAmount(e: Pick<Entry, 'id' | 'amount'>, paid?: Map<string, number>): number {
-  const base = e.amount;
+/**
+ * Nyitott terv még várható összege: ha már van hozzá kiállított számla, a számla összege (bill_amount – a valós követelés),
+ * különben a terv; a részfizetés(ek) nélkül (az előjel nem fordulhat át). A terv saját összege (amount) nem változik.
+ */
+export function openAmount(e: Pick<Entry, 'id' | 'amount' | 'bill_amount'>, paid?: Map<string, number>): number {
+  const base = e.bill_amount ?? e.amount;
   const rest = base - (paid?.get(e.id) || 0);
   return Math.sign(rest) === Math.sign(base) ? rest : 0;
 }
