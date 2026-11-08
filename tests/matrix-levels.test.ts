@@ -61,6 +61,13 @@ describe('Bevétel / Ajánlatok / Kiadás szintek', () => {
     expect(m.rows.find((r) => r.label === 'Ajánlatok')!.cells[col].v).toBe(500);
     expect(m.net[col]).toBe(1300);
   });
+  it('kikapcsolt ajánlat-szűrőnél is látszik az ajánlat összege, de a havi cashflow-ba nem számít', () => {
+    const off = buildMatrix(ix, { ...defaultFilters(today), includeOffers: false, estimate: false });
+    const sec = off.rows.find((r) => r.label.startsWith('Ajánlatok'))!;
+    expect(sec.label).toBe('Ajánlatok (nem számít bele)');
+    expect(sec.cells[col].v).toBe(500);
+    expect(off.net[col]).toBe(800);
+  });
   it('megjelenített név', () => {
     expect(displayGroup('Projektek')).toBe('Bevétel');
     expect(groupPath('in', 'Projektek')).toBe('Bevétel');
