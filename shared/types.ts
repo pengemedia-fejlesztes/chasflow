@@ -199,6 +199,9 @@ export interface DataBundle {
   /** feladatok (admin: mind, más: a sajátjai) és a kiosztható felhasználók */
   tasks?: import('./tasks').Task[];
   taskUsers?: import('./tasks').TaskUser[];
+  /** saját feladat-jogosultság; adminnak mindenkié */
+  myTaskPerm?: import('./tasks').TaskPerm & { write: boolean };
+  taskPerms?: Record<string, import('./tasks').TaskPerm>;
   tasksError?: string;
   /** raktárak, raktárankénti készlet, legutóbbi készletmozgások */
   warehouses?: import('./stock').Warehouse[];

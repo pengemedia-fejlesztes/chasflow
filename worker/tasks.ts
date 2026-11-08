@@ -8,7 +8,7 @@ import { BILLING_LABEL, effective, nextBilling, type Billing } from '../shared/c
 import { addMonths, fmt, monthLong } from '../shared/model';
 import { partnerIdOf } from '../shared/partners';
 import { addDays, firstWorkday } from '../shared/workdays';
-import { callDate } from '../shared/tasks';
+import { callDate, canDeleteTask, canEditTask, cleanPerm, isOpen, permOf, type TaskPerm } from '../shared/tasks';
 import { ensureCatalog } from './catalog';
 
 const DDL = `CREATE TABLE IF NOT EXISTS tasks (
@@ -60,35 +60,64 @@ const row = (r: any): Task => ({
   updated_at: Number(r.updated_at),
 });
 
-export async function loadTasks(env: Env, u: User): Promise<{ tasks: Task[]; taskUsers: TaskUser[]; tasksError?: string }> {
-  const users = (await env.DB.prepare('SELECT id, name, email FROM users WHERE disabled = 0 OR disabled IS NULL ORDER BY name').all<any>()).results.map(
+export async function loadPerms(env: Env): Promise<Record<string, TaskPerm>> {
+  try {
+    const raw = JSON.parse((await getSetting(env, 'task_perms')) || '{}');
+    return Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, cleanPerm(v)]));
+  } catch {
+    return {};
+  }
+}
+
+export async function loadTasks(
+  env: Env,
+  u: User,
+): Promise<{ tasks: Task[]; taskUsers: TaskUser[]; taskPerms?: Record<string, TaskPerm>; myTaskPerm: TaskPerm & { write: boolean }; tasksError?: string }> {
+  const perms = await loadPerms(env);
+  const my = permOf(u, perms);
+  const users = (await env.DB.prepare('SELECT id, name, email, role FROM users WHERE disabled = 0 OR disabled IS NULL ORDER BY name').all<any>()).results.map(
     (x) => ({
       id: Number(x.id),
       name: String(x.name || x.email || 'Felhasználó'),
+      role: String(x.role || 'member'),
     }),
   );
-  if (!(await ensureTasks(env))) return { tasks: [], taskUsers: users, tasksError: 'A feladatok táblája nem hozható létre.' };
+  if (!(await ensureTasks(env))) return { tasks: [], taskUsers: users, myTaskPerm: my, tasksError: 'A feladatok táblája nem hozható létre.' };
   await generateCallTasks(env).catch((e) => console.error('call tasks', e));
   // a lezártakból csak az elmúlt fél év
-  const base = `SELECT ${COLS} FROM tasks WHERE (status = 'nyitott' OR due_date >= date('now', '-190 days'))`;
+  const base = `SELECT ${COLS} FROM tasks WHERE (status IN ('nyitott', 'folyamatban') OR due_date >= date('now', '-190 days'))`;
   const r =
-    u.role === 'admin'
+    my.view === 'all'
       ? await env.DB.prepare(`${base} ORDER BY due_date, due_time`).all<any>()
       : await env.DB.prepare(`${base} AND (assignee_id = ? OR created_by = ?) ORDER BY due_date, due_time`).bind(u.id, u.id).all<any>();
-  return { tasks: r.results.map(row), taskUsers: users };
+  return { tasks: r.results.map(row), taskUsers: users, myTaskPerm: my, ...(u.role === 'admin' ? { taskPerms: perms } : {}) };
 }
 
 export async function handleTasks(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
+  if (path === '/api/task-perms' && req.method === 'PUT') {
+    requireRole(u, 'admin');
+    const b = await readJson<Record<string, unknown>>(req);
+    const perms = Object.fromEntries(
+      Object.entries(b || {})
+        .filter(([k]) => /^\d+$/.test(k))
+        .map(([k, v]) => [k, cleanPerm(v)]),
+    );
+    await setSetting(env, 'task_perms', JSON.stringify(perms));
+    await logChange(env, u.id, 'task_perms', `Feladat-jogosultságok módosítva (${Object.keys(perms).length} felhasználó)`, [], null);
+    return json({ ok: true });
+  }
   const m = path.match(/^\/api\/tasks(?:\/([^/]+))?$/);
   if (!m || req.method === 'GET') return null;
   requireRole(u, 'admin', 'member');
+  const perm = permOf(u, await loadPerms(env));
   if (!(await ensureTasks(env))) throw new HttpError(500, 'A feladatok táblája nem hozható létre a szerveren.');
   const id = m[1] ? decodeURIComponent(m[1]).slice(0, 40) : null;
   const cur = id ? await env.DB.prepare(`SELECT ${COLS_ALL} FROM tasks WHERE id = ?`).bind(id).first<any>() : null;
   if (id && !cur) throw new HttpError(404, 'Nincs ilyen feladat.');
-  // nem admin csak a sajátját (kiosztott vagy általa létrehozott) módosíthatja
-  if (cur && u.role !== 'admin' && Number(cur.assignee_id) !== u.id && Number(cur.created_by) !== u.id)
-    throw new HttpError(403, 'Ezt a feladatot nem módosíthatod.');
+  // jogosultság: a beállítások szerint (admin mindent)
+  const who = cur ? { assignee_id: num(cur.assignee_id), created_by: num(cur.created_by) } : null;
+  if (who && req.method === 'DELETE' && !canDeleteTask(who, u, perm)) throw new HttpError(403, 'Ezt a feladatot nem törölheted.');
+  if (who && req.method !== 'DELETE' && !canEditTask(who, u, perm)) throw new HttpError(403, 'Ezt a feladatot nem módosíthatod.');
   const t = now();
   if (req.method === 'DELETE' && cur) {
     await env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
@@ -118,7 +147,9 @@ export async function handleTasks(env: Env, req: Request, path: string, u: User)
     throw new HttpError(400, e.message);
   }
   if (!cur && v.assignee_id === null) v.assignee_id = u.id;
-  const doneAt = v.status === 'nyitott' ? null : cur?.status === v.status && cur?.done_at ? Number(cur.done_at) : t;
+  const reassigned = cur ? num(cur.assignee_id) !== v.assignee_id : v.assignee_id !== u.id;
+  if (reassigned && v.assignee_id !== u.id && !perm.assign) throw new HttpError(403, 'Másnak nem oszthatsz ki feladatot.');
+  const doneAt = isOpen(v.status) ? null : cur?.status === v.status && cur?.done_at ? Number(cur.done_at) : t;
   const nid = id || randomId('k');
   await env.DB.prepare(
     `INSERT INTO tasks (${COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

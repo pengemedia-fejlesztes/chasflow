@@ -75,7 +75,7 @@ export function PartnerSheet({
   onRenamed: (key: string) => void;
 }) {
   const { data, ix, commit, canEdit, showToast } = useStore();
-  const openTasks = (data.tasks || []).filter((t) => t.partner_key === p.key && t.status === 'nyitott').length;
+  const openTasks = (data.tasks || []).filter((t) => t.partner_key === p.key && (t.status === 'nyitott' || t.status === 'folyamatban')).length;
   const [tab, setTab0] = useState<'main' | 'inv' | 'tasks' | 'srv' | 'set'>(() => {
     const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
     return t === 'inv' || t === 'set' || t === 'srv' || t === 'tasks' ? t : 'main';

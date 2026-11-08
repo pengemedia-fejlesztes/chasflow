@@ -39,8 +39,8 @@ function d1(db: DatabaseSync) {
 describe('feladatok SQLite-on: jogosultság', () => {
   it('admin mindent lát, tag csak a sajátját; más feladatát nem módosíthatja', async () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, disabled INTEGER DEFAULT 0);
-      INSERT INTO users VALUES (1,'Laci','l@x',0),(2,'Anna','a@x',0);
+    db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, role TEXT DEFAULT 'member', disabled INTEGER DEFAULT 0); CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+      INSERT INTO users VALUES (1,'Laci','l@x','admin',0),(2,'Anna','a@x','member',0);
       CREATE TABLE change_log (id INTEGER PRIMARY KEY, ts INTEGER, user_id INTEGER, action TEXT, summary TEXT, leaf_ids TEXT, items TEXT, undo TEXT);`);
     const env = { DB: d1(db) } as any;
     const admin = { id: 1, role: 'admin' } as any;
@@ -65,5 +65,25 @@ describe('feladatok SQLite-on: jogosultság', () => {
     const done = (await loadTasks(env, anna)).tasks[0];
     expect(done.status).toBe('kesz');
     expect(done.done_at).toBeGreaterThan(0);
+  });
+});
+
+import { canDeleteTask, canEditTask, canSee, cleanPerm, permOf } from '../shared/tasks';
+
+describe('feladat-jogosultságok', () => {
+  const own = { assignee_id: 2, created_by: 2 };
+  const other = { assignee_id: 3, created_by: 1 };
+  it('alap: a tag csak a sajátját látja, szerkeszti, törli; admin mindent', () => {
+    const p = permOf({ id: 2, role: 'member' }, {});
+    expect([canSee(own, { id: 2 }, p), canSee(other, { id: 2 }, p)]).toEqual([true, false]);
+    expect(canDeleteTask(own, { id: 2 }, p)).toBe(true);
+    const a = permOf({ id: 1, role: 'admin' }, {});
+    expect([canEditTask(other, { id: 1 }, a), canDeleteTask(other, { id: 1 }, a)]).toEqual([true, true]);
+  });
+  it('beállítva: mindent lát, de másét nem szerkeszti és nem töröl; olvasó nem ír', () => {
+    const perms = { '2': cleanPerm({ view: 'all', editOthers: false, del: 'none' }) };
+    const p = permOf({ id: 2, role: 'member' }, perms);
+    expect([canSee(other, { id: 2 }, p), canEditTask(other, { id: 2 }, p), canDeleteTask(own, { id: 2 }, p)]).toEqual([true, false, false]);
+    expect(canEditTask(own, { id: 2 }, permOf({ id: 2, role: 'viewer' }, {}))).toBe(false);
   });
 });

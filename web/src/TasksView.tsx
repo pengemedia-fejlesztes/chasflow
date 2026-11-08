@@ -14,7 +14,14 @@ import {
   type Task,
   type TaskStatus,
   type TaskType,
+  isOpen,
+  canEditTask,
+  canDeleteTask,
+  DEFAULT_PERM,
+  ADMIN_PERM,
+  type TaskPerm,
 } from '../../shared/tasks';
+import { toCsv } from '../../shared/stock';
 import { addDays, dayNameHu } from '../../shared/workdays';
 import { api } from './api';
 import { useAllPartners } from './PartnerCard';
@@ -94,8 +101,8 @@ export function TasksView() {
   const { data, isAdmin, canEdit } = useStore();
   const today = data.today;
   const all = data.tasks || [];
-  const [mode, setMode] = useState<'day' | 'week' | 'list'>(() => (localStorage.getItem('cf-task-mode') as any) || 'day');
-  const setM = (m: 'day' | 'week' | 'list') => {
+  const [mode, setMode] = useState<'day' | 'week' | 'list' | 'table'>(() => (localStorage.getItem('cf-task-mode') as any) || 'day');
+  const setM = (m: 'day' | 'week' | 'list' | 'table') => {
     setMode(m);
     try {
       localStorage.setItem('cf-task-mode', m);
@@ -109,12 +116,13 @@ export function TasksView() {
   const [showDone, setShowDone] = useState(true);
   const [q, setQ] = useState('');
   const [edit, setEdit] = useState<Task | 'new' | null>(null);
+  const [permsOpen, setPermsOpen] = useState(false);
   const { pName } = useTaskHelpers();
   const nq = normalizeText(q);
   const base = all
     .filter((t) => who === 'all' || String(t.assignee_id) === who)
     .filter((t) => !nq || normalizeText(`${t.title} ${t.note || ''} ${pName(t.partner_key)}`).includes(nq));
-  const filtered = base.filter((t) => !types.size || types.has(t.type)).filter((t) => showDone || t.status === 'nyitott');
+  const filtered = base.filter((t) => !types.size || types.has(t.type)).filter((t) => showDone || isOpen(t.status));
   const ws = weekStart(day);
   const days = weekDays(ws);
   const inRange = (t: Task) => (mode === 'week' ? days.some((d) => onDay(t, d)) : mode === 'day' ? onDay(t, day) : true);
@@ -122,7 +130,7 @@ export function TasksView() {
     k,
     l,
     n: base.filter((t) => t.type === k && inRange(t)).length,
-    open: base.filter((t) => t.type === k && t.status === 'nyitott').length,
+    open: base.filter((t) => t.type === k && isOpen(t.status)).length,
   }));
   const overdue = filtered.filter((t) => isOverdue(t, today)).sort(taskOrder);
   const shift = (n: number) => setDay(addDays(day, mode === 'week' ? 7 * n : n));
@@ -136,6 +144,7 @@ export function TasksView() {
             Kit kell hívni, kinek kell írni, mi vár megrendelésre vagy szerződésre – napra és órára, felelőssel. A partner adatlapján is látszik.
           </p>
         </div>
+        {isAdmin && <Pill onClick={() => setPermsOpen(true)}>Jogosultságok</Pill>}
         {canEdit && (
           <button
             type="button"
@@ -198,9 +207,10 @@ export function TasksView() {
             ['day', 'Nap'],
             ['week', 'Hét'],
             ['list', 'Lista'],
+            ['table', 'Táblázat'],
           ]}
         />
-        {mode !== 'list' && (
+        {(mode === 'day' || mode === 'week') && (
           <>
             <Pill small onClick={() => shift(-1)}>
               ‹
@@ -253,7 +263,15 @@ export function TasksView() {
       )}
       {mode === 'week' && <WeekGrid tasks={filtered.filter((t) => days.some((d) => onDay(t, d))).sort(taskOrder)} days={days} onEdit={setEdit} />}
       {mode === 'list' && <TaskList tasks={filtered.sort(taskOrder)} onEdit={setEdit} />}
-      {edit && <TaskEditor task={edit === 'new' ? null : edit} defaults={{ due_date: mode === 'list' ? today : day }} onClose={() => setEdit(null)} />}
+      {mode === 'table' && <TaskTable tasks={all} onEdit={setEdit} />}
+      {edit && (
+        <TaskEditor
+          task={edit === 'new' ? null : edit}
+          defaults={{ due_date: mode === 'list' || mode === 'table' ? today : day }}
+          onClose={() => setEdit(null)}
+        />
+      )}
+      {permsOpen && <PermsDialog onClose={() => setPermsOpen(false)} />}
     </div>
   );
 }
@@ -293,7 +311,9 @@ export function TaskCard({ t, onEdit, hidePartner }: { t: Task; onEdit: (t: Task
       `${t.title}: ${TASK_STATUS_LABEL[s].toLowerCase()}`,
       () => api(`/api/tasks/${encodeURIComponent(t.id)}`, { method: 'PUT', body: { status: t.status } }),
     );
-  const done = t.status !== 'nyitott';
+  const done = !isOpen(t.status);
+  const perm = data.myTaskPerm || { ...DEFAULT_PERM, write: canEdit };
+  const mayEdit = canEdit && canEditTask(t, data.me, perm);
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 52px', gap: 14, alignItems: 'start' }}>
       <div
@@ -356,7 +376,12 @@ export function TaskCard({ t, onEdit, hidePartner }: { t: Task; onEdit: (t: Task
             {t.due_time ? ` ${t.due_time}` : ''}
             {t.end_date ? ` – ${hu(t.end_date)}` : ''}
           </span>
-          {canEdit && t.status === 'nyitott' && (
+          {mayEdit && t.status === 'nyitott' && (
+            <RoundBtn label="Folyamatban" bg={C.blue} onClick={() => setStatus('folyamatban')}>
+              ▶
+            </RoundBtn>
+          )}
+          {mayEdit && !done && (
             <>
               <RoundBtn label="Kész" bg={C.inc} onClick={() => setStatus('kesz')}>
                 ✓
@@ -366,12 +391,12 @@ export function TaskCard({ t, onEdit, hidePartner }: { t: Task; onEdit: (t: Task
               </RoundBtn>
             </>
           )}
-          {canEdit && done && (
+          {mayEdit && done && (
             <Pill small onClick={() => setStatus('nyitott')}>
               Újranyitás
             </Pill>
           )}
-          {canEdit && (
+          {mayEdit && (
             <RoundBtn label="Szerkesztés" bg={C.muted} onClick={() => onEdit(t)}>
               ✎
             </RoundBtn>
@@ -524,7 +549,7 @@ function WeekGrid({ tasks, days, onEdit }: { tasks: Task[]; days: string[]; onEd
                           marginRight: last ? 4 : 0,
                           borderRadius: `${first ? 6 : 0}px ${last ? 6 : 0}px ${last ? 6 : 0}px ${first ? 6 : 0}px`,
                           background: t.status === 'kesz' ? '#7BC79A' : t.status === 'elmaradt' ? '#D9D5CC' : late ? '#E59A8D' : TYPE_COLOR[t.type],
-                          opacity: t.status === 'nyitott' ? 0.9 : 1,
+                          opacity: isOpen(t.status) ? 0.9 : 1,
                           color: '#fff',
                           font: `600 11.5px/24px ${FONT}`,
                           textAlign: 'center',
@@ -576,6 +601,7 @@ function TaskList({ tasks, onEdit }: { tasks: Task[]; onEdit: (t: Task) => void 
 /** új / szerkesztett feladat */
 export function TaskEditor({ task, defaults, onClose }: { task: Task | null; defaults?: Partial<Task>; onClose: () => void }) {
   const { data, run, isAdmin } = useStore();
+  const myPerm = data.myTaskPerm || { ...(isAdmin ? ADMIN_PERM : DEFAULT_PERM), write: true };
   const { partners, pName } = useTaskHelpers();
   const d = { ...defaults, ...(task || {}) };
   const [type, setType] = useState<TaskType>((d.type as TaskType) || 'telefon');
@@ -670,17 +696,14 @@ export function TaskEditor({ task, defaults, onClose }: { task: Task | null; def
             </datalist>
           </Field>
           <Field label="Felelős (ki csinálja)">
-            <select
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-              style={sel}
-              disabled={!isAdmin && !!task && task.assignee_id !== data.me.id && task.created_by !== data.me.id}
-            >
-              {(data.taskUsers || []).map((u) => (
-                <option key={u.id} value={String(u.id)}>
-                  {u.name}
-                </option>
-              ))}
+            <select value={assignee} onChange={(e) => setAssignee(e.target.value)} style={sel} disabled={!myPerm.assign}>
+              {(data.taskUsers || [])
+                .filter((u) => myPerm.assign || u.id === data.me.id || String(u.id) === assignee)
+                .map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {u.name}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Nap">
@@ -723,7 +746,7 @@ export function TaskEditor({ task, defaults, onClose }: { task: Task | null; def
           <Pill small onClick={onClose}>
             Mégse
           </Pill>
-          {task && (
+          {task && canDeleteTask(task, data.me, myPerm) && (
             <button
               type="button"
               onClick={remove}
@@ -744,7 +767,7 @@ export function PartnerTasks({ partnerKey }: { partnerKey: string }) {
   const [edit, setEdit] = useState<Task | 'new' | null>(null);
   const [showDone, setShowDone] = useState(false);
   const all = (data.tasks || []).filter((t) => t.partner_key === partnerKey).sort(taskOrder);
-  const open = all.filter((t) => t.status === 'nyitott');
+  const open = all.filter((t) => isOpen(t.status));
   const list = showDone ? all : open;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -778,5 +801,350 @@ export function PartnerTasks({ partnerKey }: { partnerKey: string }) {
 /** a menüpont jelvénye: a saját, mára esedékes vagy lejárt nyitott feladatok száma */
 export function useMyTaskCount() {
   const { data } = useStore();
-  return (data.tasks || []).filter((t) => t.status === 'nyitott' && t.assignee_id === data.me.id && t.due_date <= data.today).length;
+  return (data.tasks || []).filter((t) => isOpen(t.status) && t.assignee_id === data.me.id && t.due_date <= data.today).length;
+}
+
+/** táblázat nézet szűrőpanellel (létrehozás dátuma, státusz, leírás, megbízó, megbízott, rendezés) és XLS-exporttal */
+function TaskTable({ tasks, onEdit }: { tasks: Task[]; onEdit: (t: Task) => void }) {
+  const { data, run, canEdit } = useStore();
+  const { pName, uName } = useTaskHelpers();
+  const perm = data.myTaskPerm || { ...DEFAULT_PERM, write: canEdit };
+  const [open, setOpen] = useState(true);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [status, setStatus] = useState<'' | 'open' | TaskStatus>('open');
+  const [text, setText] = useState('');
+  const [by, setBy] = useState('');
+  const [to2, setTo2] = useState('');
+  const [sortBy, setSortBy] = useState<'due' | 'created' | 'status' | 'assignee'>('due');
+  const [dir, setDir] = useState<'asc' | 'desc'>('asc');
+  const created = (t: Task) => new Date(t.created_at).toISOString().slice(0, 10);
+  const nq = normalizeText(text);
+  const rows = tasks
+    .filter((t) => (!from || created(t) >= from) && (!to || created(t) <= to))
+    .filter((t) => (status === '' ? true : status === 'open' ? isOpen(t.status) : t.status === status))
+    .filter((t) => !nq || normalizeText(`${t.title} ${t.note || ''} ${pName(t.partner_key)}`).includes(nq))
+    .filter((t) => !by || String(t.created_by ?? 'sys') === by)
+    .filter((t) => !to2 || String(t.assignee_id) === to2)
+    .sort((a, b) => {
+      const k =
+        sortBy === 'created'
+          ? a.created_at - b.created_at
+          : sortBy === 'status'
+            ? TASK_STATUS_LABEL[a.status].localeCompare(TASK_STATUS_LABEL[b.status], 'hu')
+            : sortBy === 'assignee'
+              ? uName(a.assignee_id).localeCompare(uName(b.assignee_id), 'hu')
+              : taskOrder(a, b);
+      return (dir === 'asc' ? 1 : -1) * (k || taskOrder(a, b));
+    });
+  const exportCsv = () => {
+    const csv = toCsv([
+      ['Határidő', 'Időpont', 'Típus', 'Partner', 'Rövid leírás', 'Megbízó', 'Megbízott', 'Státusz', 'Létrehozva', 'Megjegyzés'],
+      ...rows.map((t) => [
+        t.due_date,
+        t.due_time || '',
+        TASK_TYPE_LABEL[t.type],
+        pName(t.partner_key),
+        t.title,
+        t.created_by === null ? 'Rendszer' : uName(t.created_by),
+        uName(t.assignee_id),
+        TASK_STATUS_LABEL[t.status],
+        created(t),
+        t.note || '',
+      ]),
+    ]);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `feladatok-${data.today}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  const sel: CSSProperties = { ...inputStyle, height: 42 };
+  const users = data.taskUsers || [];
+  const STATUS_BG: Record<TaskStatus, [string, string]> = {
+    nyitott: ['#7C8288', '#fff'],
+    folyamatban: [C.blue, '#fff'],
+    kesz: [C.inc, '#fff'],
+    elmaradt: ['#E3A33B', '#fff'],
+  };
+  const COLS = '120px minmax(120px,0.9fr) minmax(120px,0.9fr) minmax(200px,2fr) 130px 96px';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ ...card, padding: '14px 18px' }}>
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            border: 0,
+            background: 'transparent',
+            padding: '2px 0',
+            cursor: 'pointer',
+            borderBottom: open ? `1px solid ${C.line}` : 0,
+            paddingBottom: open ? 12 : 2,
+          }}
+        >
+          <span style={{ font: `600 16px ${FONT}`, color: C.navy }}>⏷ Szűrés</span>
+          <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>({rows.length} db találat)</span>
+          <span style={{ marginLeft: 'auto', color: C.neg }}>{open ? '⌃' : '⌄'}</span>
+        </button>
+        {open && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, paddingTop: 14 }}>
+            <Field label="Létrehozás dátuma (-tól)">
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={sel} />
+            </Field>
+            <Field label="Létrehozás dátuma (-ig)">
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} style={sel} />
+            </Field>
+            <Field label="Státusz">
+              <select value={status} onChange={(e) => setStatus(e.target.value as any)} style={sel}>
+                <option value="open">Nyitott (kiosztott + folyamatban)</option>
+                {(Object.keys(TASK_STATUS_LABEL) as TaskStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {TASK_STATUS_LABEL[s]}
+                  </option>
+                ))}
+                <option value="">Mind</option>
+              </select>
+            </Field>
+            <Field label="Leírás">
+              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Keresett szöveg" style={sel} />
+            </Field>
+            <Field label="Megbízó">
+              <select value={by} onChange={(e) => setBy(e.target.value)} style={sel}>
+                <option value="">Mindenki</option>
+                <option value="sys">Rendszer (automatikus)</option>
+                {users.map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Megbízott">
+              <select value={to2} onChange={(e) => setTo2(e.target.value)} style={sel}>
+                <option value="">Mindenki</option>
+                {users.map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Rendezés">
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} style={sel}>
+                <option value="due">Határidő</option>
+                <option value="created">Létrehozás</option>
+                <option value="status">Státusz</option>
+                <option value="assignee">Megbízott</option>
+              </select>
+            </Field>
+            <Field label="Rendezés módja">
+              <select value={dir} onChange={(e) => setDir(e.target.value as any)} style={sel}>
+                <option value="asc">Növekvő</option>
+                <option value="desc">Csökkenő</option>
+              </select>
+            </Field>
+          </div>
+        )}
+      </div>
+      <div style={{ ...card, overflowX: 'auto' }}>
+        <div style={{ minWidth: 860 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `${COLS} 120px`, alignItems: 'center', background: C.navy, color: '#fff' }}>
+            {['Határidő', 'Megbízó', 'Megbízott', 'Rövid leírás', 'Státusz', 'Típus'].map((h) => (
+              <span key={h} style={{ padding: '14px 12px', font: `600 14px ${FONT}` }}>
+                {h}
+              </span>
+            ))}
+            <span style={{ padding: '8px 12px', textAlign: 'right' }}>
+              <button
+                type="button"
+                onClick={exportCsv}
+                aria-label="Exportálás CSV-be (Excel)"
+                title="Exportálás CSV-be (Excel)"
+                style={{ width: 36, height: 36, border: 0, borderRadius: 6, background: '#2E9E4F', color: '#fff', font: `700 12px ${FONT}`, cursor: 'pointer' }}
+              >
+                XLS
+              </button>
+            </span>
+          </div>
+          {!rows.length && (
+            <div style={{ padding: 24, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Nincs a szűrésnek megfelelő feladat.</div>
+          )}
+          {rows.map((t) => {
+            const late = isOverdue(t, data.today);
+            const mayEdit = canEdit && canEditTask(t, data.me, perm);
+            const mayDel = canEdit && canDeleteTask(t, data.me, perm);
+            const [bg, fg] = STATUS_BG[t.status];
+            return (
+              <div
+                key={t.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: `${COLS} 120px`,
+                  alignItems: 'center',
+                  borderTop: `1px solid ${C.line3}`,
+                  background: late ? C.negBg : '#fff',
+                }}
+              >
+                <span style={{ padding: '12px', font: `500 14px ${FONT}`, color: late ? C.neg : C.ink }}>
+                  {hu(t.due_date)}
+                  {t.due_time ? <span style={{ display: 'block', font: `400 12.5px ${FONT}`, color: C.muted }}>{t.due_time}</span> : null}
+                </span>
+                <span style={{ padding: '12px', font: `400 14px ${FONT}`, color: C.ink }}>{t.created_by === null ? 'Rendszer' : uName(t.created_by)}</span>
+                <span style={{ padding: '12px', font: `400 14px ${FONT}`, color: C.ink }}>{uName(t.assignee_id)}</span>
+                <span style={{ padding: '12px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ font: `500 14.5px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.title}
+                  </span>
+                  {t.partner_key && <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>{pName(t.partner_key)}</span>}
+                </span>
+                <span style={{ padding: '12px' }}>
+                  <span style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 999, background: bg, color: fg, font: `600 13px ${FONT}` }}>
+                    {TASK_STATUS_LABEL[t.status]}
+                  </span>
+                </span>
+                <span style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: 6, font: `500 13px ${FONT}`, color: TYPE_COLOR[t.type] }}>
+                  <TypeIcon type={t.type} size={16} /> {TASK_TYPE_LABEL[t.type]}
+                </span>
+                <span style={{ padding: '8px 12px', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  {mayEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(t)}
+                      aria-label="Szerkesztés"
+                      title="Szerkesztés"
+                      style={{
+                        width: 36,
+                        height: 36,
+                        border: 0,
+                        borderRadius: 6,
+                        background: '#2E9E4F',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        font: `600 15px ${FONT}`,
+                      }}
+                    >
+                      ✎
+                    </button>
+                  )}
+                  {mayDel && (
+                    <button
+                      type="button"
+                      aria-label="Törlés"
+                      title="Törlés"
+                      onClick={() =>
+                        confirm(`Törlöd a feladatot: ${t.title}?`) &&
+                        run(() => api(`/api/tasks/${encodeURIComponent(t.id)}`, { method: 'DELETE' }), 'Feladat törölve')
+                      }
+                      style={{
+                        width: 36,
+                        height: 36,
+                        border: 0,
+                        borderRadius: 6,
+                        background: C.neg,
+                        color: '#fff',
+                        cursor: 'pointer',
+                        font: `600 15px ${FONT}`,
+                      }}
+                    >
+                      🗑
+                    </button>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** admin: felhasználónkénti feladat-jogosultságok */
+function PermsDialog({ onClose }: { onClose: () => void }) {
+  const { data, run } = useStore();
+  const users = (data.taskUsers || []).filter((u) => u.role !== 'admin');
+  const admins = (data.taskUsers || []).filter((u) => u.role === 'admin');
+  const [perms, setPerms] = useState<Record<string, TaskPerm>>(() =>
+    Object.fromEntries(users.map((u) => [String(u.id), data.taskPerms?.[String(u.id)] || DEFAULT_PERM])),
+  );
+  const set = (id: number, k: keyof TaskPerm, v: unknown) => setPerms({ ...perms, [String(id)]: { ...perms[String(id)], [k]: v } });
+  const sel: CSSProperties = { ...inputStyle, height: 38 };
+  const save = async () => {
+    if (await run(() => api('/api/task-perms', { method: 'PUT', body: perms }), 'Jogosultságok mentve')) onClose();
+  };
+  return (
+    <Modal onClose={onClose} width={860} title="Feladat-jogosultságok" label="Feladat-jogosultságok">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 24px 24px' }}>
+        <span style={{ font: `400 13.5px/1.5 ${FONT}`, color: C.muted }}>
+          Adminok mindent látnak és módosíthatnak{admins.length ? ` (${admins.map((a) => a.name).join(', ')})` : ''}. Az olvasó szerepkörű felhasználó csak a
+          sajátját látja és nem módosít. A felhasználók szerepköre a Beállítások › Felhasználók alatt állítható.
+        </span>
+        {!users.length && <span style={{ font: `500 14px ${FONT}`, color: C.muted }}>Nincs nem admin felhasználó.</span>}
+        {users.map((u) => {
+          const p = perms[String(u.id)];
+          return (
+            <div
+              key={u.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(140px,1fr) repeat(4, minmax(150px, 1fr))',
+                gap: 10,
+                alignItems: 'end',
+                borderTop: `1px solid ${C.line3}`,
+                paddingTop: 10,
+              }}
+            >
+              <b style={{ font: `600 14.5px ${FONT}`, color: C.navy, paddingBottom: 10 }}>
+                {u.name}
+                {u.role === 'viewer' ? <span style={{ font: `400 12px ${FONT}`, color: C.muted }}> · olvasó</span> : null}
+              </b>
+              <Field label="Mit lát">
+                <select value={p.view} onChange={(e) => set(u.id, 'view', e.target.value)} style={sel}>
+                  <option value="own">Csak a sajátját</option>
+                  <option value="all">Mindenki feladatát</option>
+                </select>
+              </Field>
+              <Field label="Kioszthat másnak">
+                <select value={p.assign ? '1' : '0'} onChange={(e) => set(u.id, 'assign', e.target.value === '1')} style={sel}>
+                  <option value="1">Igen</option>
+                  <option value="0">Nem (csak magának)</option>
+                </select>
+              </Field>
+              <Field label="Más feladatát szerkesztheti">
+                <select value={p.editOthers ? '1' : '0'} onChange={(e) => set(u.id, 'editOthers', e.target.value === '1')} style={sel}>
+                  <option value="0">Nem</option>
+                  <option value="1">Igen (amit lát)</option>
+                </select>
+              </Field>
+              <Field label="Törölhet">
+                <select value={p.del} onChange={(e) => set(u.id, 'del', e.target.value)} style={sel}>
+                  <option value="own">Amit ő hozott létre</option>
+                  <option value="all">Bármit, amit lát</option>
+                  <option value="none">Semmit</option>
+                </select>
+              </Field>
+            </div>
+          );
+        })}
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <button
+            type="button"
+            onClick={save}
+            style={{ border: 0, borderRadius: 999, background: C.blue, color: '#fff', padding: '11px 24px', font: `600 14.5px ${FONT}`, cursor: 'pointer' }}
+          >
+            Mentés
+          </button>
+          <Pill small onClick={onClose}>
+            Mégse
+          </Pill>
+        </div>
+      </div>
+    </Modal>
+  );
 }
