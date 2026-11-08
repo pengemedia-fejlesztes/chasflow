@@ -132,19 +132,26 @@ async function refreshIfNeeded(env: Env, s: Session, force = false): Promise<Ses
 
 /** életben tartás (ütemezve, hétvégén is): csak megújít, ha kell */
 export async function a8KeepAlive(env: Env): Promise<string> {
-  const s = await loadSession(env);
-  if (!s) return 'nincs munkamenet';
-  try {
-    const n = await refreshIfNeeded(env, s);
-    return n.exp ? 'érvényes: ' + new Date(n.exp).toISOString() : 'megújítva';
-  } catch (e: any) {
-    if (e instanceof A8AuthError) {
-      await clearSession(env);
-      await setStatus(env, { ok: false, message: e.message, needsAction: 'Add át újra az aggreg8-belépést (Beállítások › Bekötések).' });
+  if (keeping) return keeping;
+  keeping = (async () => {
+    const s = await loadSession(env);
+    if (!s) return 'nincs munkamenet';
+    try {
+      const n = await refreshIfNeeded(env, s);
+      return n.exp ? 'érvényes: ' + new Date(n.exp).toISOString() : 'megújítva';
+    } catch (e: any) {
+      // ha közben egy másik folyamat már megújította, a régi token hibája nem ok a leválasztásra
+      const again = await loadSession(env).catch(() => null);
+      if (e instanceof A8AuthError && again && again.token === s.token) {
+        await clearSession(env);
+        await setStatus(env, { ok: false, message: e.message, needsAction: 'Add át újra az aggreg8-belépést (Beállítások › Bekötések).' });
+      }
+      return 'hiba: ' + e.message;
     }
-    return 'hiba: ' + e.message;
-  }
+  })().finally(() => (keeping = null));
+  return keeping;
 }
+let keeping: Promise<string> | null = null;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -216,7 +223,8 @@ export async function syncAggreg8Server(env: Env, opts: { activeSync?: boolean }
     await setStatus(env, { lastRun: now(), ok: true, message: msg, needsAction: needs, banks: consents.map((c) => c.bank) });
     return { ok: true, since, transactions: data.transactions.length, banks: synced, accounts: r.accounts };
   } catch (e: any) {
-    const auth = e instanceof A8AuthError;
+    const again = await loadSession(env).catch(() => null);
+    const auth = e instanceof A8AuthError && !!again && again.token === s!.token;
     if (auth) await clearSession(env);
     await setStatus(env, {
       lastRun: now(),
