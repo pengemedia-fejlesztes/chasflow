@@ -47,3 +47,36 @@ describe('a várakozó tételek tervjavaslata', () => {
     expect(txBy(t, `id = '${tx.id}'`).plan_id).toBe('p_afa');
   });
 });
+
+describe('tanulás általános banki szövegből', () => {
+  it('a kártyás terhelés / díjnév „partnere” jóváhagyáskor nem lesz kategória-szabály; a következő ilyen tétel nem kapja meg a kategóriát', async () => {
+    t = await createTestApp();
+    seedTree(t);
+    await importRows(t, [
+      { date: day(-5), amount: -7_490, partner: 'Érkezett bankkártya terhelés', memo: 'ANTHROPIC* CLAUDE SUB' },
+      { date: day(-4), amount: -1_000, partner: 'Egyes meghat. juttatás SZJA', memo: '' },
+    ]);
+    const card = txBy(t, 'amount = -7490');
+    const szja = txBy(t, 'amount = -1000');
+    const r = await t.post('/api/bank/approve', {
+      items: [
+        { id: card.id, leaf_id: L.dom, plan_id: null },
+        { id: szja.id, leaf_id: L.bank, plan_id: null },
+      ],
+    });
+    expect(r.status).toBe(200);
+    expect(t.sql.prepare('SELECT pattern FROM partner_rules').all()).toEqual([]);
+    // a következő kártyás tétel (egy másik kereskedő) nem kerül automatikusan a tárhely-kategóriába
+    await importRows(t, [{ date: day(-2), amount: -12_990, partner: 'Érkezett bankkártya terhelés', memo: 'PELDA WEBSHOP' }]);
+    expect(txBy(t, 'amount = -12990').leaf_id).not.toBe(L.dom);
+  });
+
+  it('valódi partnernévből továbbra is tanul', async () => {
+    t = await createTestApp();
+    seedTree(t);
+    await importRows(t, [{ date: day(-5), amount: -4_990, partner: 'Minta Tárhely Kft.', memo: 'havidíj' }]);
+    await t.post('/api/bank/approve', { items: [{ id: txBy(t, 'amount = -4990').id, leaf_id: L.dom, plan_id: null }] });
+    await importRows(t, [{ date: day(-2), amount: -4_990, partner: 'MINTA TÁRHELY KFT', memo: 'havidíj' }]);
+    expect(txBy(t, "amount = -4990 AND status = 'new'").leaf_id).toBe(L.dom);
+  });
+});

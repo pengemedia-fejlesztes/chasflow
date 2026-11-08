@@ -1,6 +1,6 @@
 // Banki tétel → terv javaslat (matchPlan), kategória-javaslat (suggestLeaf) és a javasolt terv lezárhatósága (planFitsTx).
 import { describe, expect, it } from 'vitest';
-import { matchContains, matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../src/shared/match';
+import { isGenericPartner, matchContains, matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../src/shared/match';
 import type { Entry, Leaf } from '../../src/shared/types';
 
 const plan = (o: Partial<Entry> & { id: string; date: string; leaf_id: string; amount: number }): Entry =>
@@ -88,5 +88,25 @@ describe('terv-javaslat – adók', () => {
     const plans = [plan({ id: 'afa_okt', date: '2026-10-01', period: '2026-10', leaf_id: 'l_afa', amount: -620000, name: 'ÁFA – 2026. október' })];
     const tx = { date: '2026-10-20', amount: -400000, partner: 'NAV Áfa', memo: 'adószám', leaf_id: 'l_afa' };
     expect(matchPlan(tx, plans, {}, (id) => (id === 'l_afa' ? 'ÁFA' : ''))?.id).toBe('afa_okt');
+  });
+});
+
+describe('általános banki szöveg a partner helyén (isGenericPartner)', () => {
+  it('kártyás terhelés, díj- és adónevek, puszta „Átutalás” általános; a cégnevek nem', () => {
+    for (const s of [
+      'Érkezett bankkártya terhelés',
+      'BANKKÁRTYÁS VÁSÁRLÁS',
+      'Kártyás fizetés',
+      'Tranzakciós díj',
+      'Számlavezetési díj',
+      'Visszatérített díj',
+      'Egyes meghat. juttatás SZJA',
+      'Készpénzfelvétel ATM',
+      'Átutalás',
+      'Jóváírás',
+    ])
+      expect(isGenericPartner(s), s).toBe(true);
+    for (const s of ['Minta Könyvelő Kft.', 'Minta Tárhely Kft.', 'NAV Áfa', 'ANTHROPIC* CLAUDE SUB', 'Díjnet Zrt.', 'Magyar Posta Zrt.', ''])
+      expect(isGenericPartner(s), s).toBe(false);
   });
 });

@@ -9,6 +9,24 @@ export function partnerKey(partner: string): string {
   return normalizeText(partner).replace(LEGAL, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Általános banki szöveg a partner helyén, nem egy partner neve: kártyás terhelés / vásárlás (pl. MagNet „Érkezett
+ * bankkártya terhelés”), készpénzfelvétel, díj- és kamatnevek („Tranzakciós díj”, „Számlavezetési díj”), adó- és
+ * járuléknemek („Egyes meghat. juttatás SZJA”), puszta „Átutalás” / „Jóváírás”. Ezekből nem tanulunk kategória-szabályt
+ * (különben pl. minden későbbi kártyás tétel az első jóváhagyás kategóriájába kerülne).
+ */
+const GENERIC_PARTNER = [
+  /\b(bank)?kartyas?\b.*\b(terheles|vasarlas|fizetes|tranzakcio|zarolas)\b/,
+  /^(erkezett |beerkezo |bejovo |kimeno |elkuldott |azonnali |eseti |csoportos )?(atutalas|jovairas|terheles|beszedes|vasarlas)$/,
+  /\b(keszpenzfelvetel|keszpenz felvetel|atm|pos)\b/,
+  /\b(dij|dija|dijak|jutalek|illetek|kamat|koltsegelszamolas)\b/,
+  /\b(szja|jarulek|jarulekok|egyes meghat)\b/,
+];
+export function isGenericPartner(partner: string): boolean {
+  const k = partnerKey(partner || '');
+  return k.length > 0 && GENERIC_PARTNER.some((rx) => rx.test(k));
+}
+
 export interface RuleMap {
   [pattern: string]: string; // partnerKey → leaf_id
 }

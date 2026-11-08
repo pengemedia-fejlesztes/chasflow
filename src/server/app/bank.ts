@@ -2,7 +2,7 @@
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
 import { nameOwner, namesMatch } from '../../shared/billingopay';
-import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
+import { isGenericPartner, matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
 import type { Entry, Leaf, Rep } from '../../shared/types';
@@ -57,7 +57,8 @@ export async function matchingContext(env: Env) {
   ).all<{ name: string; leaf_id: string }>();
   hist.results.forEach((r) => {
     const k = partnerKey(r.name);
-    if (k.length >= 3 && !/^(havi dij|megbizasi dij|munkaber|egyszeri dij|szamla)$/.test(k)) rules[k] = r.leaf_id;
+    // általános banki szövegből (kártyás terhelés, díjnév…) sem tanulunk
+    if (k.length >= 3 && !/^(havi dij|megbizasi dij|munkaber|egyszeri dij|szamla)$/.test(k) && !isGenericPartner(r.name)) rules[k] = r.leaf_id;
   });
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
   const sectionOf = (id: string) => sec[lg[id]] || 'out';
@@ -854,7 +855,8 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     stmts.push(
       env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = ? WHERE id = ?").bind(actualId, leafId, planId, tx.id),
     );
-    const key = partnerKey(tx.partner || '');
+    // a partner kategóriájának tanulása – általános banki szövegből (kártyás terhelés, díjnév…) nem
+    const key = isGenericPartner(tx.partner || '') ? '' : partnerKey(tx.partner || '');
     if (key)
       stmts.push(
         env.DB.prepare(
