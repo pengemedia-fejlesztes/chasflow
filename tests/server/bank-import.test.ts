@@ -68,6 +68,30 @@ describe('kézi kivonat-import', () => {
     const st = Object.fromEntries(txs(t).map((x) => [x.amount, x.status]));
     expect(st).toEqual({ '-12000': 'ignored', '-36830': 'ignored', '75000': 'new', '-4990': 'new' });
   });
+
+  it('lehetséges dupla: az azonos napi, azonos partnerű, 1%-on belül eltérő tény mellett a tétel nem archiválódik és nem hagyódik jóvá automatikusan', async () => {
+    t = await createTestApp();
+    seedTree(t);
+    // az xls-importban 30 Ft-tal más összeggel rögzített tárhelydíj, és egy forintra azonos könyvelési díj
+    addEntry(t, { id: 'i_dom', kind: 'actual', date: day(-12), leaf_id: L.dom, amount: -18255, source: 'import', name: 'Minta Tárhely' });
+    addEntry(t, { id: 'i_konyv', kind: 'actual', date: day(-10), leaf_id: L.konyv, amount: -36830, source: 'import', name: 'Könyvelési díj' });
+    // a partnerek automatikus jóváhagyásra tanult szabályai
+    t.sql.exec(`INSERT INTO partner_rules (pattern, leaf_id, hits, auto, updated_at) VALUES
+      ('minta tarhely', '${L.dom}', 3, 1, 1), ('pelda szoftver', '${L.unf}', 3, 1, 1)`);
+    await importRows(t, [
+      { date: day(-12), amount: -18225, partner: 'Minta Tárhely Kft.', memo: 'havidíj' }, // lehetséges dupla
+      { date: day(-10), amount: -36830, partner: 'Minta Könyvelő Kft.', memo: '' }, // pontos pár → archív (mint eddig)
+      { date: day(-12), amount: -18240, partner: 'Példa Szoftver Kft.', memo: 'előfizetés' }, // más partner → nem dupla
+    ]);
+    const st = Object.fromEntries(txs(t).map((x) => [x.amount, x.status]));
+    expect(st).toEqual({ '-18225': 'new', '-36830': 'ignored', '-18240': 'approved' });
+    // a lehetséges dupla nem lett tény (nincs dupla költség), a felület jelzi (possibleDuplicate)
+    expect(t.sql.prepare("SELECT COUNT(*) AS n FROM entries WHERE kind = 'actual' AND amount = -18225").get()).toEqual({ n: 0 });
+    // a felhasználó dönthet: kézzel jóváhagyható
+    const dupTx = txs(t).find((x) => x.amount === -18225);
+    expect((await t.post('/api/bank/approve', { items: [{ id: dupTx.id, leaf_id: L.dom, plan_id: null }] })).status).toBe(200);
+    expect(txs(t).find((x) => x.amount === -18225).status).toBe('approved');
+  });
 });
 
 describe('Mac-ügynök (aggreg8 JSON) feltöltése', () => {

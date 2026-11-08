@@ -126,3 +126,28 @@ export function partnerMonthlyPlans<P extends PlanLike>(
     .filter((p) => (p.series_id ? rep.get(p.series_id) === 'monthly' : (months.get(keyOf(p))?.size || 0) >= 2))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
+
+/**
+ * Lehetséges dupla import: ugyanazon a napon, ugyanannál a partnernél (a név egyezik, vagy azonos a kategória) legfeljebb
+ * 1%-kal eltérő összegű tény, amely nem banki tételből jött (pl. az xls-importban 30 Ft-tal más összeggel rögzített
+ * utalás). Nem archiváljuk automatikusan és nem hagyjuk jóvá automatikusan – lehet két külön tétel is –, csak jelöljük.
+ * (A Billingo „fizetve” ténye nem számít: a jóváhagyás amúgy is ahhoz köti a befizetést.)
+ */
+export function possibleDuplicate<E extends Pick<Entry, 'kind' | 'date' | 'amount' | 'name' | 'leaf_id' | 'source'>>(
+  tx: { date: string; amount: number; partner: string; leaf_id?: string | null },
+  entries: E[],
+): E | null {
+  const tol = Math.abs(tx.amount) * 0.01;
+  return (
+    entries.find(
+      (e) =>
+        e.kind === 'actual' &&
+        e.date === tx.date &&
+        e.source !== 'bank' &&
+        e.source !== 'billingo' &&
+        Math.sign(e.amount) === Math.sign(tx.amount) &&
+        Math.abs(e.amount - tx.amount) <= tol &&
+        ((!!tx.leaf_id && e.leaf_id === tx.leaf_id) || namesMatch(nameHead(e.name), tx.partner)),
+    ) ?? null
+  );
+}

@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../shared/categories';
 import { nameHead, namesMatch } from '../shared/billingopay';
-import { partnerMonthlyPlans } from '../shared/identity';
+import { partnerMonthlyPlans, possibleDuplicate } from '../shared/identity';
 import { partnerKey, planFitsTx } from '../shared/match';
 import { fmt, monthLabel, ymOf } from '../shared/model';
 import type { BankTx, Entry, Rep } from '../shared/types';
@@ -91,6 +91,8 @@ export function TxCard({
   const planE = plan ? byId.get(plan) : null;
   const diff = planE ? Math.abs(t.amount) - Math.abs(planE.amount) : 0;
   const dup = data.entries.find((e) => e.kind === 'actual' && e.amount === t.amount && Math.abs(Date.parse(e.date) - Date.parse(t.date)) <= 5 * 86400000);
+  // lehetséges dupla import: azonos nap és partner, legfeljebb 1% eltérés (pl. az xls-ben 30 Ft-tal más összeg) – csak jelzés
+  const nearDup = dup ? null : possibleDuplicate({ ...t, leaf_id: leaf }, data.entries);
 
   // --- kategória gombok ---
   const sectionLeaves = ix.leaves.filter((l) => !l.archived && ix.sectionOf(l.id) === section);
@@ -226,6 +228,7 @@ export function TxCard({
               {name || t.partner || '(ismeretlen partner)'}
             </b>
             <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(dup || nearDup) && <b style={{ color: C.neg }}>lehetséges dupla · </b>}
               {[acc?.bank_name, t.memo].filter(Boolean).join(' · ')}
             </span>
           </span>
@@ -546,6 +549,12 @@ export function TxCard({
                     Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
                   </span>
                 )}
+                {nearDup && (
+                  <span style={{ display: 'block', color: C.neg }}>
+                    Lehetséges dupla: ugyanezen a napon már van {fmt(Math.abs(nearDup.amount))} Ft-os tény ({nearDup.name || 'névtelen'}) – ha ugyanaz az
+                    utalás, hagyd ki.
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -781,6 +790,12 @@ export function TxCard({
               {dup && (
                 <span style={{ display: 'block', color: C.neg }}>
                   Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
+                </span>
+              )}
+              {nearDup && (
+                <span style={{ display: 'block', color: C.neg }}>
+                  Lehetséges dupla: ugyanezen a napon már van {fmt(Math.abs(nearDup.amount))} Ft-os tény ({nearDup.name || 'névtelen'}) – ha ugyanaz az
+                  utalás, hagyd ki.
                 </span>
               )}
             </span>
