@@ -1,7 +1,7 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
-import { buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
+import { addMonths, buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
 import { AlertsView, useFlags } from './AlertsView';
 import { api, ApiError } from './api';
@@ -101,7 +101,10 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
-  const sideMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
+  const sideMatrix = useMemo(
+    () => buildMatrix(ix, { ...filters, from: ix.cur, to: addMonths(ix.cur, 7), section: 'all', groupId: null, search: '', includeOffers: true }),
+    [ix, filters],
+  );
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   // oldalsáv: három főkategória (Ajánlatok, Bevétel, Kiadás), az összegek az aktuális hónapra (tény + nyitott terv)
   const offerGroup = ix.groups.find((g) => g.section === 'in' && /aj[áa]nlat/i.test(g.label));
