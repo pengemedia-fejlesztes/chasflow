@@ -1,23 +1,24 @@
 import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup, groupPath } from '../../shared/categories';
 import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, useFlags } from './AlertsView';
 import { useBack } from './back';
-import { StatsHub } from './StatsHub';
-import { ChartsView } from './ChartsView';
+const StatsHub = lazy(() => import('./StatsHub').then((m) => ({ default: m.StatsHub })));
+const ChartsView = lazy(() => import('./ChartsView').then((m) => ({ default: m.ChartsView })));
+const TasksView = lazy(() => import('./TasksView').then((m) => ({ default: m.TasksView })));
+const CatalogView = lazy(() => import('./CatalogView').then((m) => ({ default: m.CatalogView })));
+const StockView = lazy(() => import('./StockView').then((m) => ({ default: m.StockView })));
+const BreakevenView = lazy(() => import('./BreakevenView').then((m) => ({ default: m.BreakevenView })));
 import { NavMenu, applySub, type NavView } from './NavMenu';
-import { TasksView, useMyTaskCount } from './TasksView';
+import { useMyTaskCount } from './useMyTaskCount';
 import { PartnerRegistry } from './PartnerCard';
-import { CatalogView } from './CatalogView';
-import { StockView } from './StockView';
-import { BreakevenView } from './BreakevenView';
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
-import { BankView } from './BankView';
+const BankView = lazy(() => import('./BankView').then((m) => ({ default: m.BankView })));
 import { FilterBar } from './Filters';
 import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
@@ -27,11 +28,32 @@ import { DueList, PlanQuick, TodoCard, useTodos } from './MobileFlows';
 import { MONTHLY_RX, withMonth } from '../../shared/monthname';
 import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
-import { SettingsView } from './SettingsView';
+const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted, R } from './ui';
 
-type Tab = 'home' | 'alerts' | 'charts' | 'tasks' | 'partners' | 'products' | 'stock' | 'breakeven' | 'stats' | 'cat' | 'income' | 'out' | 'bank' | 'more' | 'sched';
+const screenLoading = (
+  <div role="status" style={{ padding: 24 }}>
+    Betöltés…
+  </div>
+);
+
+type Tab =
+  | 'home'
+  | 'alerts'
+  | 'charts'
+  | 'tasks'
+  | 'partners'
+  | 'products'
+  | 'stock'
+  | 'breakeven'
+  | 'stats'
+  | 'cat'
+  | 'income'
+  | 'out'
+  | 'bank'
+  | 'more'
+  | 'sched';
 type Sheet =
   | {
       kind: 'new';
@@ -268,7 +290,17 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
                 <button
                   onClick={() => setDrawer(true)}
                   aria-label="Menü"
-                  style={{ height: 36, width: 36, border: 0, borderRadius: 999, background: C.navy3, color: '#fff', display: 'grid', placeItems: 'center', flex: 'none' }}
+                  style={{
+                    height: 36,
+                    width: 36,
+                    border: 0,
+                    borderRadius: 999,
+                    background: C.navy3,
+                    color: '#fff',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flex: 'none',
+                  }}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                     <path d="M4 7h16M4 12h16M4 17h16" />
@@ -807,14 +839,18 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         {tab === 'charts' && (
           <>
             <MobileHeader title="Grafikonok" sub="koppints a grafikonra a pontos értékekért" onBack={() => setTab('home')} />
-            <ChartsView mobile onBank={() => (setNavKey((k) => k + 1), setTab('bank'))} />
+            <Suspense fallback={screenLoading}>
+              <ChartsView mobile onBank={() => (setNavKey((k) => k + 1), setTab('bank'))} />
+            </Suspense>
           </>
         )}
         {tab === 'tasks' && (
           <>
             <MobileHeader title="Feladatok" sub="Feladatok" onBack={() => setTab('home')} />
             <div className="cf-mview">
-              <TasksView key={navKey} />
+              <Suspense fallback={screenLoading}>
+                <TasksView key={navKey} />
+              </Suspense>
             </div>
           </>
         )}
@@ -830,7 +866,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <MobileHeader title="Termékek, szolgáltatások" sub="Termékek, raktár" onBack={() => setTab('home')} />
             <div className="cf-mview">
-              <CatalogView />
+              <Suspense fallback={screenLoading}>
+                <CatalogView />
+              </Suspense>
             </div>
           </>
         )}
@@ -838,7 +876,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <MobileHeader title="Raktárkészlet" sub="Termékek, raktár" onBack={() => setTab('home')} />
             <div className="cf-mview">
-              <StockView />
+              <Suspense fallback={screenLoading}>
+                <StockView />
+              </Suspense>
             </div>
           </>
         )}
@@ -846,7 +886,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <MobileHeader title="Fedezeti pont" sub="Áttekintés" onBack={() => setTab('home')} />
             <div className="cf-mview">
-              <BreakevenView />
+              <Suspense fallback={screenLoading}>
+                <BreakevenView />
+              </Suspense>
             </div>
           </>
         )}
@@ -854,7 +896,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <MobileHeader title="Statisztika" sub="Partner" onBack={() => (setPartnerKey(null), setTab('home'))} />
             <div style={{ padding: '12px 16px 24px' }}>
-              <StatsHub key={partnerKey || ''} mobile partnerKey={partnerKey} onPartnerBack={() => (setPartnerKey(null), setTab('home'))} />
+              <Suspense fallback={<div role="status">Kimutatás betöltése…</div>}>
+                <StatsHub key={partnerKey || ''} mobile partnerKey={partnerKey} onPartnerBack={() => (setPartnerKey(null), setTab('home'))} />
+              </Suspense>
             </div>
           </>
         )}
@@ -901,13 +945,17 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
         {tab === 'bank' && (
           <>
             <MobileHeader title="Bankszinkron" sub={data.accounts.map((a) => a.bank_name).join(' · ') || 'Bank'} onBack={() => setTab('home')} />
-            <BankView key={navKey} mobile />
+            <Suspense fallback={screenLoading}>
+              <BankView key={navKey} mobile />
+            </Suspense>
           </>
         )}
         {tab === 'more' && (
           <>
             <MobileHeader title="Beállítások" sub={data.me.name} onBack={() => setTab('home')} />
-            <SettingsView mobile onLogout={onLogout} />
+            <Suspense fallback={screenLoading}>
+              <SettingsView mobile onLogout={onLogout} />
+            </Suspense>
           </>
         )}
       </div>
@@ -1116,14 +1164,20 @@ function MobileDrawer({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '18px 18px 16px' }}>
-          <div style={{ width: 34, height: 34, borderRadius: 999, background: C.blue, display: 'grid', placeItems: 'center', font: `800 11px ${FONT_H}` }}>CF</div>
+          <div style={{ width: 34, height: 34, borderRadius: 999, background: C.blue, display: 'grid', placeItems: 'center', font: `800 11px ${FONT_H}` }}>
+            CF
+          </div>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
             <span style={{ font: `700 16px ${FONT_H}` }}>
               Cashflow <b style={{ color: C.blue2 }}>tervező</b>
             </span>
             <span style={{ font: `500 12px ${FONT}`, color: C.muted2 }}>{name}</span>
           </div>
-          <button onClick={onClose} aria-label="Menü bezárása" style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', font: `400 26px ${FONT}` }}>
+          <button
+            onClick={onClose}
+            aria-label="Menü bezárása"
+            style={{ width: 40, height: 40, border: 0, background: 'transparent', color: '#fff', font: `400 26px ${FONT}` }}
+          >
             ×
           </button>
         </div>

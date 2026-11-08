@@ -53,7 +53,7 @@ export function accessOf(u: { id: number; role: string }, all: Record<string, Ac
 
 // A közös főkönyv és a belőle számolt összesítések több érzékeny adatkört kevernek.
 // Amíg nincs megbízható, soronkénti adatbesorolás, csak az összes érintett engedéllyel adhatók ki.
-export const LEDGER_MENUS = ['overview', 'alerts', 'income', 'cat', 'breakeven', 'partners'];
+export const LEDGER_MENUS = ['overview', 'charts', 'alerts', 'income', 'cat', 'breakeven', 'partners'];
 const ALL_SCOPES: DataScope[] = ['bank', 'payroll', 'invoices'];
 export const hasMenu = (a: Access, menus: string[]) => menus.some((m) => a.menus.includes(m));
 export const hasLedgerAccess = (a: Access) => hasMenu(a, LEDGER_MENUS) && ALL_SCOPES.every((s) => a.data[s]);

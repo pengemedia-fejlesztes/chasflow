@@ -70,7 +70,7 @@ export function useLedger(ym: string, account: string) {
     );
   }, [ym, account]);
   // a betöltött adatok változásakor (pl. jóváhagyás, új tétel) újratöltjük
-  useEffect(load, [load, data]);
+  useEffect(load, [load, data.accounts, data.bankTx, data.entries, data.billingo, data.navInvoices, data.settings, data.today]);
   return { r, err, reload: load };
 }
 

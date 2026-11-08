@@ -800,11 +800,7 @@ export function PartnerTasks({ partnerKey }: { partnerKey: string }) {
   );
 }
 
-/** a menüpont jelvénye: a saját, mára esedékes vagy lejárt nyitott feladatok száma */
-export function useMyTaskCount() {
-  const { data } = useStore();
-  return (data.tasks || []).filter((t) => isOpen(t.status) && t.assignee_id === data.me.id && t.due_date <= data.today).length;
-}
+export { useMyTaskCount } from './useMyTaskCount';
 
 /** táblázat nézet szűrőpanellel (létrehozás dátuma, státusz, leírás, megbízó, megbízott, rendezés) és XLS-exporttal */
 function TaskTable({ tasks, onEdit }: { tasks: Task[]; onEdit: (t: Task) => void }) {

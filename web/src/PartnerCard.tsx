@@ -1,7 +1,7 @@
 // Partner adatlap: bárhonnan a partner nevére kattintva nyílik. Felül a partnertörzs adatai (név, típus, alternatív nevek,
 // adószám, megjegyzés, projektek), alatta a tervezett feladatok (mit számlázunk neki / mit fizetünk neki), majd a statisztika.
 // A PartnerEditor a partnertörzs oldalon is ugyanez.
-import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, lazy, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText, groupPath } from '../../shared/categories';
 import { offerConversion } from '../../shared/insights';
 import { RejectedOffers } from './RejectedOffers';
@@ -13,7 +13,7 @@ import { sheetIdOf } from '../../shared/worktime';
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
-import { PartnerView } from './PartnerView';
+const PartnerView = lazy(() => import('./PartnerView').then((m) => ({ default: m.PartnerView })));
 import { PartnerModal } from './PartnerModal';
 import { PartnerServicesSummary } from './PartnerBilling';
 import { useStore } from './store';

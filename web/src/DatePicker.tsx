@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { MSL } from '../../shared/model';
 import { addDays, isWorkday, lastWorkday, mondayAfter } from '../../shared/workdays';
 import { useBack } from './back';
-import { C, FONT, FONT_H, R } from './ui';
+import { C, FONT, FONT_H, R } from './theme';
 
 const WD = ['H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
 const WDL = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
