@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { normalizeText } from '../shared/categories';
 import { billingFlags, computeFlags, flagsFrom, FLAG_LABEL, type Flag, type FlagKind } from '../shared/flags';
 import { DEFAULT_PAY_DAYS } from '../shared/workdays';
-import { addMonths, fmt, monthLong, ymOf } from '../shared/model';
+import { addMonths, fmt, monthLong, OVERDUE_MONTHS, overdueFrom, ymOf } from '../shared/model';
 import { unplannedHint } from '../shared/unplanned';
 import { LeafPicker } from './LeafPicker';
 import { genSeries } from './logic';
@@ -213,7 +213,8 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
       {tab === 'new' && <MergeBillingo />}
       {(tab === 'gap' || tab === 'bill' || tab === 'new') && (
         <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
-          Figyelt időszak: {dot(from)} – ma. Eltérésnek számít, ha a tény legalább 1 000 Ft-tal (és 1%-kal) más, mint a terv. A „Rendben” mindkettőtöknél
+          Figyelt időszak: {dot(from)} – ma; elmaradt terv: {OVERDUE_MONTHS} hónapra visszamenőleg ({dot(overdueFrom(data.today))} óta). Eltérésnek számít, ha
+          a tény legalább 1 000 Ft-tal (és 1%-kal) más, mint a terv. A „Rendben” mindkettőtöknél
           eltünteti a riasztást.
         </span>
       )}

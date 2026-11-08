@@ -2,10 +2,10 @@
 //  - eltérés: a tény tervhez kötve, de más összeggel (pl. Aranka 40 000 helyett 44 000)
 //  - nem tervezett: tény, amihez nem tartozott terv (pl. előre nem látható költség)
 //  - új számla (NAV): bejövő szállítói számla, amihez nincs terv – még a kifizetés előtt
-//  - elmaradt: lejárt, még nyitott terv (nem jött be a bevétel / nem ment ki a kiadás)
-// Csak a jelen számít: az előző hónap elejétől, de legkorábban az utolsó importált (XLS) tény utáni naptól.
+//  - elmaradt: lejárt, még nyitott terv (nem jött be a bevétel / nem ment ki a kiadás) – a közös lejárt-definíció (isOverdue)
+// Az eltérés / nem tervezett tétel csak a jelenre: az előző hónap elejétől, de legkorábban az utolsó importált (XLS) tény utáni naptól.
 import type { BankTx, Entry, NavInvoice, Section } from './types';
-import { addMonths, ymOf } from './model';
+import { addMonths, isOverdue, ymOf } from './model';
 
 export type FlagKind = 'target' | 'invoice' | 'uninvoiced' | 'underbilled' | 'deviation' | 'unplanned' | 'overdue';
 
@@ -68,8 +68,8 @@ export function computeFlags(
 
   for (const e of entries) {
     if (e.date > today) continue;
-    // a Billingo-számla akkor is elmaradt, ha régebben járt le (a fizetési státuszt a Billingo adja)
-    if (e.date < from && !(e.kind === 'plan' && e.source === 'billingo')) continue;
+    // elmaradt terv: a közös lejárt-ablak szerint (a Billingo-számla régebbről is), nem a fenti „jelen” időszak szerint
+    if (e.kind === 'actual' && e.date < from) continue;
     if (e.kind === 'actual') {
       if (e.source === 'import') continue;
       const merged = (e.ext_ref || '').startsWith('merge:');
@@ -110,7 +110,7 @@ export function computeFlags(
           tx: txByActual.get(e.id),
         });
       }
-    } else if (!e.done && !e.tentative && e.amount && addDays(e.date, OVERDUE_GRACE_DAYS) < today) {
+    } else if (isOverdue(e, today) && addDays(e.date, OVERDUE_GRACE_DAYS) < today) {
       out.push({
         id: `due:${e.id}:${e.date}`,
         kind: 'overdue',

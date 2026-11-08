@@ -2,7 +2,7 @@
 // a sorra állva műveletek (bank párosítás, dátum, +1 hó); jobbra a hónapban beérkezett tételek.
 import { hasMonth } from '../shared/monthname';
 import { useState } from 'react';
-import { addMonths, endOfMonth, fmt, monthLabel, monthLong, ymOf } from '../shared/model';
+import { addMonths, endOfMonth, fmt, isOverdue, monthLabel, monthLong, overdueFrom, ymOf } from '../shared/model';
 import type { Entry, Section } from '../shared/types';
 import { api } from './api';
 import { BankPickDialog } from './BankPick';
@@ -47,10 +47,11 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   const lastMonth = addMonths(ix.cur, 2 + more);
   const horizon = endOfMonth(lastMonth);
   const base = data.entries.filter(
-    (e) => e.kind === 'plan' && !e.done && inSide(e) && matchQ(e) && (e.date >= addMonths(ix.cur, -6) + '-01' || e.source === 'billingo'),
+    (e) => e.kind === 'plan' && !e.done && inSide(e) && matchQ(e) && (e.date >= overdueFrom(data.today) || isOverdue(e, data.today)),
   );
   const open = base.filter((e) => e.date <= horizon);
-  const isLate = (e: Entry) => e.date < data.today && !e.tentative;
+  // lejárt: a közös definíció (ugyanaz, mint a záró egyenlegben és a riasztásban)
+  const isLate = (e: Entry) => isOverdue(e, data.today);
   const isInvoiced = (e: Entry) => e.source === 'billingo' || docByPlan.has(e.id) || navByPlan.has(e.id);
   const firm = open.filter((e) => !e.tentative);
   const overdue = open.filter(isLate);

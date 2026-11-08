@@ -1,7 +1,8 @@
 // Egyenleg-logika (README): mai egyenleg, múltbeli záró egyenleg, előrejelzés – és hogy ugyanaz a szám
 // minden nézetben (táblázat, áttekintő kártyák, mobil) ugyanannyi legyen.
 import { describe, expect, it } from 'vitest';
-import { actualBalanceAt, buildIndex, buildMatrix, defaultFilters, outlook, projection } from '../../src/shared/model';
+import { computeFlags } from '../../src/shared/flags';
+import { actualBalanceAt, buildIndex, buildMatrix, defaultFilters, isOverdue, outlook, OVERDUE_MONTHS, overdueFrom, projection } from '../../src/shared/model';
 import type { BankAccount, Entry } from '../../src/shared/types';
 
 let n = 0;
@@ -105,12 +106,12 @@ describe('múltbeli hónap záró egyenlege = mai egyenleg − az azóta törté
 });
 
 describe('előrejelzés: mai egyenleg + nyitott tervek', () => {
-  it('a folyó hónapban a lejárt, még nyitott tervek is (legfeljebb 4 hónapra visszamenőleg); a kész terv nem', () => {
+  it('a folyó hónapban a lejárt, még nyitott tervek is (legfeljebb 6 hónapra visszamenőleg); a kész terv nem', () => {
     const entries = [
       E({ date: '2026-11-20', amount: 600_000 }),
       E({ date: '2026-10-15', leaf_id: 'berlet', amount: -250_000 }), // lejárt, nyitott
       E({ date: '2026-11-03', leaf_id: 'berlet', amount: -250_000, done: 1 }), // kész
-      E({ date: '2026-05-10', amount: 90_000 }), // 6 hónapja lejárt: már nem várható
+      E({ date: '2026-04-28', amount: 90_000 }), // több mint 6 hónapja lejárt: már nem várható
       E({ date: '2026-11-25', amount: 400_000, tentative: 1 }), // ajánlat
     ];
     const ix = ixOf(entries, { accounts: [bank(3_000_000)] });
@@ -224,5 +225,56 @@ describe('előre kifizetett (kész) jövőbeli terv nem számít kétszer', () =
     const i = m.columns.findIndex((c) => c.key === '2026-12p');
     expect(m.net[i]).toBe(900_000);
     expect(m.balance[i] - m.balance[i - 1]).toBe(m.net[i]);
+  });
+});
+
+describe('lejárt tétel: egy definíció (ablak: 6 hónap) a záró egyenlegben, a kártyán és a riasztásban', () => {
+  // ma 2026-11-07 → az ablak 2026-05-01-jén kezdődik
+  const entries = [
+    E({ id: 'l_maj', date: '2026-05-02', amount: 120_000 }), // lejárt, az ablak elején
+    E({ id: 'l_apr', date: '2026-04-28', amount: 70_000 }), // az ablak előtt: már nem várható
+    E({ id: 'l_bil', date: '2026-04-15', amount: 300_000, source: 'billingo' }), // kiállított számla: régebbről is várható
+    E({ id: 'l_okt', date: '2026-10-15', leaf_id: 'berlet', amount: -250_000 }), // lejárt, nyitott
+    E({ id: 'l_okt_kesz', date: '2026-10-05', leaf_id: 'berlet', amount: -250_000, done: 1 }),
+    E({ id: 'l_okt_aj', date: '2026-10-20', leaf_id: 'ugyfel2', amount: 500_000, tentative: 1 }), // ajánlat: nem lejárt terv
+    E({ id: 'l_nov', date: '2026-11-03', amount: 200_000 }), // a folyó hónapban lejárt
+    E({ id: 'l_ma', date: '2026-11-07', amount: 50_000 }), // ma esedékes: még nem lejárt
+    E({ id: 'l_nov_ki', date: '2026-11-20', leaf_id: 'berlet', amount: -250_000 }),
+    E({ kind: 'actual', date: '2026-11-04', leaf_id: 'berlet', amount: -30_000 }),
+  ];
+  const ix = ixOf(entries, { accounts: [bank(2_000_000)] });
+
+  it('a közös függvény: dátuma elmúlt, nyitott, biztos terv, az ablakon belül (Billingo-számla régebbről is)', () => {
+    expect(overdueFrom('2026-11-07')).toBe('2026-05-01');
+    expect(OVERDUE_MONTHS).toBe(6);
+    const ids = entries.filter((e) => isOverdue(e, ix.today)).map((e) => e.id);
+    expect(ids).toEqual(['l_maj', 'l_bil', 'l_okt', 'l_nov']);
+    // az ablak paraméterezhető
+    expect(entries.filter((e) => isOverdue(e, ix.today, 4)).map((e) => e.id)).toEqual(['l_bil', 'l_okt', 'l_nov']);
+  });
+
+  it('a záró egyenleg (hó vége) ugyanezeket a lejárt tételeket várja', () => {
+    const bal = projection(ix, noExtras, '2026-11', new Map()).get('2026-11');
+    expect(bal).toBe(2_000_000 + 120_000 + 300_000 - 250_000 + 200_000 + 50_000 - 250_000);
+  });
+
+  it('a riasztás („Elmaradt terv”) ugyanezeket jelzi – az utolsó XLS-import előtti lejárt terv is (1 nap banki türelmi idővel)', () => {
+    const imp = E({ kind: 'actual', source: 'import', date: '2026-10-20', leaf_id: 'berlet', amount: -1_000 });
+    const flags = computeFlags([...entries, imp], [], ix.sectionOf, ix.today).filter((f) => f.kind === 'overdue');
+    expect(flags.map((f) => f.entry_id).sort()).toEqual(['l_bil', 'l_maj', 'l_nov', 'l_okt']);
+    // tegnapi terv a türelmi idő miatt még nem riaszt, de lejárt
+    const tegnap = E({ id: 'l_tegnap', date: '2026-11-06', amount: 10_000 });
+    expect(isOverdue(tegnap, ix.today)).toBe(true);
+    expect(computeFlags([tegnap], [], ix.sectionOf, ix.today)).toHaveLength(0);
+  });
+
+  it('kártya: hó vége = ma + a hónap még hátralévő cashflow-ja + a korábbi hónapok lejárt, nyitott tételei', () => {
+    const ol = outlook(ix, noExtras);
+    const cur = ol.months[0];
+    // a korábbi hónapokból lejárt: május 120 000, a régi Billingo-számla 300 000, október −250 000
+    expect(ol.overdue).toEqual({ amount: 120_000 + 300_000 - 250_000, n: 3 });
+    // a havi cashflow a folyó hónap tényét (−30 000) és nyitott terveit tartalmazza; a tény már a mai egyenlegben van
+    expect(cur.net).toBe(-30_000 + 200_000 + 50_000 - 250_000);
+    expect(cur.bal).toBe(ix.anchor + (cur.net - -30_000) + ol.overdue.amount);
   });
 });
