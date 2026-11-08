@@ -1,7 +1,9 @@
 // Egy beérkezett banki tétel jóváhagyó kártyája: megnevezés, kategória, terv-párosítás, ismétlődés – legördülő és felugró ablak nélkül.
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../shared/categories';
-import { planFitsTx } from '../shared/match';
+import { nameHead, namesMatch } from '../shared/billingopay';
+import { partnerMonthlyPlans, possibleDuplicate } from '../shared/identity';
+import { partnerKey, planFitsTx } from '../shared/match';
 import { fmt, monthLabel, ymOf } from '../shared/model';
 import type { BankTx, Entry, Rep } from '../shared/types';
 import { api } from './api';
@@ -89,6 +91,8 @@ export function TxCard({
   const planE = plan ? byId.get(plan) : null;
   const diff = planE ? Math.abs(t.amount) - Math.abs(planE.amount) : 0;
   const dup = data.entries.find((e) => e.kind === 'actual' && e.amount === t.amount && Math.abs(Date.parse(e.date) - Date.parse(t.date)) <= 5 * 86400000);
+  // lehetséges dupla import: azonos nap és partner, legfeljebb 1% eltérés (pl. az xls-ben 30 Ft-tal más összeg) – csak jelzés
+  const nearDup = dup ? null : possibleDuplicate({ ...t, leaf_id: leaf }, data.entries);
 
   // --- kategória gombok ---
   const sectionLeaves = ix.leaves.filter((l) => !l.archived && ix.sectionOf(l.id) === section);
@@ -126,9 +130,46 @@ export function TxCard({
         .slice(0, 5)
         .map((x) => x.e);
 
+  // a partner meglévő havi terve: „Havonta”-nál nem indul második sorozat (a szerver ugyanígy dönt, partnerMonthlyPlans)
+  const monthly = useMemo(() => {
+    const partner = t.partner || '';
+    if (rep !== 'monthly' || !leaf || partnerKey(partner).length < 3) return [];
+    const groups = (data.partners || []).map((p) => [p.name, ...(p.aliases || [])].filter(Boolean));
+    const own = [partner, ...groups.filter((g) => g.some((x) => namesMatch(x, partner))).flat()];
+    const known = [
+      ...groups.flat(),
+      ...ix.leaves.map((l) => l.label),
+      ...(data.partnerNames || []).map((p) => p.partner),
+      ...(data.navInvoices || []).map((x) => x.partner_name),
+    ];
+    const seriesIds = new Set<string>([
+      ...data.bankTx.filter((x) => x.status === 'approved' && x.id !== t.id && namesMatch(x.partner, partner)).map((x) => 's' + x.id),
+      ...(data.navInvoices || [])
+        .filter((x) => x.plan_id && namesMatch(x.partner_name, partner))
+        .map((x) => byId.get(x.plan_id!)?.series_id || '')
+        .filter(Boolean),
+    ]);
+    return partnerMonthlyPlans(data.entries, data.series, {
+      leaf,
+      sign: t.amount,
+      from: t.date,
+      own,
+      known,
+      leafLabel: (id) => ix.leafById[id]?.label || '',
+      seriesIds,
+    });
+  }, [rep, leaf, t, data, ix, byId]);
+
   const step = repStep(rep);
-  const n = rep === 'once' ? 0 : Math.ceil(count / step);
+  const n = rep === 'once' || monthly.length ? 0 : Math.ceil(count / step);
   const nextDates = rep === 'once' ? [] : [1, 2, 3].slice(0, n).map((i) => shiftDate(t.date, i * step));
+  const monthlySame = !plan && monthly.find((p) => (p.period || p.date.slice(0, 7)) === t.date.slice(0, 7) && planFitsTx(t, leaf, p));
+  const monthlyNote = monthly.length ? (
+    <span style={{ display: 'block', color: C.offer }}>
+      A partnernek már van havi terve ({nameHead(monthly[0].name)}, {monthly.length} nyitott hónap) – nem jön létre új sorozat
+      {monthlySame ? `, a tény a(z) ${monthLabel(ymOf(monthlySame.date))} tervet zárja le` : ''}.
+    </span>
+  ) : null;
 
   const createLeaf = async (groupId: string) => {
     try {
@@ -187,6 +228,7 @@ export function TxCard({
               {name || t.partner || '(ismeretlen partner)'}
             </b>
             <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(dup || nearDup) && <b style={{ color: C.neg }}>lehetséges dupla · </b>}
               {[acc?.bank_name, t.memo].filter(Boolean).join(' · ')}
             </span>
           </span>
@@ -501,9 +543,16 @@ export function TxCard({
                     {fmt(Math.abs(diff))} Ft
                   </span>
                 )}
+                {monthlyNote}
                 {dup && (
                   <span style={{ display: 'block', color: C.neg }}>
                     Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
+                  </span>
+                )}
+                {nearDup && (
+                  <span style={{ display: 'block', color: C.neg }}>
+                    Lehetséges dupla: ugyanezen a napon már van {fmt(Math.abs(nearDup.amount))} Ft-os tény ({nearDup.name || 'névtelen'}) – ha ugyanaz az
+                    utalás, hagyd ki.
                   </span>
                 )}
               </div>
@@ -737,9 +786,16 @@ export function TxCard({
                   {fmt(Math.abs(diff))} Ft
                 </span>
               )}
+              {monthlyNote}
               {dup && (
                 <span style={{ display: 'block', color: C.neg }}>
                   Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
+                </span>
+              )}
+              {nearDup && (
+                <span style={{ display: 'block', color: C.neg }}>
+                  Lehetséges dupla: ugyanezen a napon már van {fmt(Math.abs(nearDup.amount))} Ft-os tény ({nearDup.name || 'névtelen'}) – ha ugyanaz az
+                  utalás, hagyd ki.
                 </span>
               )}
             </span>

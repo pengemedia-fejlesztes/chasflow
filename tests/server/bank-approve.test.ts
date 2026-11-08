@@ -173,3 +173,55 @@ describe('banki díjak', () => {
     expect(entry(t, merged[0].id).amount).toBe(-350);
   });
 });
+
+describe('„Havonta” jóváhagyás, ha a partnernek már van havi terve', () => {
+  const plansOf = (t: TestApp) => t.sql.prepare("SELECT id, done, link_id, series_id FROM entries WHERE kind = 'plan' ORDER BY date").all() as any[];
+  const seriesN = (t: TestApp) => (t.sql.prepare('SELECT COUNT(*) AS n FROM series').get() as any).n;
+
+  it('importált havi tervek mellett nem indul második sorozat; a tény a hónap tervét zárja le, visszavonva újra nyitott', async () => {
+    const t = await setup();
+    addEntry(t, { id: 'i_m0', kind: 'plan', date: day(-3), leaf_id: L.dom, amount: -4990, name: 'Minta Tárhely – e havi', source: 'import' });
+    addEntry(t, { id: 'i_m1', kind: 'plan', date: day(27), leaf_id: L.dom, amount: -4990, name: 'Minta Tárhely – következő', source: 'import' });
+    addEntry(t, { id: 'i_m2', kind: 'plan', date: day(57), leaf_id: L.dom, amount: -4990, name: 'Minta Tárhely – azutáni', source: 'import' });
+    await importRows(t, [{ date: day(-3), amount: -4990, partner: 'Minta Tárhely Kft.', memo: '' }]);
+    const tx = txBy(t, 'amount = -4990');
+    // a felület a „nincs terv” választást plan_id: null-lal küldi
+    expect((await t.post('/api/bank/approve', { items: [{ id: tx.id, leaf_id: L.dom, plan_id: null, rep: 'monthly', count: 12 }] })).status).toBe(200);
+    expect(plansOf(t).map((p) => p.id)).toEqual(['i_m0', 'i_m1', 'i_m2']);
+    expect(seriesN(t)).toBe(0);
+    expect(entry(t, 'i_m0')).toMatchObject({ done: 1, link_id: 'a' + tx.id });
+    expect(entry(t, 'i_m1').done).toBe(0);
+    await t.post('/api/bank/unapprove', { ids: [tx.id] });
+    expect(plansOf(t)).toHaveLength(3);
+    expect(entry(t, 'i_m0')).toMatchObject({ done: 0, link_id: null });
+  });
+
+  it('a partner korábbi „Havonta” jóváhagyásának sorozata mellé nem jön második; a tény a meglévő sorozathoz kötődik', async () => {
+    const t = await setup();
+    await importRows(t, [
+      { date: day(-33), amount: -4990, partner: 'Minta Tárhely Kft.', memo: 'előző havi díj' },
+      { date: day(-3), amount: -4990, partner: 'MINTA TÁRHELY KFT', memo: 'havi díj' },
+    ]);
+    const first = txBy(t, `memo = 'előző havi díj'`);
+    const second = txBy(t, `memo = 'havi díj'`);
+    await t.post('/api/bank/approve', { items: [{ id: first.id, leaf_id: L.dom, plan_id: null, rep: 'monthly', count: 3 }] });
+    expect(plansOf(t)).toHaveLength(3);
+    await t.post('/api/bank/approve', { items: [{ id: second.id, leaf_id: L.dom, plan_id: null, rep: 'monthly', count: 12 }] });
+    expect(seriesN(t)).toBe(1);
+    expect(plansOf(t).filter((p) => p.series_id === 's' + first.id)).toHaveLength(3);
+    expect(t.sql.prepare('SELECT COUNT(*) AS n FROM entries WHERE series_id = ?').get('s' + second.id)).toEqual({ n: 0 });
+    expect(entry(t, 'a' + second.id)).toMatchObject({ kind: 'actual', series_id: 's' + first.id });
+  });
+
+  it('egy másik szolgáltató havi terve ugyanabban a kategóriában nem akadályozza az új sorozatot', async () => {
+    const t = await setup();
+    addEntry(t, { id: 'i_mas1', kind: 'plan', date: day(10), leaf_id: L.dom, amount: -8255, name: 'Más Tárhely – következő', source: 'import' });
+    addEntry(t, { id: 'i_mas2', kind: 'plan', date: day(40), leaf_id: L.dom, amount: -8255, name: 'Más Tárhely – azutáni', source: 'import' });
+    t.sql.exec("INSERT INTO partners (key, name, aliases, updated_at) VALUES ('mastarhely', 'Más Tárhely Kft.', '[]', 1)");
+    await importRows(t, [{ date: day(-3), amount: -4990, partner: 'Minta Tárhely Kft.', memo: '' }]);
+    const tx = txBy(t, 'amount = -4990');
+    await t.post('/api/bank/approve', { items: [{ id: tx.id, leaf_id: L.dom, plan_id: null, rep: 'monthly', count: 3 }] });
+    expect(t.sql.prepare("SELECT COUNT(*) AS n FROM entries WHERE kind = 'plan' AND series_id = ?").get('s' + tx.id)).toEqual({ n: 3 });
+    expect(entry(t, 'i_mas1').done).toBe(0);
+  });
+});

@@ -1,7 +1,8 @@
 // Automatikus párosítások: „tartalmazza” szabályok + tanult partner szabályok, automatikus jóváhagyással.
 import { normalizeText } from '../../shared/categories';
 import { matchContains, partnerKey, seedContainsRules, type ContainsRule } from '../../shared/match';
-import type { Leaf } from '../../shared/types';
+import { possibleDuplicate } from '../../shared/identity';
+import type { Entry, Leaf } from '../../shared/types';
 import type { DbStatement } from './platform';
 import { requireRole, type User } from './auth';
 import { Env, HttpError, audit, getSetting, json, now, randomId, readJson, setSetting } from './util';
@@ -65,13 +66,23 @@ export async function autoApprove(
   const lmap: Record<string, string> = {};
   const lmerge: Record<string, number> = {};
   learned.results.forEach((r) => ((lmap[r.pattern] = r.leaf_id), (lmerge[r.pattern] = r.merge)));
-  const txs = await env.DB.prepare("SELECT id, date, amount, partner, memo FROM bank_tx WHERE status = 'new'").all<{
+  const txs = await env.DB.prepare("SELECT id, date, amount, partner, memo, leaf_id FROM bank_tx WHERE status = 'new'").all<{
     id: string;
     date: string;
     amount: number;
     partner: string;
     memo: string;
+    leaf_id: string | null;
   }>();
+  // lehetséges dupla import (azonos nap, partner, ±1%): nem hagyjuk jóvá automatikusan, a felhasználó dönt
+  const first = txs.results.reduce((m, x) => (!m || x.date < m ? x.date : m), '');
+  const actuals = first
+    ? (
+        await env.DB.prepare("SELECT kind, date, amount, name, leaf_id, source FROM entries WHERE kind = 'actual' AND date >= ?")
+          .bind(first)
+          .all<Pick<Entry, 'kind' | 'date' | 'amount' | 'name' | 'leaf_id' | 'source'>>()
+      ).results
+    : [];
   const items: { id: string; leaf_id: string; merge?: boolean }[] = [];
   const hits: Record<string, number> = {};
   for (const t of txs.results) {
@@ -80,6 +91,7 @@ export async function autoApprove(
       c?.leaf_id ||
       (lmap[partnerKey(t.partner)] && sectionOf(lmap[partnerKey(t.partner)]) === (t.amount >= 0 ? 'in' : 'out') ? lmap[partnerKey(t.partner)] : null);
     if (!leaf) continue;
+    if (possibleDuplicate({ ...t, leaf_id: leaf }, actuals)) continue;
     items.push({ id: t.id, leaf_id: leaf, merge: c ? !!(c as any).merge : !!lmerge[partnerKey(t.partner)] });
     if (c?.id) hits[c.id] = (hits[c.id] || 0) + 1;
   }

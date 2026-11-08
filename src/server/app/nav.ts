@@ -10,7 +10,8 @@ import { matchPlan, partnerKey, suggestLeaf } from '../../shared/match';
 import type { Entry } from '../../shared/types';
 import { matchingContext } from './bank';
 import { partnerNames } from './billingo';
-import { nameOwner } from '../../shared/billingopay';
+import { nameOwner, namesMatch } from '../../shared/billingopay';
+import { partnerMonthlyPlans } from '../../shared/identity';
 import { taxBase, taxLeafMap } from './partnertax';
 import { Env, HttpError, audit, getSetting, now, randomId, setSetting, todayHu } from './util';
 
@@ -400,7 +401,7 @@ const unlearnPartner = (env: Env, raw: string | null | undefined): DbStatement[]
   ];
 };
 
-export async function resolveNav(env: Env, userId: number, it: NavResolve) {
+export async function resolveNav(env: Env, userId: number, it: NavResolve): Promise<{ attached?: { id: string; name: string } }> {
   const r = await env.DB.prepare('SELECT * FROM nav_invoices WHERE id = ?')
     .bind(String(it.id))
     .first<NavRow & { plan_id: string | null; learned_rule?: string | null }>();
@@ -434,7 +435,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
     if (it.action === 'reopen' && r.learned_rule)
       stmts.push(...unlearnPartner(env, r.learned_rule), env.DB.prepare('UPDATE nav_invoices SET learned_rule = NULL WHERE id = ?').bind(r.id));
     await env.DB.batch(stmts);
-    return;
+    return {};
   }
   if (it.action === 'move') {
     if (r.status !== 'planned' && r.status !== 'paid') throw new HttpError(400, 'A számla még nincs besorolva.');
@@ -452,7 +453,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
     stmts.push(...(await learnPartner(env, r, leaf, t)));
     await env.DB.batch(stmts);
     await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action, leaf });
-    return;
+    return {};
   }
   // már besorolt számla újra-besorolása (másik fül, dupla kattintás): a meglévő terve marad (ON CONFLICT DO NOTHING),
   // csak a számla kategóriája íródna át → a számla és a terve elválna. Áthelyezés: „move”; újrakezdés: „reopen”.
@@ -473,8 +474,15 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   const ok = await env.DB.prepare('SELECT id FROM leaves WHERE id = ?').bind(leaf).first();
   if (!ok) throw new HttpError(400, 'Ismeretlen kategória.');
   const stmts: DbStatement[] = [];
-  const planId = base + '_0';
-  if (it.action === 'recurring') {
+  let planId = base + '_0';
+  // a szállítónak már van havi terve (pl. az előző számlájából indított sorozat): a számla annak a hónapjára szóló
+  // tervéhez kötődik, nem indul második 12 havi sorozat (különben a jövőbeli költség duplán lenne tervezve)
+  const existing = it.action === 'recurring' ? await existingMonthlyPlan(env, r, leaf, date) : null;
+  if (existing?.plan) {
+    planId = existing.plan.id;
+    leaf = existing.plan.leaf_id;
+    stmts.push(...(await learnPartner(env, r, leaf, t)));
+  } else if (it.action === 'recurring' && !existing) {
     const months = Math.min(36, Math.max(1, Number(it.months) || 12));
     const sid = 's' + base;
     stmts.push(
@@ -506,7 +514,49 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
   }
   stmts.push(env.DB.prepare("UPDATE nav_invoices SET status = 'planned', plan_id = ?, leaf_id = ?, updated_at = ? WHERE id = ?").bind(planId, leaf, t, r.id));
   await env.DB.batch(stmts);
-  await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action });
+  await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action, ...(existing?.plan ? { attached: planId } : {}) });
+  return existing?.plan ? { attached: { id: planId, name: existing.plan.name } } : {};
+}
+
+/**
+ * A szállító meglévő havi terve a számla hónapja körül: a havi sorozat (a szállító korábbi számlájából indított, vagy a
+ * nevére / saját alkategóriájába szóló) nyitott, másik NAV-számlához még nem kötött terve – elsősorban a számla
+ * hónapjáé, különben a legközelebbi ±40 napon belül. `null`: nincs havi terve; `{ plan: null }`: van, de a számla
+ * idejére nincs szabad terve (ilyenkor sem indul új sorozat, a számla egyszeri tervet kap).
+ */
+async function existingMonthlyPlan(env: Env, r: NavRow, leaf: string, date: string): Promise<{ plan: Entry | null } | null> {
+  const from = addMonthsDate(date.slice(0, 7) + '-01', -1);
+  const [pR, sR, nR, lR] = await env.DB.batch<any>([
+    env.DB.prepare("SELECT * FROM entries WHERE kind = 'plan' AND done = 0 AND date >= ?").bind(from),
+    env.DB.prepare('SELECT id, rep FROM series'),
+    env.DB.prepare(
+      "SELECT n.partner_tax, n.partner_name, n.plan_id, e.series_id FROM nav_invoices n LEFT JOIN entries e ON e.id = n.plan_id WHERE n.plan_id IS NOT NULL AND n.id <> ?",
+    ).bind(r.id),
+    env.DB.prepare('SELECT id, label FROM leaves'),
+  ]);
+  const label = new Map((lR.results as any[]).map((l) => [String(l.id), String(l.label)]));
+  const names = await partnerNames(env, {}, 'out');
+  const own = names.own(r.partner_name || '');
+  const tax = taxBase(r.partner_tax);
+  const navs = nR.results as any[];
+  const samePartner = (n: any) => (tax.length === 8 && taxBase(n.partner_tax) === tax) || namesMatch(n.partner_name || '', r.partner_name || '');
+  const seriesIds = new Set<string>(navs.filter((n) => n.series_id && samePartner(n)).map((n) => String(n.series_id)));
+  const plans = partnerMonthlyPlans(pR.results as Entry[], sR.results as any[], {
+    leaf,
+    sign: r.gross,
+    from,
+    own,
+    known: names.known,
+    leafLabel: (id) => label.get(id) || '',
+    seriesIds,
+  });
+  if (!plans.length) return null;
+  const taken = new Set(navs.map((n) => String(n.plan_id)));
+  const ym = date.slice(0, 7);
+  const dist = (p: Entry) => Math.abs(Date.parse(p.date) - Date.parse(date)) / 86400_000;
+  const free = plans.filter((p) => !taken.has(p.id));
+  const plan = free.find((p) => (p.period || p.date.slice(0, 7)) === ym) || free.filter((p) => dist(p) <= 40).sort((a, b) => dist(a) - dist(b))[0] || null;
+  return { plan };
 }
 
 /** A tervhez kötött NAV-számlák számlaszáma (a banki közlemény párosításához). */

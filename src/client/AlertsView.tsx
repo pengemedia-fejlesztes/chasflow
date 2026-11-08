@@ -534,7 +534,9 @@ function UnplannedActions({ f, unforeseen, ack }: { f: Flag; unforeseen: string 
     if (nav) {
       await run(
         () => api('/api/nav/resolve', { body: { id: nav.id, action: 'recurring', leaf_id: leaf, months: 12 } }),
-        `${f.name}: havonta tervbe (${leafLabel}), 12 hónap`,
+        // a szállító meglévő havi tervéhez kötve: nem indul új sorozat
+        (r: { attached?: { name: string } }) =>
+          r?.attached ? `${f.name}: a meglévő havi tervhez kötve (${r.attached.name})` : `${f.name}: havonta tervbe (${leafLabel}), 12 hónap`,
         () => api('/api/nav/resolve', { body: { id: nav.id, action: 'reopen' } }),
       );
       return;

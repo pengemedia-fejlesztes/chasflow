@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactName, partnerResolver, suggestPartner } from '../../src/shared/identity';
+import { compactName, partnerResolver, possibleDuplicate, suggestPartner } from '../../src/shared/identity';
 import type { Leaf, Partner } from '../../src/shared/types';
 
 const leaf = (id: string, label: string): Leaf => ({ id, group_id: 'g', label, archived: 0 }) as Leaf;
@@ -33,5 +33,26 @@ describe('partner-azonosság', () => {
   it('ismeretlen név: nincs találat, de javaslat lehet', () => {
     expect(r.resolve('Ismeretlen Bt.')).toBeNull();
     expect(suggestPartner(r, 'Pharmazon Gyógyszer')?.key).toBe('pharmazone');
+  });
+});
+
+describe('lehetséges dupla import (possibleDuplicate)', () => {
+  const act = (o: { id: string; date: string; amount: number; name: string; leaf_id: string; source?: string }) => ({ kind: 'actual' as const, source: 'import', ...o });
+  const tx = { date: '2026-08-25', amount: -18225, partner: 'MINTA TÁRHELY KFT.', leaf_id: 'l_dom' };
+  it('azonos nap, azonos partner (név vagy kategória), legfeljebb 1% eltérés', () => {
+    expect(possibleDuplicate(tx, [act({ id: 'a', date: '2026-08-25', amount: -18255, name: 'Minta Tárhely', leaf_id: 'l_egyeb' })])?.id).toBe('a');
+    expect(possibleDuplicate(tx, [act({ id: 'b', date: '2026-08-25', amount: -18100, name: 'Tárhely díj', leaf_id: 'l_dom' })])?.id).toBe('b');
+  });
+  it('nem dupla: más nap, 1%-nál nagyobb eltérés, más partner, banki vagy Billingo-tény, ellenkező előjel', () => {
+    expect(
+      possibleDuplicate(tx, [
+        act({ id: 'nap', date: '2026-08-26', amount: -18225, name: 'Minta Tárhely', leaf_id: 'l_dom' }),
+        act({ id: 'osszeg', date: '2026-08-25', amount: -18500, name: 'Minta Tárhely', leaf_id: 'l_dom' }),
+        act({ id: 'partner', date: '2026-08-25', amount: -18225, name: 'Példa Szoftver Kft.', leaf_id: 'l_szoftver' }),
+        act({ id: 'bank', date: '2026-08-25', amount: -18225, name: 'Minta Tárhely', leaf_id: 'l_dom', source: 'bank' }),
+        act({ id: 'billingo', date: '2026-08-25', amount: -18225, name: 'Minta Tárhely', leaf_id: 'l_dom', source: 'billingo' }),
+        act({ id: 'elojel', date: '2026-08-25', amount: 18225, name: 'Minta Tárhely', leaf_id: 'l_dom' }),
+      ]),
+    ).toBeNull();
   });
 });

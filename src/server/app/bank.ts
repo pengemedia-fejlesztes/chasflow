@@ -1,20 +1,32 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
-import { namesMatch } from '../../shared/billingopay';
-import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
+import { nameOwner, namesMatch } from '../../shared/billingopay';
+import { isGenericPartner, matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
-import type { Entry, Leaf } from '../../shared/types';
+import type { Entry, Leaf, Rep } from '../../shared/types';
 import { isBudgetPlan } from '../../shared/budget';
 import { requireRole, type User } from './auth';
 import { fillPartnerKind, fillPartnerTax, mergePartnerNames } from './partnertax';
-import { attachInvoiceStmts, autoPayBillingo, promoteOfferLeaves, billingoPublicUrl, invoiceRefs, reconcileInvoicePlans, syncBillingo } from './billingo';
+import {
+  attachInvoiceStmts,
+  autoPayBillingo,
+  promoteOfferLeaves,
+  billingoPublicUrl,
+  invoiceRefs,
+  partnerNames,
+  reconcileInvoicePlans,
+  syncBillingo,
+} from './billingo';
+import { partnerMonthlyPlans } from '../../shared/identity';
 import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { refreshVatPlans } from './vat';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
 import { describeEntries, logChange, rowsById } from './changelog';
+
+type PartnerNameSets = Awaited<ReturnType<typeof partnerNames>>;
 
 const PREFERRED_BALANCE = ['CLAV', 'ITAV', 'CLBD', 'XPCD', 'ITBD', 'OPAV', 'PRCD'];
 
@@ -46,7 +58,8 @@ export async function matchingContext(env: Env) {
   ).all<{ name: string; leaf_id: string }>();
   hist.results.forEach((r) => {
     const k = partnerKey(r.name);
-    if (k.length >= 3 && !/^(havi dij|megbizasi dij|munkaber|egyszeri dij|szamla)$/.test(k)) rules[k] = r.leaf_id;
+    // általános banki szövegből (kártyás terhelés, díjnév…) sem tanulunk
+    if (k.length >= 3 && !/^(havi dij|megbizasi dij|munkaber|egyszeri dij|szamla)$/.test(k) && !isGenericPartner(r.name)) rules[k] = r.leaf_id;
   });
   (rulesR.results as any[]).forEach((r) => (rules[r.pattern] = r.leaf_id));
   const sectionOf = (id: string) => sec[lg[id]] || 'out';
@@ -287,6 +300,9 @@ export async function linkSameMonthActuals(env: Env): Promise<number> {
  * A NAV-számlából felvett terv már kifizetett tény, ha: van hozzá azonos összegű tény (→ összekötés), vagy egy várakozó /
  * kihagyott banki tétel (→ jóváhagyás a tervhez), különben ha kártyával / készpénzzel fizették, a terv lezárul (a vásárláskor
  * fizetve) – így nem marad „lejárt tervezett kiadás” (pl. SimplePay, Szilvási Trader kártyás vásárlás).
+ * A tény / banki tétel csak ugyanattól a partnertől jöhet: a neve a szállítóé, vagy általános név a terv kategóriájában –
+ * különben egy másik partner azonos összegű költsége teljesítené a tervet, és (fixLinkedLeaves) át is kerülne a terv
+ * kategóriájába.
  */
 export async function settleNavPlans(env: Env): Promise<number> {
   const [pR, aR, tR] = await env.DB.batch([
@@ -296,15 +312,17 @@ export async function settleNavPlans(env: Env): Promise<number> {
        WHERE p.kind = 'plan' AND p.done = 0 AND COALESCE(p.tentative, 0) = 0 AND p.date < date('now') AND p.date >= date('now', '-400 days')`,
     ),
     env.DB.prepare(
-      `SELECT a.id, a.date, a.amount FROM entries a WHERE a.kind = 'actual' AND a.amount < 0 AND a.date >= date('now', '-420 days')
+      `SELECT a.id, a.date, a.amount, a.name, a.leaf_id FROM entries a WHERE a.kind = 'actual' AND a.amount < 0 AND a.date >= date('now', '-420 days')
        AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)`,
     ),
     env.DB.prepare(
-      "SELECT id, date, amount, status, partner FROM bank_tx WHERE amount < 0 AND actual_id IS NULL AND status IN ('new', 'ignored') AND date >= date('now', '-420 days')",
+      "SELECT id, date, amount, status, partner, leaf_id FROM bank_tx WHERE amount < 0 AND actual_id IS NULL AND status IN ('new', 'ignored') AND date >= date('now', '-420 days')",
     ),
   ]);
   const acts = aR.results as any[];
   const txs = tR.results as any[];
+  const names = await partnerNames(env, {}, 'out');
+  const label = new Map((await env.DB.prepare('SELECT id, label FROM leaves').all<{ id: string; label: string }>()).results.map((l) => [l.id, l.label]));
   const usedA = new Set<string>(),
     usedT = new Set<string>();
   const t0 = now();
@@ -316,13 +334,19 @@ export async function settleNavPlans(env: Env): Promise<number> {
     seen.add(p.id);
     const from = p.issue_date || p.date;
     const inWin = (d: string) => d >= addDaysIso(from, -5) && d <= addDaysIso(p.payment_date || p.date, 60);
-    const a = acts.find((x) => !usedA.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    // partner-egyezés: a szállító (vagy alternatív) neve, vagy általános név (pl. „Könyvelési díj”) a terv saját kategóriájában
+    const own = names.own(p.partner_name || '');
+    const samePartner = (name: string, leaf: string | null) => {
+      const who = nameOwner(name || '', own, names.known, label.get(p.leaf_id) || '');
+      return who === 'own' || (who === 'neutral' && leaf === p.leaf_id);
+    };
+    const a = acts.find((x) => !usedA.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date) && samePartner(x.name, x.leaf_id));
     if (a) {
       usedA.add(a.id);
       stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(a.id, t0, p.id));
       continue;
     }
-    const tx = txs.find((x) => !usedT.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    const tx = txs.find((x) => !usedT.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date) && samePartner(x.partner, x.leaf_id));
     if (tx) {
       usedT.add(tx.id);
       if (tx.status === 'ignored') stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'new' WHERE id = ? AND status = 'ignored'").bind(tx.id));
@@ -634,6 +658,44 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   for (const l of leafR.results as any[]) leafById.set(String(l.id), l);
   const accById = new Map<string, { bank_name: string }>();
   for (const a of accR.results as any[]) accById.set(String(a.id), a);
+  // a partner meglévő havi terve („Havonta” jóváhagyásnál) – az adatok csak akkor töltődnek be, ha kell
+  let monthlyCtx: { plans: Entry[]; series: { id: string; rep: Rep }[]; navs: any[]; txs: any[]; names: { in: PartnerNameSets; out: PartnerNameSets } } | null =
+    null;
+  const monthlyOf = async (tx: any, leaf: string): Promise<Entry[]> => {
+    if (!monthlyCtx) {
+      const [pR, sR, nR, tR] = await env.DB.batch<any>([
+        env.DB.prepare("SELECT * FROM entries WHERE kind = 'plan' AND done = 0 AND date >= date('now', '-120 days')"),
+        env.DB.prepare('SELECT id, rep FROM series'),
+        env.DB.prepare('SELECT n.partner_name, e.series_id FROM nav_invoices n JOIN entries e ON e.id = n.plan_id WHERE e.series_id IS NOT NULL'),
+        env.DB.prepare("SELECT id, partner FROM bank_tx WHERE status = 'approved' AND partner <> ''"),
+      ]);
+      monthlyCtx = {
+        plans: pR.results as Entry[],
+        series: sR.results as any[],
+        navs: nR.results as any[],
+        txs: tR.results as any[],
+        names: { in: await partnerNames(env, {}, 'in'), out: await partnerNames(env, {}, 'out') },
+      };
+    }
+    const c = monthlyCtx;
+    const partner = String(tx.partner || '');
+    if (partnerKey(partner).length < 3) return [];
+    const names = c.names[tx.amount >= 0 ? 'in' : 'out'];
+    // a partner korábbi „Havonta” jóváhagyásából vagy NAV-számlájából indított sorozatok
+    const seriesIds = new Set<string>([
+      ...c.txs.filter((x) => x.id !== tx.id && namesMatch(x.partner, partner)).map((x) => 's' + x.id),
+      ...c.navs.filter((n) => namesMatch(n.partner_name || '', partner)).map((n) => String(n.series_id)),
+    ]);
+    return partnerMonthlyPlans(c.plans, c.series, {
+      leaf,
+      sign: tx.amount,
+      from: String(tx.date),
+      own: names.own(partner),
+      known: names.known,
+      leafLabel: (id) => leafById.get(String(id))?.label || '',
+      seriesIds,
+    });
+  };
   for (const it of items) {
     const tx = txById.get(String(it.id));
     if (!tx) continue;
@@ -738,8 +800,23 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     }
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
-    const rep = it.rep === 'monthly' || it.rep === 'quarterly' || it.rep === 'yearly' ? it.rep : null;
-    const sid = rep ? 's' + tx.id : null;
+    let rep = it.rep === 'monthly' || it.rep === 'quarterly' || it.rep === 'yearly' ? it.rep : null;
+    let sid = rep ? 's' + tx.id : null;
+    if (rep === 'monthly') {
+      // a partnernek már van havi terve: nem indul második sorozat (a jövőbeli költség / bevétel duplán lenne tervezve);
+      // a tény a meglévő sorozathoz kötődik, és ha nem választottak tervet, a sorozat e havi (illő) tervét zárja le
+      const own = await monthlyOf(tx, String(leafId));
+      if (own.length) {
+        rep = null;
+        sid = own.find((p) => p.series_id)?.series_id ?? null;
+        const ym = String(tx.date).slice(0, 7);
+        const same = !planId && own.find((p) => (p.period || p.date.slice(0, 7)) === ym && !usedPlans.has(p.id) && planFitsTx(tx, leafId, p));
+        if (same) {
+          planId = same.id;
+          usedPlans.add(planId);
+        }
+      }
+    }
     // a tény mindig a banki könyvelés napjára kerül
     stmts.push(
       env.DB.prepare(
@@ -779,7 +856,8 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     stmts.push(
       env.DB.prepare("UPDATE bank_tx SET status = 'approved', actual_id = ?, leaf_id = ?, plan_id = ? WHERE id = ?").bind(actualId, leafId, planId, tx.id),
     );
-    const key = partnerKey(tx.partner || '');
+    // a partner kategóriájának tanulása – általános banki szövegből (kártyás terhelés, díjnév…) nem
+    const key = isGenericPartner(tx.partner || '') ? '' : partnerKey(tx.partner || '');
     if (key)
       stmts.push(
         env.DB.prepare(
@@ -933,8 +1011,8 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     requireRole(u, 'admin', 'member');
     const b = await readJson<NavResolve>(req);
     if (!['recurring', 'unforeseen', 'assign', 'move', 'ignore', 'reopen'].includes(b.action)) throw new HttpError(400, 'Hibás művelet.');
-    await resolveNav(env, u.id, b);
-    return json({ ok: true });
+    const res = await resolveNav(env, u.id, b);
+    return json({ ok: true, ...res });
   }
   if (path === '/api/nav/sync' && req.method === 'POST') {
     requireRole(u, 'admin');
