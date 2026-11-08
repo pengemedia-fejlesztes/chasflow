@@ -14,6 +14,7 @@ import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, s
 import * as eb from './enablebanking';
 import { refreshVatPlans } from './vat';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
+import { describeEntries, logChange, rowsById } from './changelog';
 
 const PREFERRED_BALANCE = ['CLAV', 'ITAV', 'CLBD', 'XPCD', 'ITBD', 'OPAV', 'PRCD'];
 
@@ -881,11 +882,43 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
       .bind(String(b.plan_id || ''))
       .first();
     if (!plan) throw new HttpError(400, 'A terv már le van zárva, vagy másik számlához tartozik.');
-    await env.DB.batch(attachInvoiceStmts(env, bill, String(b.plan_id), now()));
+    // a visszavonáshoz: a terv, a külön számla-sor és a kifizetés (tény) korábbi állapota, a számlára mutató Billingo- és banki sorok
+    const planId = String(b.plan_id);
+    const before = await rowsById(env, 'entries', [planId, bill.id, ...(bill.link_id ? [String(bill.link_id)] : [])]);
+    const order = [planId, bill.id, String(bill.link_id)];
+    before.sort((x, y) => order.indexOf(String(x.id)) - order.indexOf(String(y.id))); // a terv előbb engedi el az ext_ref-et
+    const docs = (await env.DB.prepare('SELECT id, number FROM billingo_docs WHERE plan_id = ?').bind(bill.id).all<{ id: number; number: string | null }>())
+      .results;
+    const txs = (await env.DB.prepare('SELECT id FROM bank_tx WHERE plan_id = ?').bind(bill.id).all<{ id: string }>()).results.map((x) => x.id);
+    await env.DB.batch(attachInvoiceStmts(env, bill, planId, now()));
     await promoteOfferLeaves(env);
     await fixLinkedLeaves(env);
     await audit(env, u.id, 'billingo_attach', { id: bill.id, plan: b.plan_id });
-    return json({ ok: true });
+    const after = await rowsById(env, 'entries', [planId]);
+    const { items } = describeEntries(before, after, [bill.id]);
+    const planName = String(before.find((r) => r.id === planId)?.name || '');
+    await logChange(
+      env,
+      u.id,
+      'billingo.attach',
+      `${docs[0]?.number || 'Számla'} a terv alá: ${planName || '(terv)'}`,
+      [...before, ...after].map((r) => String(r.leaf_id || '')).filter(Boolean),
+      {
+        type: 'billingo.attach',
+        plan: planId,
+        bill: bill.id,
+        ext_ref: bill.ext_ref,
+        expected: Number(after[0]?.updated_at) || null,
+        before,
+        billingo_docs: docs.map((d) => d.id),
+        bank_tx: txs,
+      },
+      items,
+    );
+    const log = await env.DB.prepare("SELECT id FROM change_log WHERE action = 'billingo.attach' AND user_id = ? ORDER BY id DESC LIMIT 1")
+      .bind(u.id)
+      .first<{ id: number }>();
+    return json({ ok: true, log_id: log?.id ?? null });
   }
   if (path === '/api/nav/invoice' && req.method === 'GET') {
     // egy bejövő számla teljes tartalma a NAV-ból (tételsorokkal) – a riasztásoknál a sorszámra kattintva

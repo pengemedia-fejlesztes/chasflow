@@ -9,7 +9,7 @@ import { api } from './api';
 import { useBack } from './back';
 import { DivergingBars } from './Bars';
 import { diffColor, diffText } from './LinkChain';
-import { PartnerLink } from './PartnerCard';
+import { PartnerLink, usePartnerSubcontract } from './PartnerCard';
 import { rowKey } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, Seg, card, inputStyle, R } from './ui';
@@ -416,6 +416,7 @@ export function PartnerDetail({
 }) {
   const { ix, data } = useStore();
   const [all, setAll] = useState(false);
+  const sub = usePartnerSubcontract(p.key);
   // tény → a hozzá kötött terv (a terv összege nem változik, így az eltérés látszik)
   const planOfActual = useMemo(() => {
     const ids = new Set(p.leaves.map((l) => l.id));
@@ -476,6 +477,15 @@ export function PartnerDetail({
           <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
             {sIn && <Tile label="Bevétel · 12 hó" value={`${fmt(sIn.last12)} Ft`} sub={`${pct(sIn.share12)} az összes bevételből`} />}
             {sOut && <Tile label="Kiadás · 12 hó" value={`${fmt(sOut.last12)} Ft`} sub={`${pct(sOut.share12)} az összes kiadásból`} />}
+            {sub && (
+              <Tile
+                label="Kiadás · 12 hó (alvállalkozó)"
+                value={`${fmt(sub.last12)} Ft`}
+                sub={[sub.count && `összesen ${fmtM(sub.total)}, ${sub.count} tétel`, sub.planned && `várható ${fmt(sub.planned)} Ft`]
+                  .filter(Boolean)
+                  .join(' · ')}
+              />
+            )}
             {sIn && sOut && <Tile label="Nettó · 12 hó" value={`${net12 > 0 ? '+' : ''}${fmt(net12)} Ft`} red={net12 < 0} />}
             <Tile
               label="Összesen"

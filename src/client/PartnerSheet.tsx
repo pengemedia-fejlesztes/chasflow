@@ -12,7 +12,7 @@ import { CalendarSheet } from './DatePicker';
 import { usePlanOfActual } from './LinkChain';
 import { itemLabel } from './MonthList';
 import { rowKey, shiftDate } from './logic';
-import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow } from './PartnerCard';
+import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow, usePartnerSubcontract } from './PartnerCard';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, relTime, R } from './ui';
 
@@ -107,6 +107,7 @@ export function PartnerSheet({
   const byId = useMemo(() => new Map(data.entries.map((e) => [e.id, e])), [data.entries]);
   const sec = p.sides.in ? 'in' : 'out';
   const side = p.sides.in || p.sides.out;
+  const sub = usePartnerSubcontract(p.key);
   const leaf = p.leaves[0]?.id;
   const group = p.groups[0] ? displayGroup(p.groups[0].label) : '';
   const company = p.info?.aliases?.find((a) => a !== p.name) || p.billingNames.find((b) => b.name !== p.name)?.name;
@@ -285,6 +286,7 @@ export function PartnerSheet({
         {stat(sec === 'in' ? 'Lejárt kintlévőség' : 'Lejárt tartozás', `${fmt(lateNow)} Ft`, lateNow > 0)}
         {stat('Átlagos késés', p.avgLate == null ? '–' : `${Math.round(p.avgLate)} nap`)}
         {stat(`${sec === 'in' ? 'Bevétel' : 'Kiadás'} · 12 hó`, `${fmt(side?.last12 || 0)} Ft`)}
+        {sub && stat('Kiadás · 12 hó (alvállalkozó)', `${fmt(sub.last12)} Ft`)}
         {stat(`Várható ${sec === 'in' ? 'bevétel' : 'kiadás'} · 12 hó`, `${fmt(expected12)} Ft`)}
       </div>
 

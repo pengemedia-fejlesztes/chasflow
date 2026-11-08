@@ -296,9 +296,15 @@ export function MergeBillingo() {
                     small
                     kind="light"
                     title="A számla a terv alá kerül (a terv összege marad, a számla a friss becslés), a fizetés a tervhez kötődik"
-                    onClick={() =>
-                      run(() => api('/api/billingo/attach', { body: { id: e.id, plan_id: p.id } }), `${d?.number || 'Számla'} → ${p.name || leaf?.label}`)
-                    }
+                    onClick={() => {
+                      // a toast „Visszavon” gombja a naplóbejegyzést vonja vissza (a külön számla-sor és a terv visszaáll)
+                      let logId: number | null = null;
+                      run(
+                        async () => (logId = (await api<{ log_id: number | null }>('/api/billingo/attach', { body: { id: e.id, plan_id: p.id } })).log_id),
+                        `${d?.number || 'Számla'} → ${p.name || leaf?.label}`,
+                        () => (logId ? api(`/api/changelog/${logId}/undo`, { body: {} }) : Promise.reject(new Error('Ez a lépés nem vonható vissza.'))),
+                      );
+                    }}
                   >
                     {p.name || '(terv)'} · {p.date.slice(5).replace('-', '.')}. · {fmt(p.amount)}
                     {p.tentative ? ' · ajánlat' : ''}

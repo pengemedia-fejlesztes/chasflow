@@ -136,6 +136,38 @@ export interface BreakevenMonth {
   people: { key: string; name: string; minutes: number; billableMinutes: number; cost: number; hourly: number | null }[];
 }
 
+/** Alvállalkozói (változó költségű) kiadási alkategóriák: az „Alvállalkozók” mappa sorai, a munkaidő-táblás munkatársak
+ *  költség-kategóriája nélkül (az már a munkaköltségben van). */
+function subcontractLeaves(leaves: Leaf[], groups: Group[], employees: Employee[]): Set<string> {
+  const sectionOf = new Map(leaves.map((l) => [l.id, groups.find((g) => g.id === l.group_id)?.section]));
+  const empLeaves = new Set(employees.map((e) => e.cost_leaf_id).filter(Boolean));
+  return new Set(
+    leaves
+      .filter((l) => sectionOf.get(l.id) === 'out' && !empLeaves.has(l.id))
+      .filter((l) => {
+        const g = groups.find((x) => x.id === l.group_id)?.label || '';
+        return g
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .includes('alvallalkoz');
+      })
+      .map((l) => l.id),
+  );
+}
+
+/** Tény → a hozzá kötött terv neve: a banki tény neve a kedvezményezett (pl. „KOVÁCS BENCE EV”), a projektet a terv nevezi meg. */
+function linkedPlanNames(entries: Entry[]): Map<string, string> {
+  const planName = new Map<string, string>();
+  for (const e of entries) if (e.kind === 'plan' && e.link_id && e.name) planName.set(e.link_id, e.name);
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  for (const e of entries) {
+    const p = e.kind === 'actual' && e.link_id ? byId.get(e.link_id) : undefined;
+    if (p?.kind === 'plan' && p.name && !planName.has(e.id)) planName.set(e.id, p.name);
+  }
+  return planName;
+}
+
 /**
  * Fedezeti pont hónaponként: a munkatársak költsége (a cashflow-ban a hozzájuk rendelt kiadási alkategória tényei)
  * a ledolgozott idő arányában oszlik meg a projektek között. Változó költség: az ügyfélprojektre jutó munkaköltség és az
@@ -153,34 +185,13 @@ export function breakeven(o: {
   const sectionOf = new Map(o.leaves.map((l) => [l.id, o.groups.find((g) => g.id === l.group_id)?.section]));
   const incomeLeaves = o.leaves.filter((l) => sectionOf.get(l.id) === 'in');
   // alvállalkozói kiadások (változó költség) – a munkaidő-táblás munkatársak költség-kategóriája nélkül (az már a munkaköltségben van)
-  const empLeaves = new Set(o.employees.map((e) => e.cost_leaf_id).filter(Boolean));
-  const subLeaves = new Set(
-    o.leaves
-      .filter((l) => sectionOf.get(l.id) === 'out' && !empLeaves.has(l.id))
-      .filter((l) => {
-        const g = o.groups.find((x) => x.id === l.group_id)?.label || '';
-        return g
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .includes('alvallalkoz');
-      })
-      .map((l) => l.id),
-  );
+  const subLeaves = subcontractLeaves(o.leaves, o.groups, o.employees);
   const leafCache = new Map<string, string | null>();
   const leafOf = (p: string) => {
     if (!leafCache.has(p)) leafCache.set(p, projectLeaf(p, incomeLeaves, o.aliases));
     return leafCache.get(p)!;
   };
-  // tény → a hozzá kötött terv neve: a banki tény neve a kedvezményezett (pl. „KOVÁCS BENCE EV”), a projektet a terv nevezi meg
-  const planName = new Map<string, string>();
-  for (const e of o.entries)
-    if (e.kind === 'plan' && e.link_id && e.name) planName.set(e.link_id, e.name);
-  const byId = new Map(o.entries.map((e) => [e.id, e]));
-  for (const e of o.entries) {
-    const p = e.kind === 'actual' && e.link_id ? byId.get(e.link_id) : undefined;
-    if (p?.kind === 'plan' && p.name && !planName.has(e.id)) planName.set(e.id, p.name);
-  }
+  const planName = linkedPlanNames(o.entries);
   return o.months.map((ym) => {
     const acts = o.entries.filter((e) => e.kind === 'actual' && e.date.startsWith(ym));
     const revenue = acts.filter((e) => sectionOf.get(e.leaf_id) === 'in').reduce((a, e) => a + e.amount, 0);
@@ -289,4 +300,69 @@ export function breakeven(o: {
       people,
     };
   });
+}
+
+/** Az ügyfél nevét viselő alvállalkozói díjak egy partnernél (a partner adatlapjához). */
+export interface PartnerSubcontract {
+  /** tény az utolsó 12 hónapban (pozitív) */
+  last12: number;
+  /** összes tény (pozitív) */
+  total: number;
+  count: number;
+  /** nyitott tervek (várható díj, pozitív) */
+  planned: number;
+  /** a tények, legfrissebb elöl */
+  items: Entry[];
+}
+
+/**
+ * Alvállalkozói díjak partnerenként (kulcs: partnerIdOf): ha a tétel (vagy a hozzá kötött terv) neve megnevezi az ügyfelet –
+ * ugyanaz a hozzárendelés, mint a Fedezeti pont projekt-soraiban. Csak megjelenítéshez: a partner Kiadás / Nettó értéke
+ * nem változik, a díj továbbra is az alvállalkozó sorában van.
+ */
+export function partnerSubcontracts(o: {
+  entries: Entry[];
+  leaves: Leaf[];
+  groups: Group[];
+  employees: Employee[];
+  partners: { key: string; name: string; aliases?: string[] | null }[];
+  today: string;
+}): Map<string, PartnerSubcontract> {
+  const sectionOf = new Map(o.leaves.map((l) => [l.id, o.groups.find((g) => g.id === l.group_id)?.section]));
+  const incomeLeaves = o.leaves.filter((l) => sectionOf.get(l.id) === 'in');
+  const subLeaves = subcontractLeaves(o.leaves, o.groups, o.employees);
+  // a partnertörzs neve és alternatív nevei is megnevezhetik az ügyfelet (mint a Fedezeti pontban)
+  const aliases = new Map<string, string[]>();
+  for (const l of o.leaves) {
+    const p = o.partners.find((x) => x.key === partnerIdOf(l.label));
+    if (p) aliases.set(l.id, [p.name, ...(p.aliases || [])]);
+  }
+  const planName = linkedPlanNames(o.entries);
+  const labelOf = new Map(o.leaves.map((l) => [l.id, l.label]));
+  const cache = new Map<string, string | null>();
+  const leafOf = (name: string) => {
+    if (!cache.has(name)) cache.set(name, name ? projectLeaf(name, incomeLeaves, aliases) : null);
+    return cache.get(name)!;
+  };
+  const cur = o.today.slice(0, 7);
+  const [y, m] = cur.split('-').map(Number);
+  const from = `${m === 12 ? y : y - 1}-${String((m % 12) + 1).padStart(2, '0')}`; // 12 hónap a mostanival együtt
+  const out = new Map<string, PartnerSubcontract>();
+  for (const e of o.entries) {
+    if (!subLeaves.has(e.leaf_id) || (e.kind === 'plan' && e.done) || (e.kind !== 'plan' && e.kind !== 'actual')) continue;
+    const leaf = leafOf(e.name || '') || (planName.has(e.id) ? leafOf(planName.get(e.id)!) : null);
+    if (!leaf) continue;
+    const key = partnerIdOf(labelOf.get(leaf) || '') || leaf;
+    const s = out.get(key) || { last12: 0, total: 0, count: 0, planned: 0, items: [] };
+    if (e.kind === 'plan') s.planned -= e.amount;
+    else {
+      s.total -= e.amount;
+      s.count++;
+      if (e.date.slice(0, 7) >= from && e.date.slice(0, 7) <= cur) s.last12 -= e.amount;
+      s.items.push(e);
+    }
+    out.set(key, s);
+  }
+  for (const s of out.values()) s.items.sort((a, b) => b.date.localeCompare(a.date));
+  return out;
 }
