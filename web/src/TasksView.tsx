@@ -101,8 +101,8 @@ export function TasksView() {
   const { data, isAdmin, canEdit } = useStore();
   const today = data.today;
   const all = data.tasks || [];
-  const [mode, setMode] = useState<'day' | 'week' | 'list' | 'table'>(() => (localStorage.getItem('cf-task-mode') as any) || 'day');
-  const setM = (m: 'day' | 'week' | 'list' | 'table') => {
+  const [mode, setMode] = useState<'kanban' | 'day' | 'week' | 'list' | 'table'>(() => (localStorage.getItem('cf-task-mode') as any) || 'kanban');
+  const setM = (m: 'kanban' | 'day' | 'week' | 'list' | 'table') => {
     setMode(m);
     try {
       localStorage.setItem('cf-task-mode', m);
@@ -204,6 +204,7 @@ export function TasksView() {
           value={mode}
           onChange={setM}
           options={[
+            ['kanban', 'Kanban'],
             ['day', 'Nap'],
             ['week', 'Hét'],
             ['list', 'Lista'],
@@ -264,6 +265,7 @@ export function TasksView() {
       {mode === 'week' && <WeekGrid tasks={filtered.filter((t) => days.some((d) => onDay(t, d))).sort(taskOrder)} days={days} onEdit={setEdit} />}
       {mode === 'list' && <TaskList tasks={filtered.sort(taskOrder)} onEdit={setEdit} />}
       {mode === 'table' && <TaskTable tasks={all} onEdit={setEdit} />}
+      {mode === 'kanban' && <Kanban tasks={filtered} onEdit={setEdit} />}
       {edit && (
         <TaskEditor
           task={edit === 'new' ? null : edit}
@@ -1146,5 +1148,174 @@ function PermsDialog({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+type KanbanBy = 'status' | 'assignee' | 'type';
+
+/** Kanban tábla: oszloponként státusz (vagy felelős, típus); kártya áthúzásával módosul a mező */
+function Kanban({ tasks, onEdit }: { tasks: Task[]; onEdit: (t: Task) => void }) {
+  const { data, run, canEdit } = useStore();
+  const { pName, uName } = useTaskHelpers();
+  const perm = data.myTaskPerm || { ...DEFAULT_PERM, write: canEdit };
+  const [by, setBy0] = useState<KanbanBy>(() => {
+    try {
+      return (localStorage.getItem('cf-kanban-by') as KanbanBy) || 'status';
+    } catch {
+      return 'status';
+    }
+  });
+  const setBy = (v: KanbanBy) => {
+    setBy0(v);
+    try {
+      localStorage.setItem('cf-kanban-by', v);
+    } catch {
+      /* privát mód */
+    }
+  };
+  const [drag, setDrag] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const cols: { key: string; label: string; color: string }[] =
+    by === 'status'
+      ? (Object.keys(TASK_STATUS_LABEL) as TaskStatus[]).map((k) => ({
+          key: k,
+          label: TASK_STATUS_LABEL[k],
+          color: k === 'kesz' ? C.inc : k === 'elmaradt' ? '#E3A33B' : k === 'folyamatban' ? C.blue : '#7C8288',
+        }))
+      : by === 'type'
+        ? TASK_TYPES.map(([k, l]) => ({ key: k, label: l, color: TYPE_COLOR[k] }))
+        : [
+            ...(data.taskUsers || []).map((u) => ({ key: String(u.id), label: u.name, color: C.navy })),
+            { key: 'none', label: 'Nincs felelős', color: '#7C8288' },
+          ];
+  const keyOf = (t: Task) => (by === 'status' ? t.status : by === 'type' ? t.type : t.assignee_id === null ? 'none' : String(t.assignee_id));
+  const move = (t: Task, key: string) => {
+    if (keyOf(t) === key) return;
+    if (by === 'assignee' && !perm.assign && key !== String(data.me.id)) return alert('Másnak nem oszthatsz ki feladatot.');
+    const body = by === 'status' ? { status: key } : by === 'type' ? { type: key } : { assignee_id: key === 'none' ? null : Number(key) };
+    const back = by === 'status' ? { status: t.status } : by === 'type' ? { type: t.type } : { assignee_id: t.assignee_id };
+    const label = cols.find((c) => c.key === key)?.label || key;
+    run(
+      () => api(`/api/tasks/${encodeURIComponent(t.id)}`, { method: 'PUT', body }),
+      `${t.title} → ${label}`,
+      () => api(`/api/tasks/${encodeURIComponent(t.id)}`, { method: 'PUT', body: back }),
+    );
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ font: `500 13.5px ${FONT}`, color: C.muted }}>Oszlopok:</span>
+        <Seg
+          small
+          value={by}
+          onChange={setBy}
+          options={[
+            ['status', 'Státusz'],
+            ['assignee', 'Felelős'],
+            ['type', 'Típus'],
+          ]}
+        />
+        <span style={{ marginLeft: 'auto', font: `400 13px ${FONT}`, color: C.muted }}>Húzd a kártyát másik oszlopba · kattintás = szerkesztés</span>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridAutoFlow: 'column',
+          gridAutoColumns: 'minmax(250px, 1fr)',
+          gap: 12,
+          overflowX: 'auto',
+          paddingBottom: 6,
+          alignItems: 'start',
+        }}
+      >
+        {cols.map((c) => {
+          const list = tasks.filter((t) => keyOf(t) === c.key).sort(taskOrder);
+          const late = list.filter((t) => isOverdue(t, data.today)).length;
+          return (
+            <div
+              key={c.key}
+              onDragOver={(e) => {
+                if (!drag) return;
+                e.preventDefault();
+                setOver(c.key);
+              }}
+              onDragLeave={() => setOver((o) => (o === c.key ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                const t = tasks.find((x) => x.id === drag);
+                setDrag(null);
+                setOver(null);
+                if (t) move(t, c.key);
+              }}
+              style={{
+                background: over === c.key ? C.bg2 : '#EEECE6',
+                borderRadius: 10,
+                padding: 10,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                minHeight: 160,
+                outline: over === c.key ? `2px dashed ${C.blue}` : 'none',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '2px 4px 6px', borderBottom: `3px solid ${c.color}` }}>
+                <b style={{ font: `700 15px ${FONT}`, color: C.navy }}>{c.label}</b>
+                <span style={{ font: `400 12.5px ${FONT}`, color: late ? C.neg : C.muted }}>
+                  {list.length} feladat{late ? ` · ${late} lejárt` : ''}
+                </span>
+              </div>
+              {list.map((t) => {
+                const mayEdit = canEdit && canEditTask(t, data.me, perm);
+                const lateT = isOverdue(t, data.today);
+                return (
+                  <div
+                    key={t.id}
+                    draggable={mayEdit}
+                    onDragStart={(e) => {
+                      setDrag(t.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragEnd={() => (setDrag(null), setOver(null))}
+                    onClick={() => mayEdit && onEdit(t)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${t.title} – ${TASK_STATUS_LABEL[t.status]}`}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && mayEdit && (e.preventDefault(), onEdit(t))}
+                    style={{
+                      background: '#fff',
+                      border: `1px solid ${C.line}`,
+                      borderTop: `3px solid ${TYPE_COLOR[t.type]}`,
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      cursor: mayEdit ? 'grab' : 'default',
+                      opacity: drag === t.id ? 0.5 : !isOpen(t.status) && by !== 'status' ? 0.65 : 1,
+                      boxShadow: '0 1px 2px rgba(20,35,58,.06)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <b style={{ flex: 1, font: `600 14px/1.35 ${FONT}`, color: C.navy }}>{t.title}</b>
+                      <span title={TASK_TYPE_LABEL[t.type]}>
+                        <TypeIcon type={t.type} size={17} />
+                      </span>
+                    </div>
+                    {t.partner_key && <span style={{ font: `400 12.5px ${FONT}`, color: C.ink }}>{pName(t.partner_key)}</span>}
+                    <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>{by !== 'assignee' ? uName(t.assignee_id) : TASK_STATUS_LABEL[t.status]}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, font: `500 12.5px ${FONT}`, color: lateT ? C.neg : C.muted }}>
+                      ⚑ {hu(t.due_date)}
+                      {t.due_time ? ` ${t.due_time}` : ''}
+                      {lateT ? ' · lejárt' : ''}
+                    </span>
+                  </div>
+                );
+              })}
+              {!list.length && <span style={{ font: `400 12.5px ${FONT}`, color: C.faint, padding: '6px 4px' }}>Nincs feladat.</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
