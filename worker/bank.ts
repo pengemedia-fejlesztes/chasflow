@@ -666,11 +666,16 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     }
     // a Billingo szerint már kifizetett számlából lett tény: a banki tétel ahhoz kapcsolódik (nincs dupla bevétel)
     if (tx.amount > 0) {
-      const bp = await env.DB.prepare(
-        "SELECT id FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND abs(julianday(date) - julianday(?)) <= 20 ORDER BY abs(julianday(date) - julianday(?)) LIMIT 1",
-      )
-        .bind(tx.amount, tx.amount, tx.date, tx.date)
-        .first<{ id: string }>();
+      // ±20 nap (SQLite és MySQL alatt is működő dátumtartomány; a legközelebbi napot itt választjuk ki)
+      const near = (
+        await env.DB.prepare(
+          "SELECT id, date FROM entries WHERE kind = 'actual' AND ext_ref LIKE 'bpaid:%' AND abs(amount - ?) <= max(500, abs(?) * 0.01) AND date >= ? AND date <= ? LIMIT 20",
+        )
+          .bind(tx.amount, tx.amount, addDaysIso(tx.date, -20), addDaysIso(tx.date, 20))
+          .all<{ id: string; date: string }>()
+      ).results;
+      const dist = (d: string) => Math.abs(Date.parse(d + 'T00:00:00Z') - Date.parse(tx.date + 'T00:00:00Z'));
+      const bp = near.sort((x, y) => dist(x.date) - dist(y.date))[0] || null;
       if (bp) {
         stmts.push(
           env.DB.prepare("UPDATE entries SET source = 'bank', ext_ref = ?, date = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(
