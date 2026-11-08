@@ -304,6 +304,79 @@ describe('Billingo kézi összevonás (POST /api/billingo/attach) és „Projekt
     expect(rows("SELECT id FROM entries WHERE kind = 'plan'")).toEqual([{ id: 'p_sajat' }]);
   });
 
+  it('visszavonás a Naplóból: a külön számla-sor, a terv eredeti állapota és a banki javaslat is visszaáll; a szinkron a külön sort frissíti', async () => {
+    await setup();
+    billingo.addDocument({ id: 9403, number: 'MNT-2026-000303', partner: 'Minta Kft.', gross: 120_000, dueDate: day(8), invoiceDate: day(-2) });
+    await syncBillingo(t!.env);
+    // ajánlat-terv a partnernél (más összeg, később) – ehhez az automatikus párosítás nem kötné, kézzel kerül alá
+    entry({ id: 'p_ajanlat', date: day(40), leaf_id: 'l_minta', amount: 300_000, tentative: 1, name: 'Weboldal 1. részlet' });
+    tx('t_jovair', 120_000, 'new', { plan_id: 'b9403', leaf_id: 'l_minta' });
+    const cols = 'id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, accepted_at, source, ext_ref, link_id, note';
+    const before = rows(`SELECT ${cols} FROM entries ORDER BY id`);
+    expect(before.map((e) => e.id)).toEqual(['b9403', 'p_ajanlat']);
+
+    const r = await t!.post('/api/billingo/attach', { id: 'b9403', plan_id: 'p_ajanlat' });
+    expect(r.status).toBe(200);
+    expect(n('entries', "id = 'b9403'")).toBe(0);
+    expect(row("SELECT ext_ref, tentative, bill_amount FROM entries WHERE id = 'p_ajanlat'")).toEqual({
+      ext_ref: 'billingo:9403',
+      tentative: 0,
+      bill_amount: 120_000,
+    });
+    expect(row("SELECT plan_id FROM bank_tx WHERE id = 't_jovair'").plan_id).toBe('p_ajanlat');
+
+    // a lépés a Naplóban visszavonhatóként jelenik meg; a válasz a bejegyzés azonosítóját is adja (a toast „Visszavon” gombjához)
+    const log = (await t!.get('/api/changelog')).data.items as any[];
+    const entry0 = log.find((x) => x.action === 'billingo.attach');
+    expect(entry0).toMatchObject({ undoable: 1, summary: expect.stringContaining('MNT-2026-000303') });
+    expect(r.data.log_id).toBe(entry0.id);
+
+    expect((await t!.post(`/api/changelog/${entry0.id}/undo`, {})).status).toBe(200);
+    expect(rows(`SELECT ${cols} FROM entries ORDER BY id`)).toEqual(before);
+    expect(row('SELECT plan_id FROM billingo_docs WHERE id = 9403').plan_id).toBe('b9403');
+    expect(row("SELECT plan_id FROM bank_tx WHERE id = 't_jovair'").plan_id).toBe('b9403');
+    expect((await t!.post(`/api/changelog/${entry0.id}/undo`, {})).status).toBe(400);
+
+    // a következő szinkron a visszaállított külön sort frissíti, nem hoz létre újat, és nem köti vissza a tervhez
+    await syncBillingo(t!.env);
+    expect(rows("SELECT id, ext_ref FROM entries WHERE kind = 'plan' ORDER BY id")).toEqual([
+      { id: 'b9403', ext_ref: 'billingo:9403' },
+      { id: 'p_ajanlat', ext_ref: null },
+    ]);
+    // újra összevonható
+    expect((await t!.post('/api/billingo/attach', { id: 'b9403', plan_id: 'p_ajanlat' })).status).toBe(200);
+  });
+
+  it('visszavonás: ha a tervet azóta módosították 409 (kényszerítve visszaáll); ha a számla már nem ehhez a tervhez tartozik 400', async () => {
+    await setup();
+    billingo.addDocument({ id: 9404, number: 'MNT-2026-000304', partner: 'Minta Kft.', gross: 95_000, dueDate: day(8), invoiceDate: day(-2) });
+    await syncBillingo(t!.env);
+    entry({ id: 'p_havi', date: day(35), leaf_id: 'l_minta', amount: 254_000, name: 'Havi díj' });
+    expect((await t!.post('/api/billingo/attach', { id: 'b9404', plan_id: 'p_havi' })).status).toBe(200);
+    const id = ((await t!.get('/api/changelog')).data.items as any[]).find((x) => x.action === 'billingo.attach').id;
+
+    // valaki azóta átírta a terv nevét
+    t!.sql.prepare("UPDATE entries SET name = 'Havi díj (módosítva)', updated_at = updated_at + 10000 WHERE id = 'p_havi'").run();
+    const conflict = await t!.post(`/api/changelog/${id}/undo`, {});
+    expect(conflict.status).toBe(409);
+    expect(n('entries', "id = 'b9404'")).toBe(0);
+    expect((await t!.post(`/api/changelog/${id}/undo`, { force: true })).status).toBe(200);
+    expect(row("SELECT ext_ref, name FROM entries WHERE id = 'b9404'")).toEqual({ ext_ref: 'billingo:9404', name: expect.any(String) });
+    expect(row("SELECT ext_ref, amount, plan_amount, bill_amount FROM entries WHERE id = 'p_havi'")).toEqual({
+      ext_ref: null,
+      amount: 254_000,
+      plan_amount: null,
+      bill_amount: null,
+    });
+
+    // újra összevonva, majd a terv a kukába került: a visszavonás nem tud mit visszaállítani
+    expect((await t!.post('/api/billingo/attach', { id: 'b9404', plan_id: 'p_havi' })).status).toBe(200);
+    const id2 = ((await t!.get('/api/changelog')).data.items as any[]).find((x) => x.action === 'billingo.attach' && !x.undone_at).id;
+    t!.sql.prepare("DELETE FROM entries WHERE id = 'p_havi'").run();
+    expect((await t!.post(`/api/changelog/${id2}/undo`, {})).status).toBe(400);
+    expect(n('entries', "id = 'b9404'")).toBe(0);
+  });
+
   it('lezárt / más számlás terv 400, ismeretlen számla-sor 404, olvasó 403 – változás nélkül', async () => {
     await setup();
     billingo.addDocument({ id: 9402, number: 'MNT-2026-000302', partner: 'Minta Kft.', gross: 63_500, dueDate: day(8), invoiceDate: day(-2) });

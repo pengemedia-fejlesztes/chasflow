@@ -35,7 +35,18 @@ export type Undo =
       moved: { entries: string[]; series: string[]; bank_tx: string[]; deleted: number[]; match_rules: string[]; partner_rules: string[] };
       rule: { pattern: string; prev: string | null };
     }
-  | { type: 'leaf.update'; id: string; before: Row };
+  | { type: 'leaf.update'; id: string; before: Row }
+  | {
+      /** Billingo „számla a terv alá”: a terv, a külön számla-sor (és a kifizetés tény) korábbi állapota, a számlára mutató sorok */
+      type: 'billingo.attach';
+      plan: string;
+      bill: string;
+      ext_ref: string;
+      expected: number | null;
+      before: Row[];
+      billingo_docs: number[];
+      bank_tx: string[];
+    };
 
 const chunks = <T>(a: T[], n = 90) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 
@@ -218,6 +229,37 @@ async function undoChange(env: Env, row: { id: number; ts: number; undo: string 
       stmts.push(
         env.DB.prepare(`UPDATE leaves SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).bind(...keys.map((k) => undo.before[k] ?? null), undo.id),
       );
+  } else if (undo.type === 'billingo.attach') {
+    // a számla azóta máshova került, vagy a terv már nincs meg: nincs mit visszaállítani
+    const cur = await env.DB.prepare('SELECT ext_ref, updated_at FROM entries WHERE id = ?')
+      .bind(undo.plan)
+      .first<{ ext_ref: string | null; updated_at: number }>();
+    const billBack = await env.DB.prepare('SELECT id FROM entries WHERE id = ?').bind(undo.bill).first();
+    if (!cur || cur.ext_ref !== undo.ext_ref || billBack)
+      throw new HttpError(400, 'A számla azóta már nem ehhez a tervhez tartozik – ez a lépés nem vonható vissza.');
+    if (!force && undo.expected !== null && Number(cur.updated_at) !== undo.expected)
+      throw new HttpError(409, 'A tervet azóta módosították – a visszavonás felülírja ezt a későbbi módosítást.');
+    // a terv (előbb, mert elengedi a számla ext_ref-jét), a külön számla-sor és a tény korábbi állapota
+    stmts.push(
+      ...(await upsertStmts(
+        env,
+        'entries',
+        undo.before.map((r) => ({ ...r, updated_at: t, updated_by: u.id })),
+      )),
+    );
+    for (const c of chunks(undo.billingo_docs))
+      if (c.length)
+        stmts.push(
+          env.DB.prepare(`UPDATE billingo_docs SET plan_id = ? WHERE plan_id = ? AND id IN (${c.map(() => '?').join(',')})`).bind(undo.bill, undo.plan, ...c),
+        );
+    for (const c of chunks(undo.bank_tx))
+      if (c.length)
+        stmts.push(
+          env.DB.prepare(`UPDATE bank_tx SET plan_id = ? WHERE plan_id = ? AND id IN (${c.map(() => '?').join(',')})`).bind(undo.bill, undo.plan, ...c),
+        );
+    // a kifizetés banki tétele a tény (visszaállított) kategóriáját követi
+    const actual = undo.before.find((r) => r.kind === 'actual');
+    if (actual) stmts.push(env.DB.prepare('UPDATE bank_tx SET leaf_id = ? WHERE actual_id = ?').bind(actual.leaf_id ?? null, actual.id));
   }
   stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
   try {

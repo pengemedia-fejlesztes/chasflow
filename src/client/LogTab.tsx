@@ -78,7 +78,7 @@ const SYS_LABEL: Record<string, string> = {
 
 function kindsOf(r: LogRow, items: Item[]): Kind[] {
   if (r.action === 'undo') return ['undo'];
-  if (r.action === 'leaf.merge') return ['merge'];
+  if (r.action === 'leaf.merge' || r.action === 'billingo.attach') return ['merge'];
   if (r.action === 'leaf.update') return ['partner'];
   if (r.action === 'trash.restore') return ['new'];
   const k = new Set<Kind>(items.map((i) => i.op));
