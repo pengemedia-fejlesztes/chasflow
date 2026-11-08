@@ -35,6 +35,8 @@ interface Session {
   token: string;
   userId: number;
   exp: number | null;
+  /** utolsó megújítás / átadás ideje */
+  at: number;
 }
 
 async function loadSession(env: Env): Promise<Session | null> {
@@ -42,7 +44,7 @@ async function loadSession(env: Env): Promise<Session | null> {
   const r = await env.DB.prepare("SELECT value, meta FROM secrets WHERE name = 'aggreg8_session'").first<{ value: string; meta: string | null }>();
   if (!r) return null;
   const meta = JSON.parse(r.meta || '{}');
-  return { token: r.value, userId: Number(meta.userId) || 0, exp: jwtExpMs(r.value) };
+  return { token: r.value, userId: Number(meta.userId) || 0, exp: jwtExpMs(r.value), at: Number(meta.at) || 0 };
 }
 
 async function saveSession(env: Env, token: string, userId: number) {
@@ -51,7 +53,7 @@ async function saveSession(env: Env, token: string, userId: number) {
     `INSERT INTO secrets (name, value, meta, updated_at) VALUES ('aggreg8_session', ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET value = excluded.value, meta = excluded.meta, updated_at = excluded.updated_at`,
   )
-    .bind(token, JSON.stringify({ userId }), now())
+    .bind(token, JSON.stringify({ userId, at: now() }), now())
     .run();
 }
 
@@ -118,14 +120,14 @@ async function call(token: string, method: string, url: string, body?: unknown, 
   }
 }
 
-/** a munkamenet megújítása, ha kevesebb mint 2 nap van hátra (vagy ha force) */
+/** a munkamenet megújítása: 6 óránként, vagy ha 2 napon belül lejárna (így ritka használat mellett is életben marad) */
 async function refreshIfNeeded(env: Env, s: Session, force = false): Promise<Session> {
-  if (!force && s.exp && s.exp - now() > 2 * 86400_000) return s;
+  if (!force && now() - s.at < 6 * 3600_000 && (!s.exp || s.exp - now() > 2 * 86400_000)) return s;
   const r = await call(s.token, 'POST', BACKEND + '/session-token/refresh', {});
   const tok = r && (r.sessionToken || r.token);
   if (!tok || typeof tok !== 'string') throw new Error('Az aggreg8 nem adott új munkamenetet.');
   await saveSession(env, tok, s.userId);
-  return { token: tok, userId: s.userId, exp: jwtExpMs(tok) };
+  return { token: tok, userId: s.userId, exp: jwtExpMs(tok), at: now() };
 }
 
 /** életben tartás (ütemezve, hétvégén is): csak megújít, ha kell */

@@ -6,7 +6,7 @@ import { partnerIdOf } from '../shared/partners';
 import { loadCatalog, syncCatalog } from './catalog';
 import { loadTasks } from './tasks';
 import { loadAccessMap, twofaMode } from './access';
-import { a8Status } from './aggreg8srv';
+import { a8KeepAlive, a8Status } from './aggreg8srv';
 import { accessOf } from '../shared/access';
 import { loadStock } from './stock';
 import { sheetIdOf } from '../shared/worktime';
@@ -373,6 +373,8 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (path === '/api/data' && req.method === 'GET') {
     // a nem engedélyezett adatkörök és menüpontok adatai ki sem mennek a böngészőbe
     const access = accessOf(u, await loadAccessMap(env));
+    // a Cashflow megnyitásakor is megújítjuk az aggreg8-belépést, ha 6 óránál régebbi (háttérben, nem várunk rá)
+    a8KeepAlive(env).catch(() => null);
     const b: any = await loadBundle(env, u);
     if (!access.data.bank) Object.assign(b, { accounts: [], bankTx: [] });
     if (!access.data.payroll) Object.assign(b, { employees: [], worktime: [] });

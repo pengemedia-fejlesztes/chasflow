@@ -159,6 +159,8 @@ export default {
       ctx.waitUntil(a8KeepAlive(env).then((r) => console.log('aggreg8 keepalive', r)));
       return;
     }
+    // minden ütemezett futásnál (szinkron-órán kívül és munkaszüneti napon is) életben tartjuk az aggreg8-belépést
+    ctx.waitUntil(a8KeepAlive(env).then((r) => console.log('aggreg8 keepalive', r)));
     // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),
