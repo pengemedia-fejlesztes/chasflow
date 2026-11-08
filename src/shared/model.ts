@@ -1,6 +1,7 @@
 // Cashflow számítások: havi/éves mátrix, egyenleg (tény + előrejelzés), becslés.
 import { budgetMonth, isBudgetPlan } from './budget';
-import type { DataBundle, Entry, Group, Leaf, Section } from './types';
+import { baseName } from './monthname';
+import type { DataBundle, Entry, Group, Leaf, Rep, Section } from './types';
 
 export const MS = ['Jan.', 'Feb.', 'Márc.', 'Ápr.', 'Máj.', 'Jún.', 'Júl.', 'Aug.', 'Szept.', 'Okt.', 'Nov.', 'Dec.'];
 export const MSL = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
@@ -53,6 +54,7 @@ export interface Index {
   firstActual: string | null;
   lastActual: string | null;
   lastPlanMonth: Record<string, string>; // leaf → utolsó tervezett hónap
+  seriesRep: Record<string, Rep>; // sorozat → ütemezés (havi, éves…)
   sumActualToToday: number;
   opening: number;
   bankBalance: number | null;
@@ -67,7 +69,9 @@ function add(map: LeafMonth, leaf: string, ym: string, v: number) {
   m.set(ym, (m.get(ym) || 0) + v);
 }
 
-export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' | 'accounts' | 'settings' | 'today'>): Index {
+export function buildIndex(
+  d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' | 'accounts' | 'settings' | 'today'> & Partial<Pick<DataBundle, 'series'>>,
+): Index {
   const groupById: Record<string, Group> = {};
   d.groups.forEach((g) => (groupById[g.id] = g));
   const leafById: Record<string, Leaf> = {};
@@ -133,6 +137,7 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
     firstActual,
     lastActual,
     lastPlanMonth,
+    seriesRep: Object.fromEntries((d.series || []).map((s) => [s.id, s.rep])),
     sumActualToToday,
     opening,
     bankBalance,
@@ -172,17 +177,42 @@ export function buildEstimates(ix: Index, horizon: string): LeafMonth {
   }
   // terv-korrekció: ahol a terv nem pontos (a számla / tény 200 Ft-nál jobban eltér tőle), a jövőbeli tervezett hónapokra
   // a becslés a múlt alapján jön – a terv maga nem változik, csak a „várható” érték
+  // A korrekció havi átlag, ezért csak a havonta ismétlődő tervek helyére kerülhet: az éves / negyedéves / egyszeri tétel
+  // (pl. februári éves domain-díj) várható értéke a terv marad.
   for (const [leaf, monthly] of planCorrections(ix)) {
     const months = ix.plan.get(leaf);
     if (!months) continue;
+    const plans = ix.entries.filter((e) => e.kind === 'plan' && !e.tentative && e.leaf_id === leaf);
     for (const ym of monthRange(addMonths(ix.cur, 1), horizon)) {
       const pv = months.get(ym);
       if (pv == null || pv === 0) continue;
-      const d = monthly - pv;
+      const inM = plans.filter((e) => ymOf(e.date) === ym);
+      const mon = inM.filter((e) => isMonthlyPlan(ix, e, plans));
+      if (!mon.length) continue;
+      // vegyes hónapban csak a havi rész helyére jön az átlag
+      const base = mon.length === inM.length ? pv : mon.reduce((a, e) => a + e.amount, 0);
+      const d = monthly - base;
       if (Math.abs(d) >= PLAN_TOL_FT) add(est, leaf, ym, d);
     }
   }
   return est;
+}
+
+/**
+ * Havonta ismétlődő terv-e: havi sorozat tétele; más ütemezésű (éves, negyedéves, egyszeri) sorozaté nem. Sorozat nélkül
+ * (pl. importált terv) akkor havi, ha az alkategóriában ugyanilyen nevű (a hónap nélkül) terv 1–2 hónapon belül is van –
+ * az éves díj így nem számít havinak, a havidíj egy kihagyott hónap mellett is.
+ */
+export function isMonthlyPlan(ix: Index, e: Entry, leafPlans: Entry[] = ix.entries.filter((x) => x.kind === 'plan' && x.leaf_id === e.leaf_id)): boolean {
+  const rep = e.series_id ? ix.seriesRep[e.series_id] : undefined;
+  if (rep) return rep === 'monthly';
+  const name = baseName(e.name).toLowerCase();
+  const ym = ymOf(e.date);
+  return leafPlans.some((x) => {
+    if (x.id === e.id || x.tentative || baseName(x.name).toLowerCase() !== name) return false;
+    const gap = Math.abs(monthDiff(ymOf(x.date), ym));
+    return gap >= 1 && gap <= 2;
+  });
 }
 
 /** A terv akkor pontos, ha a számla (vagy a tény) legfeljebb ennyivel tér el tőle. */

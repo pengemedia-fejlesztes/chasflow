@@ -158,10 +158,47 @@ describe('becslés: rendszeres tétel a múlt alapján, csak ahol nincs terv', (
 });
 
 describe('terv-korrekció', () => {
-  it.todo(
-    'KÉRDÉS (Laci): éves / nem havi terv (pl. éves domain-díj februárban) pontatlansága esetén a korrekció a 90 napos HAVI átlagot ' +
-      'teszi a terv helyére – a februári éves díj várható értéke így a havi átlag lesz. Csak havi tervekre kellene alkalmazni?',
-  );
+  describe('csak havi tervekre: az éves / nem havi terv várható értéke marad', () => {
+    // „Domain és tárhely” bevétel: havi tárhelydíj (terv 20 000, de 25 000-et számlázunk) + ügyfelenként éves domain-díjak
+    const dLeaves = [...leaves, { id: 'domain', group_id: 'gin', label: 'Domain és tárhely', sort: 9, archived: 0 }];
+    const series = [
+      { id: 's_tarhely', leaf_id: 'domain', name: 'Tárhely havi díj', rep: 'monthly' as const, day: 12 },
+      { id: 's_beta', leaf_id: 'domain', name: 'Domain – beta.hu', rep: 'yearly' as const, day: 5 },
+    ];
+    const tarhely = (ym: string, p: Partial<Entry> = {}) =>
+      E({ date: ym + '-12', leaf_id: 'domain', amount: 20_000, series_id: 's_tarhely', name: `Tárhely havi díj – ${ym}`, ...p });
+    const entries = [
+      ...['2026-08', '2026-09', '2026-10'].flatMap((ym) => [
+        E({ id: 'tdij' + ym, kind: 'actual', date: ym + '-14', leaf_id: 'domain', amount: 25_000 }),
+        tarhely(ym, { done: 1, plan_amount: 20_000, bill_amount: 25_000, link_id: 'tdij' + ym }),
+      ]),
+      ...['2026-12', '2027-01', '2027-02', '2027-03'].map((ym) => tarhely(ym)),
+      // egyszeri tételként felvett éves díj (sorozat nélkül) és éves sorozat tétele
+      E({ date: '2027-02-03', leaf_id: 'domain', amount: 100_000, name: 'Domain – alfa.hu' }),
+      E({ date: '2027-03-05', leaf_id: 'domain', amount: 50_000, series_id: 's_beta', name: 'Domain – beta.hu – 2027. március' }),
+      E({ date: '2027-04-20', leaf_id: 'domain', amount: 30_000, name: 'Domain – gamma.hu' }),
+    ];
+    const ix = buildIndex({ groups, leaves: dLeaves, series, entries, accounts: [], settings: { opening_balance: '3000000' }, today: '2026-11-07' });
+    const est = buildEstimates(ix, '2027-04');
+
+    it('a havi tárhelydíj hónapjaiban a korrekció a 90 napos havi átlag (25 000)', () => {
+      expect(planCorrections(ix).get('domain')).toBe(25_000);
+      expect(est.get('domain')?.get('2026-12')).toBe(5_000);
+      expect(est.get('domain')?.get('2027-01')).toBe(5_000);
+    });
+    it('az éves díj hónapjában csak a havi részt igazítja: február várható bevétele 25 000 + 100 000, nem a havi átlag', () => {
+      expect(est.get('domain')?.get('2027-02')).toBe(5_000);
+      expect(est.get('domain')?.get('2027-03')).toBe(5_000);
+      const ol = outlook(ix, { includeOffers: false, estimate: true });
+      expect(ol.months.find((m) => m.ym === '2027-02')!.net).toBe(125_000);
+      expect(ol.months.find((m) => m.ym === '2027-03')!.net).toBe(75_000);
+    });
+    it('csak éves díjat tartalmazó hónapra nincs korrekció', () => {
+      expect(est.get('domain')?.has('2027-04')).toBe(false);
+      const m = buildMatrix(ix, { ...defaultFilters(ix.today), from: '2027-04', to: '2027-04', estimate: true });
+      expect(m.net[0]).toBe(30_000);
+    });
+  });
   it('havi tervnél a jövőbeli tervhónap várható értéke a 90 napos havi átlag (a terv nem változik)', () => {
     const entries = [
       ...['2026-08-12', '2026-09-12', '2026-10-12'].map((date) => E({ kind: 'actual', date, leaf_id: 'konyv', amount: -66_000 })),
