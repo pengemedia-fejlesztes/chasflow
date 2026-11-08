@@ -5,7 +5,6 @@ import {
   BILLINGS,
   BILLING_LABEL,
   PROFILE_FIELDS,
-  availableOf,
   billablesFor,
   effective,
   emptyProfile,
@@ -21,6 +20,7 @@ import type { PartnerStat } from '../../shared/partners';
 import { api } from './api';
 import { MoneyInput } from './PartnerModal';
 import { ProductCombo } from './ProductCombo';
+import { availOf, useInventory } from './StockView';
 import { normalizeText } from '../../shared/categories';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Pill, card, eyebrow, inputStyle, R } from './ui';
@@ -146,6 +146,7 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
   const { run, data } = useStore();
   const ym = data.today.slice(0, 7);
   const usable = products.filter((x) => !x.archived || x.id === a?.product_id);
+  const inv = useInventory();
   const [name, setName] = useState(products.find((x) => x.id === a?.product_id)?.name || '');
   // a beírt / kiválasztott név a törzsből (pontos egyezés); ha nincs ilyen, mentéskor új termék lesz belőle
   const prod = usable.find((x) => normalizeText(x.name) === normalizeText(name));
@@ -214,9 +215,9 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
             style={sel}
           />
           {name.trim() && !prod && <span style={{ font: `500 12.5px ${FONT}`, color: C.offer }}>Új tétel: mentéskor felkerül a törzsbe is.</span>}
-          {prod && availableOf(prod, data.partnerProducts || []) !== null && (
+          {prod && availOf(inv, prod.id) !== null && (
             <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
-              Elérhető: {fmt(availableOf(prod, data.partnerProducts || [])!)} {prod.unit}
+              Elérhető: {fmt(availOf(inv, prod.id)!)} {prod.unit}
             </span>
           )}
         </Field>

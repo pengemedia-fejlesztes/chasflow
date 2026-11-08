@@ -35,7 +35,7 @@ describe('termékszinkron SQLite-on', () => {
     expect(r1).toEqual({ products: 2, assigns: 1 });
     expect(await syncCatalog(env)).toEqual({ products: 0, assigns: 0 });
     const c = await loadCatalog(env);
-    expect(c.products.map((p) => [p.name, p.price, p.stock])).toEqual([
+    expect(c.products.map((p) => [p.name, p.price, p.grp ?? null])).toEqual([
       ['M3-weboldal', 1000000, null],
       ['Marketing tanácsadás', 1000000, null],
     ]);

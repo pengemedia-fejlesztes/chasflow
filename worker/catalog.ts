@@ -20,6 +20,7 @@ const DDL = [
     sku VARCHAR(60),
     note TEXT,
     stock DOUBLE,
+    grp VARCHAR(80),
     archived INTEGER NOT NULL DEFAULT 0,
     updated_at BIGINT NOT NULL
   )`,
@@ -54,6 +55,12 @@ export function ensureCatalog(env: Env): Promise<boolean> {
         .then(() => true)
         .catch(() => false);
       if (!hasStock) await env.DB.prepare('ALTER TABLE products ADD COLUMN stock DOUBLE').run();
+      // termékcsoport
+      const hasGrp = await env.DB.prepare('SELECT grp FROM products LIMIT 1')
+        .all()
+        .then(() => true)
+        .catch(() => false);
+      if (!hasGrp) await env.DB.prepare('ALTER TABLE products ADD COLUMN grp VARCHAR(80)').run();
       return true;
     })().catch((e) => {
       ready = null;
@@ -79,7 +86,7 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
     await setSetting(env, 'catalog_seeded', String(now()));
   }
   const [p, a, f] = await env.DB.batch([
-    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, stock, archived, updated_at FROM products ORDER BY name'),
+    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, grp, archived, updated_at FROM products ORDER BY name'),
     env.DB.prepare('SELECT id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at FROM partner_products ORDER BY start_ym'),
     env.DB.prepare('SELECT partner_key, data FROM partner_profiles'),
   ]);
@@ -93,7 +100,7 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
   }
   const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
-    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), stock: num(r.stock), archived: Number(r.archived) })),
+    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), archived: Number(r.archived) })),
     partnerProducts: (a.results as any[]).map((r) => ({ ...r, qty: Number(r.qty), price: num(r.price) })),
     partnerProfiles: profiles,
   };
@@ -246,7 +253,7 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
       currency: b.currency !== undefined ? (['HUF', 'EUR', 'USD'].includes(b.currency) ? b.currency : 'HUF') : cur?.currency || 'HUF',
       billing: b.billing !== undefined ? billingOf(b.billing) || 'havi' : cur?.billing || 'havi',
       sku: b.sku !== undefined ? str(b.sku, 60) || null : (cur?.sku ?? null),
-      stock: b.stock !== undefined ? (b.stock === null || b.stock === '' ? null : money(b.stock, 'készlet')) : (cur?.stock ?? null),
+      grp: b.grp !== undefined ? str(b.grp, 80) || null : (cur?.grp ?? null),
       note:
         b.note !== undefined
           ? String(b.note ?? '')
@@ -262,11 +269,11 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
     if (clash) throw new HttpError(409, `Már van „${v.name}” nevű termék vagy szolgáltatás.`);
     const nid = id || randomId('p');
     await env.DB.prepare(
-      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, stock, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, grp, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind, unit = excluded.unit, price = excluded.price, vat = excluded.vat,
-         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, stock = excluded.stock, archived = excluded.archived, updated_at = excluded.updated_at`,
+         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, grp = excluded.grp, archived = excluded.archived, updated_at = excluded.updated_at`,
     )
-      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.stock, v.archived, t)
+      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.grp, v.archived, t)
       .run();
     await logChange(
       env,

@@ -7,7 +7,6 @@ import {
   CURRENCIES,
   UNITS,
   VATS,
-  availableOf,
   billablesFor,
   effective,
   grossOf,
@@ -24,6 +23,7 @@ import { money } from './PartnerBilling';
 import { useAllPartners } from './PartnerCard';
 import { MoneyInput } from './PartnerModal';
 import { useStore } from './store';
+import { availOf, useInventory } from './StockView';
 import { C, FONT, FONT_H, Field, Pill, Seg, card, inputStyle } from './ui';
 import { fmt } from '../../shared/model';
 
@@ -82,6 +82,7 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
   const [sel, setSel] = useState<string | null>(null);
   const products = data.products || [];
   const assigns = data.partnerProducts || [];
+  const inv = useInventory();
   const ym = data.today.slice(0, 7);
   const usage = useMemo(() => {
     const m = new Map<string, { n: number; monthly: number }>();
@@ -185,7 +186,7 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
                 </b>
                 <span style={{ textAlign: 'right', font: `400 13.5px ${FONT}`, color: C.ink }}>{/^\d+$/.test(p.vat) ? `${p.vat}%` : p.vat}</span>
                 {(() => {
-                  const av = availableOf(p, assigns);
+                  const av = availOf(inv, p.id);
                   return (
                     <span style={{ textAlign: 'right', font: `500 14px ${FONT}`, color: av === null ? C.faint : av > 0 ? C.inc : C.neg }}>
                       {av === null ? '–' : `${fmt(av)} ${p.unit}`}
@@ -224,7 +225,8 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
   const [currency, setCurrency] = useState(p?.currency || 'HUF');
   const [billing, setBilling] = useState<Billing>(p?.billing || 'havi');
   const [sku, setSku] = useState(p?.sku || '');
-  const [stock, setStock] = useState(p?.stock === null || p?.stock === undefined ? '' : String(Math.round(p.stock)));
+  const [grp, setGrp] = useState(p?.grp || '');
+  const inv = useInventory();
   const [note, setNote] = useState(p?.note || '');
   const [busy, setBusy] = useState(false);
   const users = (data.partnerProducts || []).filter((a) => p && a.product_id === p.id);
@@ -237,7 +239,7 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       async () => {
         const r = await api<{ id: string }>(p ? `/api/products/${encodeURIComponent(p.id)}` : '/api/products', {
           method: p ? 'PUT' : 'POST',
-          body: { name, kind, unit, price: Number(price || 0), vat, currency, billing, sku, note, stock: stock === '' ? null : Number(stock), ...extra },
+          body: { name, kind, unit, price: Number(price || 0), vat, currency, billing, sku, note, grp, ...extra },
         });
         id = r.id;
       },
@@ -311,8 +313,21 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
         <Field label="Cikkszám / belső kód">
           <input value={sku} onChange={(e) => setSku(e.target.value)} maxLength={60} disabled={!canEdit} style={sel} />
         </Field>
-        <Field label="Készlet (üres: nincs készletkezelés)">
-          <MoneyInput value={stock} onChange={setStock} disabled={!canEdit} placeholder="pl. 10" style={sel} />
+        <Field label="Termékcsoport">
+          <input
+            value={grp}
+            onChange={(e) => setGrp(e.target.value)}
+            list="cf-groups"
+            maxLength={80}
+            disabled={!canEdit}
+            placeholder="pl. Késztermékek"
+            style={sel}
+          />
+          <datalist id="cf-groups">
+            {[...new Set((data.products || []).map((x) => x.grp).filter(Boolean))].map((g) => (
+              <option key={g!} value={g!} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Leírás, megjegyzés" style={{ gridColumn: '1 / -1' }}>
           <textarea
@@ -327,14 +342,14 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       </div>
       <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
         Bruttó egységár: <b style={{ color: C.navy }}>{money(grossOf(net, vat), currency)}</b>
-        {p && availableOf(p, data.partnerProducts || []) !== null && (
+        {p && inv.get(p.id)?.tracked && (
           <>
             {' '}
-            · elérhető:{' '}
+            · raktáron {fmt(inv.get(p.id)!.onHand)}, lefoglalva {fmt(inv.get(p.id)!.reserved)}, elérhető:{' '}
             <b style={{ color: C.navy }}>
-              {fmt(availableOf(p, data.partnerProducts || [])!)} {p.unit}
+              {fmt(inv.get(p.id)!.available)} {p.unit}
             </b>{' '}
-            (készlet − partnerekhez rendelt mennyiség)
+            · <a href="#/stock">Raktárkészlet ›</a>
           </>
         )}
       </span>

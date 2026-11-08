@@ -43,8 +43,8 @@ export interface Product {
   /** cikkszám / belső kód */
   sku: string | null;
   note: string | null;
-  /** készlet (darab); null = nincs készletkezelés (pl. szolgáltatás) */
-  stock?: number | null;
+  /** termékcsoport (pl. Késztermékek, Szolgáltatások) */
+  grp?: string | null;
   archived: number;
   updated_at: number;
 }
@@ -337,10 +337,4 @@ export function deriveCatalog(
   };
   const products = [...byName.values()].map((as) => ({ name: as[0].name, price: mode(as.map((a) => a.price)), billing: mode(as.map((a) => a.billing)) }));
   return { products: products.sort((a, b) => a.name.localeCompare(b.name, 'hu')), assigns };
-}
-
-/** elérhető darabszám: készlet − a partnerekhez rendelt mennyiség (készlet nélkül: korlátlan → null) */
-export function availableOf(p: Pick<Product, 'id' | 'stock'>, assigns: PartnerProduct[]): number | null {
-  if (p.stock === null || p.stock === undefined) return null;
-  return p.stock - assigns.filter((a) => a.product_id === p.id).reduce((s, a) => s + a.qty, 0);
 }

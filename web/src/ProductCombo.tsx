@@ -1,10 +1,11 @@
 // Megnevezés-mező kereső legördülővel a termék- és szolgáltatástörzsből: gépelésre szűr, a kiválasztott tétel
 // hozza a nevet, az árat (a partner egyedi árát, ha van) és mutatja az elérhető darabszámot.
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
-import { BILLING_LABEL, availableOf, effective, grossOf, type PartnerProduct, type Product } from '../../shared/catalog';
+import { BILLING_LABEL, effective, grossOf, type PartnerProduct, type Product } from '../../shared/catalog';
 import { normalizeText } from '../../shared/categories';
 import { fmt } from '../../shared/model';
 import { useStore } from './store';
+import { availOf, useInventory } from './StockView';
 import { C, FONT, R, SHADOW } from './ui';
 
 export interface ComboPick {
@@ -40,6 +41,7 @@ export function ProductCombo({
   const { data } = useStore();
   const products = data.products || [];
   const assigns = data.partnerProducts || [];
+  const inv = useInventory();
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const blurT = useRef<number | null>(null);
@@ -54,9 +56,9 @@ export function ProductCombo({
       .map((p) => {
         const a = assigns.find((x) => x.partner_key === partnerKey && x.product_id === p.id) || null;
         const e = a ? effective(a, p) : { price: p.price, net: p.price, gross: grossOf(p.price, p.vat), billing: p.billing };
-        return { p, a, e, avail: availableOf(p, assigns) };
+        return { p, a, e, avail: availOf(inv, p.id) };
       });
-  }, [products, assigns, nq, partnerKey]);
+  }, [products, assigns, nq, partnerKey, inv]);
   const pick = (i: number) => {
     const x = list[i];
     if (!x) return;

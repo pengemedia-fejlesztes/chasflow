@@ -621,7 +621,7 @@ export function TaskEditor({ task, defaults, onClose }: { task: Task | null; def
   const sel: CSSProperties = { ...inputStyle, height: 42 };
   return (
     <Modal onClose={onClose} width={640} title={task ? 'Feladat szerkesztése' : 'Új feladat'} label={task ? 'Feladat szerkesztése' : 'Új feladat'}>
-      <form onSubmit={(e) => (e.preventDefault(), save())} style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 2px' }}>
+      <form onSubmit={(e) => (e.preventDefault(), save())} style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 24px 24px' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="radiogroup" aria-label="Típus">
           {TASK_TYPES.map(([k, l]) => (
             <button

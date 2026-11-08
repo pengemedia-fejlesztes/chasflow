@@ -13,6 +13,7 @@ import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { CatalogView } from './CatalogView';
+import { StockView } from './StockView';
 import { TasksView, useMyTaskCount } from './TasksView';
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
@@ -23,8 +24,8 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
-export type View = 'overview' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'breakeven' | 'settings';
-const VIEWS: View[] = ['overview', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'breakeven', 'settings'];
+export type View = 'overview' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'stock' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'stock', 'breakeven', 'settings'];
 
 /** #/nézet[/kategória][?p=partner&t=fül] */
 export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
@@ -147,6 +148,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     ['bank', 'Bankszinkron', newTx],
     ['partners', 'Partnertörzs', 0],
     ['products', 'Termékek, szolgáltatások', 0],
+    ['stock', 'Raktárkészlet', 0],
     ['breakeven', 'Fedezeti pont', 0],
     ['settings', 'Beállítások', 0],
   ];
@@ -363,6 +365,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'bank' && <BankView />}
         {view === 'partners' && <PartnerRegistry page />}
         {view === 'products' && <CatalogView />}
+        {view === 'stock' && <StockView />}
         {view === 'breakeven' && <BreakevenView />}
         {view === 'settings' && <SettingsView onLogout={onLogout} />}
       </main>

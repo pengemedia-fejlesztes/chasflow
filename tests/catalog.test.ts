@@ -65,7 +65,7 @@ describe('terméktörzs: számlázási ütem', () => {
   });
 });
 
-import { availableOf, deriveCatalog, productNameOf } from '../shared/catalog';
+import { deriveCatalog, productNameOf } from '../shared/catalog';
 import { partnerIdOf } from '../shared/partners';
 
 describe('törzs a partnerek tételeiből', () => {
@@ -101,14 +101,5 @@ describe('törzs a partnerek tételeiből', () => {
     expect(k).toMatchObject({ qty: 1, price: 1178740, billing: 'havi', start_ym: '2026-11', end_ym: '2027-01', offer: false });
     expect(d.assigns.find((a) => a.partner_key === 'naturtex')).toMatchObject({ qty: 2, price: 479528, billing: 'havi' });
     expect(d.assigns.find((a) => a.partner_key === 'hitelespenzugyek')).toMatchObject({ qty: 1, price: 771654, billing: 'egyszeri', offer: true });
-  });
-  it('elérhető darabszám: készlet − hozzárendelt mennyiség', () => {
-    const a = [
-      { product_id: 'p1', qty: 3 },
-      { product_id: 'p1', qty: 2 },
-      { product_id: 'p2', qty: 9 },
-    ] as any;
-    expect(availableOf({ id: 'p1', stock: 10 }, a)).toBe(5);
-    expect(availableOf({ id: 'p1', stock: null }, a)).toBeNull();
   });
 });

@@ -200,6 +200,11 @@ export interface DataBundle {
   tasks?: import('./tasks').Task[];
   taskUsers?: import('./tasks').TaskUser[];
   tasksError?: string;
+  /** raktárak, raktárankénti készlet, legutóbbi készletmozgások */
+  warehouses?: import('./stock').Warehouse[];
+  stockLevels?: import('./stock').StockLevel[];
+  stockMoves?: import('./stock').StockMove[];
+  stockError?: string;
 }
 
 export interface LostOffer {

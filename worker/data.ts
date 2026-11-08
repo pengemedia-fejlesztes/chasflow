@@ -5,6 +5,7 @@ import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
 import { loadCatalog, syncCatalog } from './catalog';
 import { loadTasks } from './tasks';
+import { loadStock } from './stock';
 import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
@@ -96,6 +97,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
   ]);
   const catalog = await loadCatalog(env);
   const tasks = await loadTasks(env, u);
+  const stock = await loadStock(env);
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -122,6 +124,7 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     worktime: worktime.results as any,
     ...catalog,
     ...tasks,
+    ...stock,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }
