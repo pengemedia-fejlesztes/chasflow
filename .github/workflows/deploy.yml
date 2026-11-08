@@ -99,8 +99,16 @@ jobs:
           BK=.backup/$TS
           mkdir -p "$BK"
           WEB_CONFIG="$HOME/public_html/Cashflow/.htaccess"
+          # Az SSH shell nem aktiválja a cPanel Node-környezetet.
+          NODE_BIN=""
+          CONFIG_NODE=$(awk '$1 == "PassengerNodejs" {gsub(/"/, "", $2); print $2; exit}' "$WEB_CONFIG" 2>/dev/null || true)
+          for CANDIDATE in "$CONFIG_NODE" "$(command -v node || true)" "$HOME/nodevenv/$APP_DIR"/*/bin/node /opt/alt/alt-nodejs*/root/usr/bin/node; do
+            [ -x "$CANDIDATE" ] || continue
+            if "$CANDIDATE" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)'; then NODE_BIN="$CANDIDATE"; break; fi
+          done
+          [ -n "$NODE_BIN" ] || { echo "Nem találom a tárhely meglévő Node futtatókörnyezetét."; exit 1; }
           # A tárhely útvonalát még az alkalmazás cseréje előtt ellenőrizzük.
-          node "$NEW/server/enforce-https.mjs" "$WEB_CONFIG" "$BK/public-htaccess"
+          "$NODE_BIN" "$NEW/server/enforce-https.mjs" "$WEB_CONFIG" "$BK/public-htaccess"
           mv dist "$BK/dist"
           cp -a dist-worker server "$BK/"
           [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
@@ -112,7 +120,7 @@ jobs:
           rm -rf "$NEW"
           # Passenger útvonal: a HTTPS-átirányítás a publikus webrootban is kötelező.
           # Előbb száraz próba, majd mentés és célzott, visszavonható beillesztés.
-          node server/enforce-https.mjs "$WEB_CONFIG" "$BK/public-htaccess" --apply
+          "$NODE_BIN" server/enforce-https.mjs "$WEB_CONFIG" "$BK/public-htaccess" --apply
           echo "$SHA" > .deployed-sha
           mkdir -p tmp && touch tmp/restart.txt
           # az utolsó 5 mentés marad meg
