@@ -13,6 +13,7 @@ import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { CatalogView } from './CatalogView';
+import { TasksView, useMyTaskCount } from './TasksView';
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
 import { IncomeView } from './IncomeView';
@@ -22,8 +23,8 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'breakeven' | 'settings';
-const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'breakeven', 'settings'];
+export type View = 'overview' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'breakeven', 'settings'];
 
 /** #/nézet[/kategória][?p=partner&t=fül] */
 export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
@@ -137,8 +138,10 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     setFilters({ groupId: id });
     setView('cat');
   };
+  const myTasks = useMyTaskCount();
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
+    ['tasks', 'Feladatok', myTasks],
     ['alerts', 'Összevonás', flags.length + mc.billingo + mc.bank + mc.names],
     ['income', 'Tervezett bevételek, kiadások', openIncome],
     ['bank', 'Bankszinkron', newTx],
@@ -352,6 +355,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             openNew={(leaf) => setModal(leaf ? { leaf } : {})}
           />
         )}
+        {view === 'tasks' && <TasksView />}
         {view === 'alerts' && <AlertsView />}
         {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
         {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}

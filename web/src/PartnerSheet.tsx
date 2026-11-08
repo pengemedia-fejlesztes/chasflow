@@ -14,6 +14,7 @@ import { itemLabel } from './MonthList';
 import { rowKey, shiftDate } from './logic';
 import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow } from './PartnerCard';
 import { PartnerBillingTab } from './PartnerBilling';
+import { PartnerTasks } from './TasksView';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, relTime, R } from './ui';
 
@@ -74,12 +75,13 @@ export function PartnerSheet({
   onRenamed: (key: string) => void;
 }) {
   const { data, ix, commit, canEdit, showToast } = useStore();
-  const [tab, setTab0] = useState<'main' | 'inv' | 'srv' | 'set'>(() => {
+  const openTasks = (data.tasks || []).filter((t) => t.partner_key === p.key && t.status === 'nyitott').length;
+  const [tab, setTab0] = useState<'main' | 'inv' | 'tasks' | 'srv' | 'set'>(() => {
     const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
-    return t === 'inv' || t === 'set' || t === 'srv' ? t : 'main';
+    return t === 'inv' || t === 'set' || t === 'srv' || t === 'tasks' ? t : 'main';
   });
   // a fül is a címsorba kerül, hogy frissítéskor ugyanitt nyíljon meg
-  const setTab = (k: 'main' | 'inv' | 'srv' | 'set') => {
+  const setTab = (k: 'main' | 'inv' | 'tasks' | 'srv' | 'set') => {
     setTab0(k);
     const [path, qs] = location.hash.split('?');
     const q = new URLSearchParams(qs || '');
@@ -294,6 +296,7 @@ export function PartnerSheet({
           [
             ['main', 'Áttekintés'],
             ['inv', 'Számlák és fizetések'],
+            ['tasks', `Feladatok${openTasks ? ` (${openTasks})` : ''}`],
             ['srv', 'Szolgáltatások és számlázás'],
             ['set', 'Beállítások'],
           ] as const
@@ -488,6 +491,7 @@ export function PartnerSheet({
         </div>
       )}
 
+      {tab === 'tasks' && <PartnerTasks partnerKey={p.key} />}
       {tab === 'srv' && <PartnerBillingTab p={p} />}
 
       {tab === 'set' && (

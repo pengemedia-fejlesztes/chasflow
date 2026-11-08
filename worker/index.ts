@@ -8,6 +8,7 @@ import { navEnabled, syncNav } from './nav';
 import { handleIngest, handleIngestToken } from './ingest';
 import { handlePartners } from './partners';
 import { handleCatalog } from './catalog';
+import { handleTasks } from './tasks';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
@@ -87,7 +88,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if ((env as any).REQUIRE_ADMIN_2FA === '1' && u.role === 'admin' && !u.totp_enabled)
     throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleCatalog, handleChangelog]) {
+  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleCatalog, handleTasks, handleChangelog]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }

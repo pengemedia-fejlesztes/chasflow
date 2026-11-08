@@ -196,6 +196,10 @@ export interface DataBundle {
   partnerProducts?: import('./catalog').PartnerProduct[];
   partnerProfiles?: Record<string, import('./catalog').PartnerProfile>;
   catalogError?: string;
+  /** feladatok (admin: mind, más: a sajátjai) és a kiosztható felhasználók */
+  tasks?: import('./tasks').Task[];
+  taskUsers?: import('./tasks').TaskUser[];
+  tasksError?: string;
 }
 
 export interface LostOffer {
