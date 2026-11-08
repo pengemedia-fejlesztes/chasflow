@@ -150,7 +150,27 @@ describe('xls import', () => {
   it.todo(
     'KÉRDÉS: a kukába tett (törölt) importált tény újraimportáláskor visszajöjjön-e? Most visszajön, mert az azonosító determinisztikus, és csak az élő tételekkel ütközik.',
   );
-  it.todo('KÉRDÉS: TERVEK cserénél a fájl legkorábbi dátumától MINDEN későbbi importált nyitott terv törlődik, akkor is, ha a fájl csak 2 hónapot fed le. Ez a szándék?');
+  it('TERVEK csere csak a fájl által lefedett hónapokat (legkorábbi–legkésőbbi hónap) cseréli: az előtte és utána lévő importált tervek megmaradnak', async () => {
+    t = await createTestApp();
+    const cat = '3 Működési költségek - Iroda bérlés, rezsi';
+    const months = ['2026-11', '2026-12', '2027-01', '2027-02', '2027-03'];
+    await t.post('/api/import', { kind: 'plan', rows: months.map((m) => ({ date: `${m}-10`, name: 'Bérleti díj', category: cat, amount: -380_000 })), replacePlans: true });
+    // az új fájl csak 2 hónapot fed le (december közepétől január végéig), új összeggel
+    const plan2 = [
+      { date: '2026-12-15', name: 'Bérleti díj', category: cat, amount: -395_000 },
+      { date: '2027-01-31', name: 'Bérleti díj', category: cat, amount: -395_000 },
+    ];
+    await t.post('/api/import', { kind: 'plan', rows: plan2, replacePlans: true });
+    const all = t.sql.prepare("SELECT date, amount FROM entries WHERE kind = 'plan' ORDER BY date").all();
+    expect(all).toEqual([
+      { date: '2026-11-10', amount: -380_000 },
+      // a december 10-i régi terv a lefedett hónapban van → cserélődik, akkor is, ha a fájl első dátuma később van
+      { date: '2026-12-15', amount: -395_000 },
+      { date: '2027-01-31', amount: -395_000 },
+      { date: '2027-02-10', amount: -380_000 },
+      { date: '2027-03-10', amount: -380_000 },
+    ]);
+  });
 });
 
 describe('beállítások és fizetési szabály', () => {

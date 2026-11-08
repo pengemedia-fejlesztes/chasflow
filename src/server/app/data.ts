@@ -5,6 +5,7 @@ import { groupId, groupSortKey, hash, leafId, normalizeImportRow, normalizeText,
 import { partnerKey } from '../../shared/match';
 import { partnerIdOf } from '../../shared/partners';
 import { sheetIdOf } from '../../shared/worktime';
+import { addMonths, ymOf } from '../../shared/model';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../../shared/types';
 import { publicUser, requireRole, type User } from './auth';
 import { navEnabled } from './nav';
@@ -374,7 +375,8 @@ async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], 
   const seen: Record<string, number> = {};
   let imported = 0,
     skipped = 0,
-    minDate = '9999-12-31';
+    minDate = '9999-12-31',
+    maxDate = '0000-01-01';
   const t = now();
   const prepared: { lid: string; n: ReturnType<typeof normalizeImportRow> & {}; ext: string }[] = [];
   for (const r of rows) {
@@ -390,10 +392,16 @@ async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], 
     const ext = `imp:${kind}:${hash(base)}:${seen[base]}`;
     prepared.push({ lid, n, ext });
     if (n.date < minDate) minDate = n.date;
+    if (n.date > maxDate) maxDate = n.date;
   }
   if (kind === 'plan' && replacePlans && prepared.length) {
-    // az új tervfájl felülírja a korábban importált, még nyitott terveket az időszakában
-    stmts.push(env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND source = 'import' AND done = 0 AND date >= ?").bind(minDate));
+    // az új tervfájl csak a saját időszakában (legkorábbi–legkésőbbi hónapja) írja felül a korábban importált, még nyitott
+    // terveket – az előtte és utána lévő hónapok tervei megmaradnak (egy 2 hónapos fájl nem törli a teljes jövőt)
+    const from = ymOf(minDate) + '-01';
+    const until = addMonths(ymOf(maxDate), 1) + '-01';
+    stmts.push(
+      env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND source = 'import' AND done = 0 AND date >= ? AND date < ?").bind(from, until),
+    );
   }
   for (const { lid, n, ext } of prepared) {
     stmts.push(

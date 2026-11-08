@@ -747,7 +747,7 @@ function DataTab() {
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, font: `500 13px ${FONT}`, color: C.muted }}>
             <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} style={{ accentColor: C.blue }} />
-            Az új tervfájl lecseréli a korábban importált, még nyitott terveket (a fájl első dátumától)
+            Az új tervfájl lecseréli a korábban importált, még nyitott terveket (csak a fájl által lefedett hónapokban)
           </label>
         </div>
         <div style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
