@@ -141,3 +141,68 @@ describe('sorozat-szerkesztő', () => {
     expect(body.delete.sort()).toEqual(['p11', 'p12']);
   });
 });
+
+describe('éves ütemezés', () => {
+  async function openNew() {
+    const onClose = vi.fn();
+    await act(async () =>
+      root.render(
+        <StoreProvider initial={initial()}>
+          <EntryModal leaf="l_out" onClose={onClose} />
+        </StoreProvider>,
+      ),
+    );
+    return onClose;
+  }
+
+  it('új tételnél választható az „Évente”: az időtartam években, 3 év → 3 tétel 12 havonta, éves sorozatként', async () => {
+    const onClose = await openNew();
+    await type(document.querySelector('[aria-label="Összeg forintban"]')!, '24990');
+    await type(document.querySelector('input[placeholder^="Megnevezés"]')!, 'Domain megújítás');
+    await click(button('Évente'));
+    expect(button('1 év')).toBeTruthy();
+    expect(button('3 év').getAttribute('aria-pressed')).toBe('true');
+    expect(button('24 hó')).toBeUndefined();
+    await click(button('Mentés'));
+    expect(onClose).toHaveBeenCalled();
+    const body = vi.mocked(api).mock.calls.find((c) => c[0] === '/api/entries/batch')![1]!.body as any;
+    expect(body.series).toEqual([expect.objectContaining({ leaf_id: 'l_out', name: 'Domain megújítás', rep: 'yearly', day: 7 })]);
+    expect(body.upsert.map((e: any) => e.date)).toEqual(['2026-11-07', '2027-11-07', '2028-11-07']);
+    expect(body.upsert.every((e: any) => e.amount === -24_990 && e.series_id === body.series[0].id)).toBe(true);
+  });
+
+  it('„Évente” után visszaváltva havira a havi időtartamok jönnek vissza (nem marad 36 hónapos érték)', async () => {
+    await openNew();
+    await type(document.querySelector('[aria-label="Összeg forintban"]')!, '10000');
+    await click(button('Évente'));
+    await click(button('Havi'));
+    expect(button('6 hó').getAttribute('aria-pressed')).toBe('true');
+    await click(button('Mentés'));
+    const body = vi.mocked(api).mock.calls.find((c) => c[0] === '/api/entries/batch')![1]!.body as any;
+    expect(body.series[0].rep).toBe('monthly');
+    expect(body.upsert).toHaveLength(6);
+  });
+
+  it('éves sorozat szerkesztésekor látszik az „Évente” ütemezés, és a mentés megtartja', async () => {
+    const yearly = initial();
+    yearly.series[0].rep = 'yearly';
+    yearly.entries = [plan('p11', '2026-11-10'), plan('p27', '2027-11-10')];
+    const onClose = vi.fn();
+    await act(async () =>
+      root.render(
+        <StoreProvider initial={yearly}>
+          <EntryModal edit={{ key: 's1' }} onClose={onClose} />
+        </StoreProvider>,
+      ),
+    );
+    expect(document.body.textContent).toContain('Évente');
+    await type(document.querySelector('[aria-label="Összeg forintban"]')!, '260000');
+    await click(button('Mentés'));
+    const body = vi.mocked(api).mock.calls.find((c) => c[0] === '/api/entries/batch')![1]!.body as any;
+    expect(body.series[0].rep).toBe('yearly');
+    expect(body.upsert.map((e: any) => [e.date, e.amount])).toEqual([
+      ['2026-11-10', 260_000],
+      ['2027-11-10', 260_000],
+    ]);
+  });
+});

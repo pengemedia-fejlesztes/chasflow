@@ -14,7 +14,7 @@ import { targetTracking } from '../shared/insights';
 import type { Entry, NavInvoice } from '../shared/types';
 import { api } from './api';
 import { PartnerLink } from './PartnerCard';
-import { MergeBank, MergeBillingo, MergeNames, useMergeCounts } from './MergeTabs';
+import { MergeBank, MergeBillingo, MergeNames, MergeSigns, useMergeCounts } from './MergeTabs';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Modal, Pill, card, R } from './ui';
 
@@ -72,7 +72,7 @@ export function useFlags(): Flag[] {
   }, [data.entries, data.bankTx, data.navInvoices, data.settings.flags_ack, data.settings.profit_target, data.today, ix]);
 }
 
-type MergeTab = 'bill' | 'new' | 'gap' | 'nav' | 'bank' | 'names';
+type MergeTab = 'bill' | 'new' | 'gap' | 'nav' | 'bank' | 'names' | 'sign';
 /** melyik riasztás melyik fülön */
 const TAB_KINDS: Record<MergeTab, FlagKind[]> = {
   bill: ['uninvoiced', 'underbilled'],
@@ -81,6 +81,7 @@ const TAB_KINDS: Record<MergeTab, FlagKind[]> = {
   nav: [],
   bank: [],
   names: [],
+  sign: [],
 };
 
 const ft = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n)) + ' Ft';
@@ -142,6 +143,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
     ['nav', 'NAV-számlák', 0],
     ['bank', 'Bankszinkron', counts.bank],
     ['names', 'Partnernevek', counts.names],
+    ['sign', 'Előjel-ellenőrzés', counts.signs],
   ];
   const [tab, setTabS] = useState<MergeTab>(() => {
     try {
@@ -210,6 +212,7 @@ export function AlertsView({ mobile }: { mobile?: boolean }) {
       </div>
       {tab === 'bank' && <MergeBank mobile={mobile} />}
       {tab === 'names' && <MergeNames />}
+      {tab === 'sign' && <MergeSigns />}
       {tab === 'new' && <MergeBillingo />}
       {(tab === 'gap' || tab === 'bill' || tab === 'new') && (
         <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>

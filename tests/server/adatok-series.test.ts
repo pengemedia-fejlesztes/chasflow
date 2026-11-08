@@ -43,6 +43,22 @@ describe('sorozat létrehozása', () => {
     expect(es.every((e) => e.amount === 450_000)).toBe(true);
   });
 
+  it('éves kiadás 3 évre: 3 tétel 12 havonta, a szökőévben február 29., „Évente” sorozatként tárolva', async () => {
+    const { L, tab } = await setup();
+    const b = genSeries({ leaf: L.szoftver, section: 'out', name: 'Domain megújítás', amount: 24_990, startYm: '2027-02', count: 36, rep: 'yearly', day: 29 });
+    expect((await tab.commit(b)).status).toBe(200);
+    const d = await tab.reload();
+    const sid = b.series![0].id;
+    const es = plansOf(d, sid);
+    expect(es.map((e) => e.date)).toEqual(['2027-02-28', '2028-02-29', '2029-02-28']);
+    expect(es.every((e) => e.amount === -24_990)).toBe(true);
+    expect(es.map((e) => e.name)).toEqual(['Domain megújítás – 2027. február', 'Domain megújítás – 2028. február', 'Domain megújítás – 2029. február']);
+    expect(d.series.find((s) => s.id === sid)).toMatchObject({ rep: 'yearly', day: 29 });
+    // meghosszabbítás 12 hónappal: egy új tétel egy évvel az utolsó után, ugyanabban a sorozatban
+    await tab.commit(extendRows(tab.data, [es[0].id], 12));
+    expect(plansOf(await tab.reload(), sid).map((e) => e.date)).toEqual(['2027-02-28', '2028-02-29', '2029-02-28', '2030-02-28']);
+  });
+
   it('tizedes összeget a szerver elutasít (egész forint)', async () => {
     const { L, tab } = await setup();
     const b = genSeries({ leaf: L.szoftver, section: 'out', name: 'Licenc', amount: 12_500.5, startYm: '2026-12', count: 1, rep: 'once', day: 5 });
