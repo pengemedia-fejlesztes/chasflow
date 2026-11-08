@@ -1,7 +1,9 @@
 // Egy beérkezett banki tétel jóváhagyó kártyája: megnevezés, kategória, terv-párosítás, ismétlődés – legördülő és felugró ablak nélkül.
 import { useMemo, useState } from 'react';
 import { displayGroup, normalizeText } from '../shared/categories';
-import { planFitsTx } from '../shared/match';
+import { nameHead, namesMatch } from '../shared/billingopay';
+import { partnerMonthlyPlans } from '../shared/identity';
+import { partnerKey, planFitsTx } from '../shared/match';
 import { fmt, monthLabel, ymOf } from '../shared/model';
 import type { BankTx, Entry, Rep } from '../shared/types';
 import { api } from './api';
@@ -126,9 +128,46 @@ export function TxCard({
         .slice(0, 5)
         .map((x) => x.e);
 
+  // a partner meglévő havi terve: „Havonta”-nál nem indul második sorozat (a szerver ugyanígy dönt, partnerMonthlyPlans)
+  const monthly = useMemo(() => {
+    const partner = t.partner || '';
+    if (rep !== 'monthly' || !leaf || partnerKey(partner).length < 3) return [];
+    const groups = (data.partners || []).map((p) => [p.name, ...(p.aliases || [])].filter(Boolean));
+    const own = [partner, ...groups.filter((g) => g.some((x) => namesMatch(x, partner))).flat()];
+    const known = [
+      ...groups.flat(),
+      ...ix.leaves.map((l) => l.label),
+      ...(data.partnerNames || []).map((p) => p.partner),
+      ...(data.navInvoices || []).map((x) => x.partner_name),
+    ];
+    const seriesIds = new Set<string>([
+      ...data.bankTx.filter((x) => x.status === 'approved' && x.id !== t.id && namesMatch(x.partner, partner)).map((x) => 's' + x.id),
+      ...(data.navInvoices || [])
+        .filter((x) => x.plan_id && namesMatch(x.partner_name, partner))
+        .map((x) => byId.get(x.plan_id!)?.series_id || '')
+        .filter(Boolean),
+    ]);
+    return partnerMonthlyPlans(data.entries, data.series, {
+      leaf,
+      sign: t.amount,
+      from: t.date,
+      own,
+      known,
+      leafLabel: (id) => ix.leafById[id]?.label || '',
+      seriesIds,
+    });
+  }, [rep, leaf, t, data, ix, byId]);
+
   const step = repStep(rep);
-  const n = rep === 'once' ? 0 : Math.ceil(count / step);
+  const n = rep === 'once' || monthly.length ? 0 : Math.ceil(count / step);
   const nextDates = rep === 'once' ? [] : [1, 2, 3].slice(0, n).map((i) => shiftDate(t.date, i * step));
+  const monthlySame = !plan && monthly.find((p) => (p.period || p.date.slice(0, 7)) === t.date.slice(0, 7) && planFitsTx(t, leaf, p));
+  const monthlyNote = monthly.length ? (
+    <span style={{ display: 'block', color: C.offer }}>
+      A partnernek már van havi terve ({nameHead(monthly[0].name)}, {monthly.length} nyitott hónap) – nem jön létre új sorozat
+      {monthlySame ? `, a tény a(z) ${monthLabel(ymOf(monthlySame.date))} tervet zárja le` : ''}.
+    </span>
+  ) : null;
 
   const createLeaf = async (groupId: string) => {
     try {
@@ -501,6 +540,7 @@ export function TxCard({
                     {fmt(Math.abs(diff))} Ft
                   </span>
                 )}
+                {monthlyNote}
                 {dup && (
                   <span style={{ display: 'block', color: C.neg }}>
                     Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.
@@ -737,6 +777,7 @@ export function TxCard({
                   {fmt(Math.abs(diff))} Ft
                 </span>
               )}
+              {monthlyNote}
               {dup && (
                 <span style={{ display: 'block', color: C.neg }}>
                   Lehetséges duplikáció: már van ilyen tény ({dup.date}, {dup.name}) – ha az, hagyd ki.

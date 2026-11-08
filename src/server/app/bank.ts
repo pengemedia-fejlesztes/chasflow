@@ -5,15 +5,27 @@ import { namesMatch } from '../../shared/billingopay';
 import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
-import type { Entry, Leaf } from '../../shared/types';
+import type { Entry, Leaf, Rep } from '../../shared/types';
 import { isBudgetPlan } from '../../shared/budget';
 import { requireRole, type User } from './auth';
 import { fillPartnerKind, fillPartnerTax, mergePartnerNames } from './partnertax';
-import { attachInvoiceStmts, autoPayBillingo, promoteOfferLeaves, billingoPublicUrl, invoiceRefs, reconcileInvoicePlans, syncBillingo } from './billingo';
+import {
+  attachInvoiceStmts,
+  autoPayBillingo,
+  promoteOfferLeaves,
+  billingoPublicUrl,
+  invoiceRefs,
+  partnerNames,
+  reconcileInvoicePlans,
+  syncBillingo,
+} from './billingo';
+import { partnerMonthlyPlans } from '../../shared/identity';
 import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, syncNav, type NavResolve } from './nav';
 import * as eb from './enablebanking';
 import { refreshVatPlans } from './vat';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
+
+type PartnerNameSets = Awaited<ReturnType<typeof partnerNames>>;
 
 const PREFERRED_BALANCE = ['CLAV', 'ITAV', 'CLBD', 'XPCD', 'ITBD', 'OPAV', 'PRCD'];
 
@@ -633,6 +645,44 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
   for (const l of leafR.results as any[]) leafById.set(String(l.id), l);
   const accById = new Map<string, { bank_name: string }>();
   for (const a of accR.results as any[]) accById.set(String(a.id), a);
+  // a partner meglévő havi terve („Havonta” jóváhagyásnál) – az adatok csak akkor töltődnek be, ha kell
+  let monthlyCtx: { plans: Entry[]; series: { id: string; rep: Rep }[]; navs: any[]; txs: any[]; names: { in: PartnerNameSets; out: PartnerNameSets } } | null =
+    null;
+  const monthlyOf = async (tx: any, leaf: string): Promise<Entry[]> => {
+    if (!monthlyCtx) {
+      const [pR, sR, nR, tR] = await env.DB.batch<any>([
+        env.DB.prepare("SELECT * FROM entries WHERE kind = 'plan' AND done = 0 AND date >= date('now', '-120 days')"),
+        env.DB.prepare('SELECT id, rep FROM series'),
+        env.DB.prepare('SELECT n.partner_name, e.series_id FROM nav_invoices n JOIN entries e ON e.id = n.plan_id WHERE e.series_id IS NOT NULL'),
+        env.DB.prepare("SELECT id, partner FROM bank_tx WHERE status = 'approved' AND partner <> ''"),
+      ]);
+      monthlyCtx = {
+        plans: pR.results as Entry[],
+        series: sR.results as any[],
+        navs: nR.results as any[],
+        txs: tR.results as any[],
+        names: { in: await partnerNames(env, {}, 'in'), out: await partnerNames(env, {}, 'out') },
+      };
+    }
+    const c = monthlyCtx;
+    const partner = String(tx.partner || '');
+    if (partnerKey(partner).length < 3) return [];
+    const names = c.names[tx.amount >= 0 ? 'in' : 'out'];
+    // a partner korábbi „Havonta” jóváhagyásából vagy NAV-számlájából indított sorozatok
+    const seriesIds = new Set<string>([
+      ...c.txs.filter((x) => x.id !== tx.id && namesMatch(x.partner, partner)).map((x) => 's' + x.id),
+      ...c.navs.filter((n) => namesMatch(n.partner_name || '', partner)).map((n) => String(n.series_id)),
+    ]);
+    return partnerMonthlyPlans(c.plans, c.series, {
+      leaf,
+      sign: tx.amount,
+      from: String(tx.date),
+      own: names.own(partner),
+      known: names.known,
+      leafLabel: (id) => leafById.get(String(id))?.label || '',
+      seriesIds,
+    });
+  };
   for (const it of items) {
     const tx = txById.get(String(it.id));
     if (!tx) continue;
@@ -737,8 +787,23 @@ export async function approve(env: Env, userId: number | null, items: ApproveIte
     }
     const actualId = 'a' + tx.id;
     const name = (String(it.name || '').trim() || tx.partner || tx.memo || 'Banki tétel').slice(0, 200);
-    const rep = it.rep === 'monthly' || it.rep === 'quarterly' || it.rep === 'yearly' ? it.rep : null;
-    const sid = rep ? 's' + tx.id : null;
+    let rep = it.rep === 'monthly' || it.rep === 'quarterly' || it.rep === 'yearly' ? it.rep : null;
+    let sid = rep ? 's' + tx.id : null;
+    if (rep === 'monthly') {
+      // a partnernek már van havi terve: nem indul második sorozat (a jövőbeli költség / bevétel duplán lenne tervezve);
+      // a tény a meglévő sorozathoz kötődik, és ha nem választottak tervet, a sorozat e havi (illő) tervét zárja le
+      const own = await monthlyOf(tx, String(leafId));
+      if (own.length) {
+        rep = null;
+        sid = own.find((p) => p.series_id)?.series_id ?? null;
+        const ym = String(tx.date).slice(0, 7);
+        const same = !planId && own.find((p) => (p.period || p.date.slice(0, 7)) === ym && !usedPlans.has(p.id) && planFitsTx(tx, leafId, p));
+        if (same) {
+          planId = same.id;
+          usedPlans.add(planId);
+        }
+      }
+    }
     // a tény mindig a banki könyvelés napjára kerül
     stmts.push(
       env.DB.prepare(
