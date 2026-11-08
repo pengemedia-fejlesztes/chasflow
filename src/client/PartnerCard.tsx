@@ -9,7 +9,7 @@ import { addMonths, fmt, monthLabel } from '../shared/model';
 import { partnerIdOf, partnerStats, type PartnerStat } from '../shared/partners';
 import type { Partner, Section } from '../shared/types';
 import { dayNameHu, payDate, payRuleLabel } from '../shared/workdays';
-import { sheetIdOf } from '../shared/worktime';
+import { partnerSubcontracts, sheetIdOf, type PartnerSubcontract } from '../shared/worktime';
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
@@ -30,6 +30,25 @@ export function useAllPartners() {
     () => partnerStats(data.entries, ix.leaves, ix.groups, data.billingo, data.today, data.partnerNames || [], data.partners || [], true),
     [data.entries, data.billingo, data.today, data.partnerNames, data.partners, ix],
   );
+}
+
+/** Az ügyfél nevét viselő alvállalkozói díjak a partnernél (csak megjelenítés – a Kiadás / Nettó nem változik). */
+export function usePartnerSubcontract(key: string): PartnerSubcontract | null {
+  const { data, ix } = useStore();
+  const all = useMemo(
+    () =>
+      partnerSubcontracts({
+        entries: data.entries,
+        leaves: ix.leaves,
+        groups: ix.groups,
+        employees: data.employees || [],
+        partners: data.partners || [],
+        today: data.today,
+      }),
+    [data.entries, data.employees, data.partners, data.today, ix],
+  );
+  const s = all.get(key);
+  return s && (s.last12 || s.planned) ? s : null;
 }
 
 /** A partner típusa: a partnertörzsből, vagy a kategóriákból (bevételi oldal = vevő, kiadási = szállító). */

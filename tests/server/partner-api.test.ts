@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { partnerResolver } from '../../src/shared/identity';
 import { partnerStats } from '../../src/shared/partners';
+import { breakeven, partnerSubcontracts } from '../../src/shared/worktime';
 import type { DataBundle } from '../../src/shared/types';
 import { createTestApp, type TestApp } from '../helpers/app';
 
@@ -104,8 +105,73 @@ describe('partner jövedelmezősége: a kiadás csak azonos nevű alkategóriáb
     expect(minta.byYear['2026']).toEqual({ inc: 1_270_000, out: 60_000 });
   });
 
-  it.todo(
-    'KÉRDÉS: a partner adatlapon a „Nettó” levonja-e a más (nem azonos nevű) kiadási sorban lévő, a partner nevét viselő tételeket ' +
-      '(pl. „Tibeko havi díj” az IT szolgáltatás alatt, miközben a Tibeko ügyfél is)? Most csak az azonos nevű sorok számítanak.',
-  );
+  it('az ügyfélnevet viselő alvállalkozói díj a partnernél külön sorban látszik („Kiadás · 12 hó (alvállalkozó)”), a Nettó nem változik', async () => {
+    t = await createTestApp();
+    seed(t);
+    const q = (s: string, ...a: unknown[]) => t!.sql.prepare(s).run(...(a as any[]));
+    q("INSERT INTO leaves (id, group_id, label, sort) VALUES ('l_nagy', 'g_alv', 'Nagy Anna', 2)");
+    q("INSERT INTO employees (key, name, cost_leaf_id, updated_at) VALUES ('nagyanna', 'Nagy Anna', 'l_nagy', ?)", T0);
+    const e = (id: string, kind: string, leaf: string, date: string, amount: number, name: string, link: string | null = null, done = 0) =>
+      q(
+        "INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, link_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'manual', ?, ?)",
+        id,
+        kind,
+        date,
+        leaf,
+        name,
+        amount,
+        done,
+        link,
+        T0,
+      );
+    // a banki tény neve a kedvezményezett, az ügyfelet a hozzá kötött terv nevezi meg
+    e('k2', 'actual', 'l_kovacs', '2026-10-05', -120_000, 'KOVACS BENCE EV');
+    e('kp2', 'plan', 'l_kovacs', '2026-10-05', -120_000, 'Minta – karbantartás', 'k2', 1);
+    // 12 hónapnál régebbi díj: csak az összesbe számít
+    e('k3', 'actual', 'l_kovacs', '2025-05-10', -80_000, 'Minta grafika');
+    // nyitott terv az ügyfél nevével: várható alvállalkozói díj
+    e('kp4', 'plan', 'l_kovacs', '2026-11-10', -100_000, 'Minta – november');
+    // nem alvállalkozó (működési költség) és munkaidő-táblás munkatárs (az a munkaköltségben van): nem számít ide
+    e('it2', 'actual', 'l_it', '2026-09-08', -30_000, 'Minta szerver');
+    e('n1', 'actual', 'l_nagy', '2026-09-30', -50_000, 'Minta támogatás');
+    // más ügyfél nevével / ügyfélnév nélkül: nem a Minta partneré
+    e('k5', 'actual', 'l_kovacs', '2026-09-25', -40_000, 'Megbízási díj');
+
+    const d = await bundle(t);
+    const sub = partnerSubcontracts({
+      entries: d.entries,
+      leaves: d.leaves,
+      groups: d.groups,
+      employees: d.employees || [],
+      partners: d.partners || [],
+      today: '2026-10-20',
+    });
+    expect(sub.get('minta')).toMatchObject({ last12: 570_000, total: 650_000, count: 3, planned: 100_000 });
+    expect(
+      sub
+        .get('minta')!
+        .items.map((x) => x.id)
+        .sort(),
+    ).toEqual(['k1', 'k2', 'k3']);
+    expect(sub.has('kovacsbence')).toBe(false);
+
+    // csak megjelenítés: a partner kiadása és nettója változatlan (a díj az alvállalkozónál marad)
+    const minta = stats(d).find((x) => x.key === 'minta')!;
+    expect(minta.sides.in?.total).toBe(1_270_000);
+    expect(minta.sides.out).toBeUndefined();
+    expect(stats(d).find((x) => x.key === 'kovacsbence')!.sides.out?.total).toBe(450_000 + 120_000 + 80_000 + 40_000);
+
+    // a Fedezeti pont projekt-sora ugyanezt a díjat vonja le (ugyanaz a hozzárendelés)
+    const aliases = new Map<string, string[]>();
+    const be = breakeven({
+      months: ['2026-08', '2026-10'],
+      entries: d.entries,
+      leaves: d.leaves,
+      groups: d.groups,
+      employees: d.employees || [],
+      worktime: [],
+      aliases,
+    });
+    expect(be.map((m) => m.projects.find((p) => p.leaf === 'l_minta')?.subcontract)).toEqual([450_000, 120_000]);
+  });
 });
