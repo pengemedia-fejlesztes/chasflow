@@ -4,6 +4,8 @@ import { createTestApp, type TestApp } from '../helpers/app';
 import { openTab, setupLeaves } from '../helpers/adatok-client';
 import { genSeries, payDefaults } from '../../src/client/logic';
 import { groupId, leafId } from '../../src/shared/categories';
+import { signCheckId, signMismatches } from '../../src/shared/flags';
+import { buildIndex } from '../../src/shared/model';
 
 let t: TestApp | undefined;
 afterEach(() => t?.close());
@@ -196,5 +198,41 @@ describe('beállítások és fizetési szabály', () => {
     expect(es.map((e) => e.name)).toEqual(['Havi díj – 2026. november', 'Havi díj – 2026. december', 'Havi díj – 2027. január', 'Havi díj – 2027. február']);
     // a fizetés a szabály szerint a következő hónapra esik
     expect(es[0].date).toBe('2026-12-02');
+  });
+});
+
+describe('előjel-ellenőrzés (gyanús előjelű tények)', () => {
+  const tenyek = [
+    { date: '2026-09-03', name: 'Felhő szoftver', category: '3 Működési költségek - Szoftver, beszerzés', amount: 176_000 }, // elírt előjel?
+    { date: '2026-09-05', name: 'Bútorbolt visszatérítés', category: '3 Működési költségek - Iroda bérlés, rezsi', amount: 12_990 },
+    { date: '2026-09-10', name: 'Irodabérlet', category: '3 Működési költségek - Iroda bérlés, rezsi', amount: -380_000 },
+    { date: '2026-09-12', name: 'Havi díj', category: 'Projektek - Minta Kft.', amount: 250_000 },
+    { date: '2026-09-20', name: 'Túlfizetés visszautalva', category: 'Projektek - Minta Kft.', amount: -40_000 },
+  ];
+
+  it('a pozitív kiadás- és negatív bevétel-tények listázódnak, a tervek nem; „Rendben” után eltűnnek, de a tétel nem változik', async () => {
+    t = await createTestApp();
+    await t.post('/api/import', { kind: 'actual', rows: tenyek });
+    // negatív bevételi TERV nem tény → nem számít
+    await t.post('/api/import', { kind: 'plan', rows: [{ date: '2026-12-10', name: 'Jóváírás', category: 'Projektek - Minta Kft.', amount: -10_000 }] });
+    let d = (await t.get('/api/data')).data;
+    const ix = buildIndex(d);
+    const list = signMismatches(d.entries, ix.sectionOf, JSON.parse(d.settings.flags_ack || '[]'));
+    expect(list.map((e) => [e.name, e.amount])).toEqual([
+      ['Túlfizetés visszautalva', -40_000],
+      ['Bútorbolt visszatérítés', 12_990],
+      ['Felhő szoftver', 176_000],
+    ]);
+    // a visszatérítés átnézve: közös jelölés a beállításokban, a tétel összege érintetlen
+    const refund = list.find((e) => e.name === 'Bútorbolt visszatérítés')!;
+    expect((await t.post('/api/flags/ack', { ids: [signCheckId(refund)] })).status).toBe(200);
+    d = (await t.get('/api/data')).data;
+    const after = signMismatches(d.entries, buildIndex(d).sectionOf, JSON.parse(d.settings.flags_ack || '[]'));
+    expect(after.map((e) => e.name)).toEqual(['Túlfizetés visszautalva', 'Felhő szoftver']);
+    expect(d.entries.find((e: any) => e.id === refund.id).amount).toBe(12_990);
+    // ha a tétel összegét később átírják, újra átnézendő
+    t.sql.prepare('UPDATE entries SET amount = 13_990 WHERE id = ?').run(refund.id);
+    d = (await t.get('/api/data')).data;
+    expect(signMismatches(d.entries, buildIndex(d).sectionOf, JSON.parse(d.settings.flags_ack || '[]')).map((e) => e.name)).toContain('Bútorbolt visszatérítés');
   });
 });

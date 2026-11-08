@@ -2,6 +2,7 @@
 // és a partnernevek összevonása (partnertörzs alternatív nevei = NAV / Billingo cégnév = elszámolás projektneve = banki név).
 import { useMemo, useState } from 'react';
 import { normalizeText } from '../shared/categories';
+import { signCheckId, signMismatches } from '../shared/flags';
 import { compactName, partnerResolver, suggestPartner } from '../shared/identity';
 import { fmt, monthLong, ymOf } from '../shared/model';
 import { partnerIdOf } from '../shared/partners';
@@ -116,7 +117,84 @@ export function useMergeCounts() {
   const billingo = useBillingoUnplanned().length;
   const bank = useBankUnmatched().length;
   const names = useNameRows().open.length;
-  return { billingo, bank, names };
+  // az előjel-ellenőrzés csak a saját fülén számol (a menü riasztás-számába nem: sok közülük valós visszatérítés)
+  const signs = useSignChecks().length;
+  return { billingo, bank, names, signs };
+}
+
+/** gyanús előjelű tények (pozitív kiadás, negatív bevétel), a „Rendben” jelöltek nélkül */
+function useSignChecks(): Entry[] {
+  const { data, ix } = useStore();
+  const [acked] = useAck();
+  return useMemo(() => signMismatches(data.entries, ix.sectionOf, [...acked]), [data.entries, ix, acked]);
+}
+
+const SOURCE_HU: Record<string, string> = { import: 'xls import', bank: 'bank', manual: 'kézi', billingo: 'Billingo', nav: 'NAV' };
+
+/** Előjel-ellenőrzés: a szekcióval ellentétes előjelű tények listája átnézésre – nem javít semmit, csak jelez. */
+export function MergeSigns() {
+  const { ix, canEdit } = useStore();
+  const [, ack] = useAck();
+  const rows = useSignChecks();
+  if (!rows.length)
+    return <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>✓ Nincs gyanús előjelű tény.</div>;
+  const parts: [string, string, Entry[]][] = [
+    ['Pozitív összegű kiadás', 'Kiadás-kategóriában pénz jött be. Lehet visszatérítés vagy jóváírás – de ha elírt előjel, csökkenti a költséget.', rows.filter((e) => e.amount > 0)],
+    ['Negatív összegű bevétel', 'Bevételi kategóriában pénz ment ki. Lehet visszafizetés – de ha elírt előjel, csökkenti a bevételt.', rows.filter((e) => e.amount < 0)],
+  ];
+  return (
+    <>
+      <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
+        A program az összeget előjelestül veszi át (xls, bank), nem javítja. Nézd át a tételeket: ha elírás, a tételnél javítsd; ha rendben van (pl.
+        visszatérítés), jelöld „Rendben”-nek, és eltűnik a listáról.
+      </span>
+      {parts.map(([title, help, list]) =>
+        list.length ? (
+          <section key={title} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ font: `700 16px ${FONT_H}`, color: C.navy }}>
+                {title} <span style={{ color: C.neg }}>({list.length})</span>
+              </span>
+              <span style={{ font: `400 12.5px ${FONT}`, color: C.muted, flex: 1 }}>{help}</span>
+              {canEdit && list.length > 1 && (
+                <Pill small onClick={() => ack(list.map(signCheckId), `${list.length} tétel rendben`)}>
+                  Mind rendben
+                </Pill>
+              )}
+            </div>
+            {list.map((e) => {
+              const leaf = ix.leafById[e.leaf_id];
+              const grp = ix.groupById[leaf?.group_id || '']?.label || '';
+              return (
+                <div
+                  key={e.id}
+                  data-sign-check={e.id}
+                  style={{ ...card, borderLeft: `4px solid ${C.neg}`, padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
+                >
+                  <span style={{ flex: '1 1 260px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ font: `600 14px ${FONT}`, color: C.ink }}>{e.name || leaf?.label}</span>
+                    <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+                      {dot(e.date)} · {grp ? `${grp} → ` : ''}
+                      {leaf?.label || 'ismeretlen kategória'} · {SOURCE_HU[e.source] || e.source}
+                    </span>
+                  </span>
+                  <b style={{ font: `700 14px ${FONT}`, color: C.neg, fontVariantNumeric: 'tabular-nums' }}>
+                    {e.amount > 0 ? '+' : '−'}
+                    {fmt(Math.abs(e.amount))} Ft
+                  </b>
+                  {canEdit && (
+                    <Pill small onClick={() => ack([signCheckId(e)], 'Előjel rendben')}>
+                      Rendben
+                    </Pill>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        ) : null,
+      )}
+    </>
+  );
 }
 
 const KIND_HU: Record<string, string> = { vevo: 'vevő', szallito: 'szállító', mindketto: 'vevő és szállító' };

@@ -194,3 +194,18 @@ export function billingFlags(
   }
   return out.filter((f) => !acked.has(f.id));
 }
+
+/**
+ * Előjel-ellenőrzés: a szekciójával ellentétes előjelű tény – pozitív összegű kiadás vagy negatív összegű bevétel.
+ * Lehet valós visszatérítés / jóváírás, de elírt előjel is (az xls előjelét az import változatlanul átveszi).
+ * Csak listáz, semmit nem javít; a „Rendben” jelölés azonosítója az összeget is tartalmazza (átírás után újra látszik).
+ */
+export const signCheckId = (e: Pick<Entry, 'id' | 'amount'>) => `sign:${e.id}:${e.amount}`;
+
+export function signMismatches(entries: Entry[], sectionOf: (leaf: string) => Section, ack: string[] = []): Entry[] {
+  const acked = new Set(ack);
+  return entries
+    .filter((e) => e.kind === 'actual' && e.source !== 'estimate' && (sectionOf(e.leaf_id) === 'out' ? e.amount > 0 : e.amount < 0))
+    .filter((e) => !acked.has(signCheckId(e)))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+}
