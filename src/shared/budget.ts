@@ -60,3 +60,6 @@ export function budgetMonth(es: Entry[], leafLabel: string, ym: string): BudgetM
   const closed = budgets.every((b) => b.done);
   return { budget, used, plan: Math.max(budget, otherPlan), openOther, left: closed ? 0 : Math.max(0, budget - used), closed };
 }
+
+/** A lezárt (elmúlt) hónap keret-terve kész: a fel nem használt maradék megtakarítás, nem elmaradt / lejárt terv. */
+export const isClosedBudget = (e: Entry, leafLabel: string, today: string) => isBudgetPlan(e, leafLabel) && ymOf(e.date) < ymOf(today);

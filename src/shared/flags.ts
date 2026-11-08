@@ -5,7 +5,7 @@
 //  - elmaradt: lejárt, még nyitott terv (nem jött be a bevétel / nem ment ki a kiadás) – a közös lejárt-definíció (isOverdue)
 // Az eltérés / nem tervezett tétel csak a jelenre: az előző hónap elejétől, de legkorábban az utolsó importált (XLS) tény utáni naptól.
 import type { BankTx, Entry, NavInvoice, Section } from './types';
-import { addMonths, isOverdue, ymOf } from './model';
+import { addMonths, isOverdue, OVERDUE_MONTHS, ymOf } from './model';
 
 export type FlagKind = 'target' | 'invoice' | 'uninvoiced' | 'underbilled' | 'deviation' | 'unplanned' | 'overdue';
 
@@ -58,6 +58,8 @@ export function computeFlags(
   ack: string[] = [],
   /** a tervhez kötött (NAV) számla bruttó összege, előjelesen */
   invoiceOf?: (planId: string) => number | undefined,
+  /** az alkategória neve – a keret-terv (pl. „Előre nem látható költség”) maradéka nem elmaradt terv */
+  leafLabel?: (leaf: string) => string,
 ): Flag[] {
   const from = flagsFrom(entries, today);
   const acked = new Set(ack);
@@ -110,7 +112,7 @@ export function computeFlags(
           tx: txByActual.get(e.id),
         });
       }
-    } else if (isOverdue(e, today) && addDays(e.date, OVERDUE_GRACE_DAYS) < today) {
+    } else if (isOverdue(e, today, OVERDUE_MONTHS, leafLabel?.(e.leaf_id)) && addDays(e.date, OVERDUE_GRACE_DAYS) < today) {
       out.push({
         id: `due:${e.id}:${e.date}`,
         kind: 'overdue',

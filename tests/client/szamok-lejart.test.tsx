@@ -84,3 +84,33 @@ describe('Bevételek nézet: „Lejárt” doboz', () => {
     expect(sp(chip.textContent!)).toContain(sp(`${(120_000 + 300_000 + 80_000).toLocaleString('hu-HU')} Ft · 3`));
   });
 });
+
+describe('Kiadások nézet: lezárt hónap keret-terve', () => {
+  it('a fel nem használt októberi keret nem jelenik meg (kész), a belőle fogyó nyitott számla lejártként igen', async () => {
+    const keret = { id: 'l_keret', group_id: 'g_out', label: 'Előre nem látható költség', sort: 0, archived: 0 };
+    const data = {
+      ...initial(),
+      groups: [...initial().groups, { id: 'g_out', section: 'out', label: 'Működési költségek', sort: 1 }],
+      leaves: [...initial().leaves, keret],
+      entries: [
+        plan('k_okt', '2026-10-30', -50_000, { leaf_id: 'l_keret', name: 'Előre nem látható költség – 2026. október' }),
+        plan('k_szamla', '2026-10-15', -4_051, { leaf_id: 'l_keret', name: 'Szoftver Kft.' }),
+      ],
+    };
+    vi.mocked(api).mockImplementation(async (path: string) => (path === '/api/data' ? data : {}));
+    await act(async () =>
+      root.render(
+        <StoreProvider initial={data}>
+          <IncomeView />
+        </StoreProvider>,
+      ),
+    );
+    const out = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Kiadások')!;
+    await act(async () => void out.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const sp = (s: string) => s.replace(/\s/g, ' ');
+    const chip = [...document.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Lejárt'))!;
+    expect(sp(chip.textContent!)).toContain(sp(`${(4_051).toLocaleString('hu-HU')} Ft · 1`));
+    expect(document.body.textContent).toContain('Szoftver Kft.');
+    expect(document.body.textContent).not.toContain('Előre nem látható költség – 2026. október');
+  });
+});

@@ -27,7 +27,15 @@ export function useFlags(): Flag[] {
     } catch {}
     // a tervhez kötött NAV-számla összege (kiadás: negatív) – a kifizetés ehhez mérve
     const navByPlan = new Map((data.navInvoices || []).filter((n) => n.plan_id).map((n) => [n.plan_id as string, -Math.abs(n.gross)]));
-    const bank = computeFlags(data.entries, data.bankTx, ix.sectionOf, data.today, ack, (id) => navByPlan.get(id));
+    const bank = computeFlags(
+      data.entries,
+      data.bankTx,
+      ix.sectionOf,
+      data.today,
+      ack,
+      (id) => navByPlan.get(id),
+      (l) => ix.leafById[l]?.label || '',
+    );
     // NAV: bejövő számla, amihez nincs terv (még a kifizetés előtt szól)
     const inv: Flag[] = (data.navInvoices || [])
       .filter((n) => n.status === 'new')

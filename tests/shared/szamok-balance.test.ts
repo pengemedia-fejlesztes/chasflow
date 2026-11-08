@@ -278,3 +278,35 @@ describe('lejárt tétel: egy definíció (ablak: 6 hónap) a záró egyenlegben
     expect(cur.bal).toBe(ix.anchor + (cur.net - -30_000) + ol.overdue.amount);
   });
 });
+
+describe('keret-terv: a lezárt hónap fel nem használt kerete kész, nem lejárt', () => {
+  // október: 50 000-es keret, belőle egy még nyitott 4 051-es számla és egy kifizetett 12 000-es tény; ma november 7.
+  const keretOkt = E({ id: 'k_okt', leaf_id: 'keret', name: 'Előre nem látható költség – 2026. október', date: '2026-10-30', amount: -50_000 });
+  const szamla = E({ id: 'k_szamla', leaf_id: 'keret', name: 'Szoftver Kft. – 2026. október', date: '2026-10-15', amount: -4_051 });
+  const entries = [
+    keretOkt,
+    szamla,
+    E({ kind: 'actual', leaf_id: 'keret', name: 'Futár', date: '2026-10-08', amount: -12_000 }),
+    E({ id: 'k_nov', leaf_id: 'keret', name: 'Előre nem látható költség – 2026. november', date: '2026-11-03', amount: -50_000 }),
+  ];
+  const ix = ixOf(entries, { accounts: [bank(1_000_000)] });
+  const label = (l: string) => ix.leafById[l]?.label || '';
+
+  it('a lezárt hónap kerete nem lejárt; a belőle fogyó, még nyitott számla igen', () => {
+    expect(isOverdue(keretOkt, ix.today, OVERDUE_MONTHS, label('keret'))).toBe(false);
+    expect(isOverdue(szamla, ix.today, OVERDUE_MONTHS, label('keret'))).toBe(true);
+  });
+  it('nem riaszt „Elmaradt terv”-ként', () => {
+    const flags = computeFlags(entries, [], ix.sectionOf, ix.today, [], undefined, label).filter((f) => f.kind === 'overdue');
+    expect(flags.map((f) => f.entry_id)).toEqual(['k_szamla']);
+  });
+  it('a kártya lejárt-összege és darabszáma: csak a nyitott számla (a keret maradéka megtakarítás)', () => {
+    const ol = outlook(ix, noExtras);
+    expect(ol.overdue).toEqual({ amount: -4_051, n: 1 });
+    expect(ol.overdueOpen.map((e) => e.id)).toEqual(['k_szamla']);
+  });
+  it('a folyó hónap kerete még elkölthető: nem kész, és a hónap végéig nem is lejárt', () => {
+    expect(isOverdue(entries[3], ix.today, OVERDUE_MONTHS, label('keret'))).toBe(false);
+    expect(projection(ix, noExtras, '2026-11', new Map()).get('2026-11')).toBe(1_000_000 - 4_051 - 50_000);
+  });
+});

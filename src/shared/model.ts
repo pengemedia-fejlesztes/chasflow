@@ -409,10 +409,12 @@ export const overdueFrom = (today: string, months = OVERDUE_MONTHS) => addMonths
 /**
  * Lejárt tétel – egy definíció a záró egyenleghez, az áttekintő kártyához, a Bevételek / kiadások nézethez és a riasztáshoz:
  * nyitott, biztos (nem ajánlat) terv, amelynek dátuma a mai nap előtt van, és az ablakon belül esik; a kiállított
- * (Billingo-)számla terve a korától függetlenül lejárt, amíg nincs kifizetve.
+ * (Billingo-)számla terve a korától függetlenül lejárt, amíg nincs kifizetve. A keret-terv (pl. „Előre nem látható költség”,
+ * ehhez kell a `leafLabel`) nem lejárt: a lezárt hónapban kész (a maradék megtakarítás), a folyó hónapban még elkölthető.
  */
-export function isOverdue(e: Entry, today: string, months = OVERDUE_MONTHS): boolean {
+export function isOverdue(e: Entry, today: string, months = OVERDUE_MONTHS, leafLabel?: string): boolean {
   if (e.kind !== 'plan' || e.done || e.tentative || !e.amount || e.date >= today) return false;
+  if (leafLabel != null && isBudgetPlan(e, leafLabel)) return false;
   return e.date >= overdueFrom(today, months) || e.source === 'billingo';
 }
 
@@ -427,7 +429,7 @@ export function overdueBefore(ix: Index, months = OVERDUE_MONTHS): { amount: num
   for (const [, m] of ix.openPlan) amount += sumMonths(m, prev);
   let n = 0;
   for (const e of ix.entries) {
-    if (!isOverdue(e, ix.today, months) || e.date >= ix.cur + '-01') continue;
+    if (!isOverdue(e, ix.today, months, ix.leafById[e.leaf_id]?.label || '') || e.date >= ix.cur + '-01') continue;
     n++;
     // az ablaknál régebbi kiállított számla nincs a fenti hónapokban
     if (e.date < from) amount += e.amount;
@@ -643,7 +645,7 @@ export function outlook(ix: Index, f: Pick<Filters, 'includeOffers' | 'estimate'
       if (v >= 0) li += v;
       else le -= v;
     }
-  const overdueOpen = ix.entries.filter((e) => isOverdue(e, ix.today)).sort((a, b) => a.date.localeCompare(b.date));
+  const overdueOpen = ix.entries.filter((e) => isOverdue(e, ix.today, OVERDUE_MONTHS, ix.leafById[e.leaf_id]?.label || '')).sort((a, b) => a.date.localeCompare(b.date));
   return {
     months,
     next12: {
