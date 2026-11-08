@@ -61,6 +61,7 @@ export const hasLedgerAccess = (a: Access) => hasMenu(a, LEDGER_MENUS) && ALL_SC
 export function requirementOf(path: string): { menu?: string[]; data?: DataScope | DataScope[] } | null {
   if (path === '/api/data' || path === '/api/version') return {};
   if (/^\/api\/(users|security)(?:\/|$)/.test(path)) return { menu: ['settings'] };
+  if (/^\/api\/google(?:\/|$)/.test(path)) return { menu: ['settings'] };
   if (/^\/api\/(entries|leaves|groups)(?:\/|$)/.test(path)) return { menu: ['income', 'cat', 'partners', 'alerts'], data: ALL_SCOPES };
   if (path === '/api/series') return { menu: LEDGER_MENUS, data: ALL_SCOPES };
   if (/^\/api\/(trash|changelog)(?:\/|$)/.test(path)) return { menu: ['settings'], data: ALL_SCOPES };
