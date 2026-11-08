@@ -782,6 +782,16 @@ function Overview({
         </h1>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <PeriodPicker label={periodLabel(filters, ix.cur, ix.firstActual)} />
+          {(filters.from > ix.cur || filters.to < ix.cur) && (
+            <button
+              type="button"
+              onClick={() => st.setFilters({ from: ix.cur, to: addMonths(ix.cur, 7), granularity: 'month' })}
+              style={{ border: 0, borderRadius: 999, background: C.neg, color: '#fff', padding: '7px 14px', font: `600 13px ${FONT}`, cursor: 'pointer' }}
+              title="A kiválasztott időszakban nincs benne a mai hónap"
+            >
+              Vissza a mai hónaphoz
+            </button>
+          )}
           <button
             type="button"
             onClick={() => st.setFilters({ includeOffers: !filters.includeOffers })}

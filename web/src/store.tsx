@@ -50,8 +50,11 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         const saved = JSON.parse(raw);
         // az időszakot nem őrizzük meg napokon át, ha az már a múltba csúszott;
         // a v3 előtti mentésből sem, így mindenki az alapidőszakra (következő 8 hónap) áll
-        if (saved.savedFor === initial.today.slice(0, 7) && saved.v === 3) return { ...def, ...saved.f };
-        return { ...def, ...saved.f, from: def.from, to: def.to };
+        // a többi beállítás (ajánlatok, becslés, nézet) megmarad; az időszak csak ezen a böngészőlapon (frissítéskor),
+        // új megnyitáskor mindig a mai hónaptól indul – így nem ragad egy régen kiválasztott, távoli időszakon
+        const per = JSON.parse(sessionStorage.getItem(FKEY + ':period') || 'null');
+        const keepPer = per && per.savedFor === initial.today.slice(0, 7) && per.from && per.to;
+        return { ...def, ...saved.f, from: keepPer ? per.from : def.from, to: keepPer ? per.to : def.to };
       }
     } catch {}
     return def;
@@ -64,6 +67,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         if (n.from > n.to) n.to = n.from;
         try {
           localStorage.setItem(FKEY + ':' + initial.me.id, JSON.stringify({ f: n, savedFor: initial.today.slice(0, 7), v: 3 }));
+          sessionStorage.setItem(FKEY + ':period', JSON.stringify({ from: n.from, to: n.to, savedFor: initial.today.slice(0, 7) }));
         } catch {}
         return n;
       }),
