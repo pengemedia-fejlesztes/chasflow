@@ -3,6 +3,7 @@
 
 export const MENUS: [string, string][] = [
   ['overview', 'Áttekintés'],
+  ['charts', 'Grafikonok'],
   ['tasks', 'Feladatok'],
   ['alerts', 'Összevonás'],
   ['income', 'Tervezett bevételek, kiadások'],

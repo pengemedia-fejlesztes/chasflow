@@ -14,6 +14,7 @@ import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
 import { CatalogView } from './CatalogView';
 import { StockView } from './StockView';
+import { ChartsView } from './ChartsView';
 import { TasksView, useMyTaskCount } from './TasksView';
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
@@ -24,8 +25,8 @@ import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
-export type View = 'overview' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'stock' | 'breakeven' | 'settings';
-const VIEWS: View[] = ['overview', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'stock', 'breakeven', 'settings'];
+export type View = 'overview' | 'charts' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'stock' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'charts', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'stock', 'breakeven', 'settings'];
 
 /** #/nézet[/kategória][?p=partner&t=fül] */
 export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
@@ -150,6 +151,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   }, [view, data.myAccess]);
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
+    ['charts', 'Grafikonok', 0],
     ['tasks', 'Feladatok', myTasks],
     ['alerts', 'Összevonás', flags.length + mc.billingo + mc.bank + mc.names],
     ['income', 'Tervezett bevételek, kiadások', openIncome],
@@ -369,6 +371,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             openNew={(leaf) => setModal(leaf ? { leaf } : {})}
           />
         )}
+        {view === 'charts' && <ChartsView />}
         {view === 'tasks' && <TasksView />}
         {view === 'alerts' && <AlertsView />}
         {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}

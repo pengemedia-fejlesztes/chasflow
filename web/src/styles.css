@@ -184,3 +184,18 @@ fieldset:disabled button {
 dialog::backdrop {
   background: rgba(20, 35, 58, 0.42);
 }
+
+/* ── grafikon-animációk (Grafikonok) ── */
+@keyframes cf-grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes cf-grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes cf-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes cf-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cf-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.cf-bar { transform-box: fill-box; animation: cf-grow-y .75s cubic-bezier(.2,.8,.2,1) both; }
+.cf-hbar { transform-origin: left center; animation: cf-grow-x .8s cubic-bezier(.2,.8,.2,1) both; }
+.cf-line { stroke-dasharray: 1; animation: cf-draw 1.2s cubic-bezier(.4,0,.2,1) both; }
+.cf-area { animation: cf-fade 1s ease .3s both; }
+.cf-card { animation: cf-rise .5s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .cf-bar, .cf-hbar, .cf-line, .cf-area, .cf-card { animation: none !important; }
+}
