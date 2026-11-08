@@ -43,6 +43,8 @@ export interface Product {
   /** cikkszám / belső kód */
   sku: string | null;
   note: string | null;
+  /** készlet (darab); null = nincs készletkezelés (pl. szolgáltatás) */
+  stock?: number | null;
   archived: number;
   updated_at: number;
 }
@@ -191,4 +193,154 @@ export function nextBilling(a: PartnerProduct, billing: Billing, from: string): 
     if (billableIn(a, billing, ym)) return ym;
   }
   return null;
+}
+
+// ── a partnereknél felvitt tételekből (tervek) a termék- és szolgáltatástörzs feltöltése ──
+
+export interface DeriveLeaf {
+  id: string;
+  label: string;
+  section: 'in' | 'out';
+  /** ajánlat-csoportba tartozik (nem biztos megrendelés) */
+  offer: boolean;
+}
+export interface DerivePlan {
+  leaf_id: string;
+  name: string;
+  amount: number;
+  date: string;
+  period?: string | null;
+  series_id?: string | null;
+  tentative?: number | null;
+}
+export interface DerivedAssign {
+  partner_key: string;
+  name: string;
+  qty: number;
+  /** nettó egységár */
+  price: number;
+  billing: Billing;
+  start_ym: string;
+  end_ym: string | null;
+  offer: boolean;
+}
+export interface DerivedProduct {
+  name: string;
+  price: number;
+  billing: Billing;
+}
+
+const REP_BILLING: Record<string, Billing> = { monthly: 'havi', quarterly: 'negyedeves', yearly: 'eves', once: 'egyszeri' };
+const norm = (s: string) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+const MONTH_SUFFIX = /\s*[–-]\s*\d{4}\.\s*\p{L}+\.?\s*$/u;
+
+/** a terv nevéből a termék neve: hónap, partnernév-előtag, részlet-/előleg-utótag nélkül; számlaszámnál null */
+export function productNameOf(name: string, partner: string): string | null {
+  let n = String(name || '')
+    .replace(MONTH_SUFFIX, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const p = norm(partner);
+  const m = n.match(/^(.+?)\s*[-–:]\s+(.+)$/);
+  if (m && p && norm(m[1]) === p) n = m[2].trim();
+  n = n
+    .replace(/\s*[-–]\s*\d+\.?\s*(r[ée]szlet|r[ée]sz)\s*$/i, '')
+    .replace(/\s*[-–]\s*(el[őo]leg|[áa]tad[áa]s|v[ée]gsz[áa]mla)\s*$/i, '')
+    .trim();
+  if (n.length < 2 || /\d{4}-\d{5,}/.test(n) || norm(n) === p) return null;
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+export const netOf = (gross: number) => Math.round(Math.abs(gross) / 1.27);
+
+/**
+ * A bevételi oldalon felvitt tervekből (a folyó hónap előtti 2 hónaptól) partnerenként a számlázott termékek:
+ * ismétlődő sorozat → az ütemének megfelelő számlázás, a havonta többször szereplő azonos tétel → mennyiség;
+ * egyszeri (akár részletekben) → egy tétel a részletek összegével.
+ */
+export function deriveCatalog(
+  leaves: DeriveLeaf[],
+  plans: DerivePlan[],
+  seriesRep: Record<string, string>,
+  cur: string,
+  partnerKeyOf: (label: string) => string,
+): { products: DerivedProduct[]; assigns: DerivedAssign[] } {
+  const leafById = new Map(leaves.filter((l) => l.section === 'in').map((l) => [l.id, l]));
+  const since = addMonths(cur, -2);
+  type G = { partner: string; name: string; offer: boolean; months: Map<string, number[]>; reps: Set<string> };
+  const groups = new Map<string, G>();
+  for (const e of plans) {
+    const l = leafById.get(e.leaf_id);
+    if (!l || !e.amount) continue;
+    const ym = e.period || e.date.slice(0, 7);
+    if (ym < since) continue;
+    const name = productNameOf(e.name, l.label);
+    if (!name) continue;
+    const pk = partnerKeyOf(l.label);
+    const k = pk + '|' + norm(name);
+    const g = groups.get(k) || { partner: pk, name, offer: true, months: new Map(), reps: new Set() };
+    g.offer = g.offer && (l.offer || !!e.tentative);
+    g.months.set(ym, [...(g.months.get(ym) || []), Math.abs(e.amount)]);
+    if (e.series_id && seriesRep[e.series_id]) g.reps.add(seriesRep[e.series_id]);
+    groups.set(k, g);
+  }
+  const assigns: DerivedAssign[] = [];
+  for (const g of groups.values()) {
+    const months = [...g.months.keys()].sort();
+    const rep = [...g.reps].find((r) => r !== 'once');
+    const recurring = !!rep || /^havi\s*d[ií]j/i.test(g.name) || months.length >= 3;
+    if (recurring) {
+      // a legközelebbi (vagy utolsó) hónap tételei: darabszám és egységár
+      const ref = months.find((m) => m >= cur) || months[months.length - 1];
+      const amts = g.months.get(ref)!;
+      const unit = Math.max(...amts);
+      const qty = amts.filter((a) => a === unit).length === amts.length ? amts.length : 1;
+      const price = qty > 1 ? netOf(unit) : netOf(amts.reduce((s, a) => s + a, 0));
+      const last = months[months.length - 1];
+      assigns.push({
+        partner_key: g.partner,
+        name: g.name,
+        qty,
+        price,
+        billing: rep ? REP_BILLING[rep] : 'havi',
+        start_ym: months[0],
+        end_ym: last >= addMonths(cur, 11) ? null : last,
+        offer: g.offer,
+      });
+    } else {
+      const total = [...g.months.values()].flat().reduce((s, a) => s + a, 0);
+      assigns.push({
+        partner_key: g.partner,
+        name: g.name,
+        qty: 1,
+        price: netOf(total),
+        billing: 'egyszeri',
+        start_ym: months[0],
+        end_ym: null,
+        offer: g.offer,
+      });
+    }
+  }
+  // termék: a nevek szerint összevonva; ár és ütem a leggyakoribb a partnerek között
+  const byName = new Map<string, DerivedAssign[]>();
+  for (const a of assigns) byName.set(norm(a.name), [...(byName.get(norm(a.name)) || []), a]);
+  const mode = <T>(xs: T[]) => {
+    const c = new Map<T, number>();
+    xs.forEach((x) => c.set(x, (c.get(x) || 0) + 1));
+    return [...c.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  };
+  const products = [...byName.values()].map((as) => ({ name: as[0].name, price: mode(as.map((a) => a.price)), billing: mode(as.map((a) => a.billing)) }));
+  return { products: products.sort((a, b) => a.name.localeCompare(b.name, 'hu')), assigns };
+}
+
+/** elérhető darabszám: készlet − a partnerekhez rendelt mennyiség (készlet nélkül: korlátlan → null) */
+export function availableOf(p: Pick<Product, 'id' | 'stock'>, assigns: PartnerProduct[]): number | null {
+  if (p.stock === null || p.stock === undefined) return null;
+  return p.stock - assigns.filter((a) => a.product_id === p.id).reduce((s, a) => s + a.qty, 0);
 }

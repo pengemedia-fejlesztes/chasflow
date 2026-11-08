@@ -5,6 +5,8 @@ import { VAT_RATE } from '../../shared/vat';
 // mindegyik saját összeggel, ütemezéssel és határidővel; alul új tétel. A partner általános fizetési határideje:
 // rendszeres tétel → a hónap első munkanapján számlázunk + N nap; egyszeri → a felviteltől 14 nap. Bevételnél és kiadásnál ugyanígy.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ProductCombo } from './ProductCombo';
+import { partnerIdOf } from '../../shared/partners';
 import { displayGroup, normalizeText } from '../../shared/categories';
 import { addMonths, fmt, monthDiff, monthLabel, monthLong, ymOf } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
@@ -1434,6 +1436,8 @@ function NewItem({
   onSave: (b: ReturnType<typeof genSeries>, msg: string) => void;
 }) {
   const lastSave = useRef(0);
+  const { ix: ixN } = useStore();
+  const partnerKeyOfLeaf = partnerIdOf(ixN.leafById[leaf]?.label || '');
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   /** a beírt összeg nettó (a mentéskor +27% ÁFA) vagy bruttó – egyszer, az egész tételre */
@@ -1573,13 +1577,27 @@ function NewItem({
       {/* Mit számlázunk? */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span style={labelStrong}>{section === 'in' ? 'Mit számlázunk?' : 'Mit fizetünk?'}</span>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={section === 'in' ? 'pl. Marketing tanácsadás, SEO, PPC, riport' : 'pl. Könyvelés, tárhely, licenc'}
-          style={nameInputStyle}
-        />
+        {section === 'in' ? (
+          <ProductCombo
+            autoFocus
+            value={name}
+            onChange={setName}
+            partnerKey={partnerKeyOfLeaf}
+            label="Mit számlázunk? – megnevezés a termék- és szolgáltatástörzsből"
+            onPick={(x) => {
+              // a törzsből: név + bruttó összeg (a partner egyedi ára és darabszáma, ha hozzá van rendelve), ütem
+              setName(x.product.name);
+              setAmount(String(x.gross));
+              setVat('gross');
+              const b = x.assign?.billing || x.product.billing;
+              setRep(b === 'havi' ? 'monthly' : b === 'negyedeves' ? 'quarterly' : b === 'eves' ? 'yearly' : 'once');
+            }}
+            placeholder="pl. Marketing tanácsadás, SEO, PPC, riport – gépelj a törzsből választáshoz"
+            style={nameInputStyle}
+          />
+        ) : (
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="pl. Könyvelés, tárhely, licenc" style={nameInputStyle} />
+        )}
         {sugg.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>Másolás korábbiból ({monthName(selYm)}):</span>

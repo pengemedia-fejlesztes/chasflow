@@ -3,7 +3,7 @@ import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
-import { loadCatalog } from './catalog';
+import { loadCatalog, syncCatalog } from './catalog';
 import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
 import { publicUser, requireRole, type User } from './auth';
@@ -372,6 +372,8 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const seriesIds = [...(b.series || []).map((x) => String(x.id)), ...(b.deleteSeries || []).map(String)];
     const seriesBefore = await rowsById(env, 'series', seriesIds);
     const n = await applyBatch(env, b, u.id);
+    // a partnernél felvitt új tétel a termék- és szolgáltatástörzsbe is bekerül
+    if ((b.upsert || []).length) await syncCatalog(env).catch((e) => console.error('catalog sync', e));
     const after = (b.upsert || []).map((e) => e as unknown as Record<string, unknown>);
     const { items, counts } = describeEntries(before, after, (b.delete || []).map(String));
     const had = new Set(before.map((r) => String(r.id)));

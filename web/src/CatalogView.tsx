@@ -7,6 +7,7 @@ import {
   CURRENCIES,
   UNITS,
   VATS,
+  availableOf,
   billablesFor,
   effective,
   grossOf,
@@ -24,6 +25,7 @@ import { useAllPartners } from './PartnerCard';
 import { MoneyInput } from './PartnerModal';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Pill, Seg, card, inputStyle } from './ui';
+import { fmt } from '../../shared/model';
 
 const KIND_LABEL: Record<ProductKind, string> = { szolgaltatas: 'Szolgáltatás', termek: 'Termék' };
 const th: CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.12em', textTransform: 'uppercase', color: '#626A75' };
@@ -46,6 +48,7 @@ export function CatalogView() {
             összegyűjti, kinek mit kell kiszámlázni.
           </p>
         </div>
+        {canEdit && <SyncButton />}
         {canEdit && tab === 'list' && (
           <button
             type="button"
@@ -99,7 +102,7 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
     .filter((p) => kind === 'all' || p.kind === kind)
     .filter((p) => !nq || normalizeText(`${p.name} ${p.sku || ''} ${p.note || ''}`).includes(nq));
   const selP = creating ? null : list.find((p) => p.id === sel) || list[0] || null;
-  const COLS = 'minmax(160px,1.8fr) 110px 130px 70px 110px 120px';
+  const COLS = 'minmax(160px,1.8fr) 100px 130px 60px 90px 80px 120px';
   return (
     <>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -131,6 +134,7 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
             <span style={th}>Ütem</span>
             <span style={{ ...th, textAlign: 'right' }}>Nettó ár</span>
             <span style={{ ...th, textAlign: 'right' }}>ÁFA</span>
+            <span style={{ ...th, textAlign: 'right' }}>Elérhető</span>
             <span style={{ ...th, textAlign: 'right' }}>Partner</span>
             <span style={{ ...th, textAlign: 'right' }}>Havi nettó</span>
           </div>
@@ -180,6 +184,14 @@ function ProductList({ creating, setCreating }: { creating: boolean; setCreating
                   <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>/{p.unit}</span>
                 </b>
                 <span style={{ textAlign: 'right', font: `400 13.5px ${FONT}`, color: C.ink }}>{/^\d+$/.test(p.vat) ? `${p.vat}%` : p.vat}</span>
+                {(() => {
+                  const av = availableOf(p, assigns);
+                  return (
+                    <span style={{ textAlign: 'right', font: `500 14px ${FONT}`, color: av === null ? C.faint : av > 0 ? C.inc : C.neg }}>
+                      {av === null ? '–' : `${fmt(av)} ${p.unit}`}
+                    </span>
+                  );
+                })()}
                 <span style={{ textAlign: 'right', font: `500 14px ${FONT}`, color: u?.n ? C.ink : C.faint }}>{u?.n || '–'}</span>
                 <span style={{ textAlign: 'right', font: `600 14px ${FONT}`, color: u?.monthly ? C.inc : C.faint, fontVariantNumeric: 'tabular-nums' }}>
                   {u?.monthly ? money(u.monthly, p.currency) : '–'}
@@ -212,6 +224,7 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
   const [currency, setCurrency] = useState(p?.currency || 'HUF');
   const [billing, setBilling] = useState<Billing>(p?.billing || 'havi');
   const [sku, setSku] = useState(p?.sku || '');
+  const [stock, setStock] = useState(p?.stock === null || p?.stock === undefined ? '' : String(Math.round(p.stock)));
   const [note, setNote] = useState(p?.note || '');
   const [busy, setBusy] = useState(false);
   const users = (data.partnerProducts || []).filter((a) => p && a.product_id === p.id);
@@ -224,7 +237,7 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       async () => {
         const r = await api<{ id: string }>(p ? `/api/products/${encodeURIComponent(p.id)}` : '/api/products', {
           method: p ? 'PUT' : 'POST',
-          body: { name, kind, unit, price: Number(price || 0), vat, currency, billing, sku, note, ...extra },
+          body: { name, kind, unit, price: Number(price || 0), vat, currency, billing, sku, note, stock: stock === '' ? null : Number(stock), ...extra },
         });
         id = r.id;
       },
@@ -298,6 +311,9 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
         <Field label="Cikkszám / belső kód">
           <input value={sku} onChange={(e) => setSku(e.target.value)} maxLength={60} disabled={!canEdit} style={sel} />
         </Field>
+        <Field label="Készlet (üres: nincs készletkezelés)">
+          <MoneyInput value={stock} onChange={setStock} disabled={!canEdit} placeholder="pl. 10" style={sel} />
+        </Field>
         <Field label="Leírás, megjegyzés" style={{ gridColumn: '1 / -1' }}>
           <textarea
             value={note}
@@ -311,6 +327,16 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       </div>
       <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>
         Bruttó egységár: <b style={{ color: C.navy }}>{money(grossOf(net, vat), currency)}</b>
+        {p && availableOf(p, data.partnerProducts || []) !== null && (
+          <>
+            {' '}
+            · elérhető:{' '}
+            <b style={{ color: C.navy }}>
+              {fmt(availableOf(p, data.partnerProducts || [])!)} {p.unit}
+            </b>{' '}
+            (készlet − partnerekhez rendelt mennyiség)
+          </>
+        )}
       </span>
       {canEdit && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -346,6 +372,7 @@ function ProductEditor({ p, onSaved, onCancel }: { p: Product | null; onSaved: (
       {p && (
         <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={th}>Partnerek ({users.length})</span>
+          {canEdit && !p.archived && <AssignToPartner product={p} taken={new Set(users.map((a) => a.partner_key))} />}
           {!users.length && <span style={{ font: `400 13.5px ${FONT}`, color: C.muted }}>Még egy partnerhez sincs hozzárendelve.</span>}
           {users.map((a) => {
             const pt = partners.find((x) => x.key === a.partner_key);
@@ -476,6 +503,98 @@ function BillableList() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** a partnerek tételeiből hiányzó termékek és hozzárendelések pótlása */
+function SyncButton() {
+  const { run, showToast } = useStore();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      className={busy ? 'is-loading' : undefined}
+      onClick={async () => {
+        setBusy(true);
+        let r: { products: number; assigns: number } = { products: 0, assigns: 0 };
+        const ok = await run(async () => {
+          r = await api('/api/products/sync', { method: 'POST', body: {} });
+        });
+        setBusy(false);
+        if (ok)
+          showToast(
+            r.products || r.assigns ? `${r.products} új termék, ${r.assigns} új hozzárendelés a partnerek tételeiből` : 'Nincs új tétel a partnereknél',
+          );
+      }}
+      style={{
+        border: `1px solid ${C.line2}`,
+        borderRadius: 999,
+        background: '#fff',
+        color: C.navy,
+        padding: '11px 18px',
+        font: `600 14px ${FONT}`,
+        cursor: 'pointer',
+      }}
+    >
+      ↻ Frissítés a partnerektől
+    </button>
+  );
+}
+
+/** a termék hozzárendelése egy partnerhez a termék oldaláról (a partner adatlapján is megjelenik) */
+function AssignToPartner({ product, taken }: { product: Product; taken: Set<string> }) {
+  const { data, run } = useStore();
+  const partners = useAllPartners();
+  const [q, setQ] = useState('');
+  const [qty, setQty] = useState('1');
+  const [busy, setBusy] = useState(false);
+  const match = partners.find((p) => normalizeText(p.name) === normalizeText(q));
+  const listId = 'cf-partners-' + product.id;
+  const save = async () => {
+    if (!match || busy) return;
+    setBusy(true);
+    const ok = await run(
+      () =>
+        api('/api/partner-products', {
+          method: 'POST',
+          body: { partner_key: match.key, product_id: product.id, qty: qty.replace(',', '.'), start_ym: data.today.slice(0, 7) },
+        }),
+      `${match.name}: ${product.name} hozzárendelve`,
+    );
+    setBusy(false);
+    if (ok) setQ('');
+  };
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), save())}
+        list={listId}
+        placeholder="Partner neve…"
+        aria-label="Partner kiválasztása a hozzárendeléshez"
+        style={{ ...inputStyle, height: 38, flex: '1 1 180px' }}
+      />
+      <datalist id={listId}>
+        {partners
+          .filter((p) => !taken.has(p.key) && !p.leaves.every((l) => l.archived))
+          .map((p) => (
+            <option key={p.key} value={p.name} />
+          ))}
+      </datalist>
+      <input
+        value={qty}
+        onChange={(e) => setQty(e.target.value.replace(/[^\d,.]/g, ''))}
+        inputMode="decimal"
+        aria-label="Mennyiség"
+        style={{ ...inputStyle, height: 38, width: 70 }}
+      />
+      <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>{product.unit}</span>
+      <Pill small kind={match ? 'primary' : 'light'} onClick={save}>
+        + Hozzárendelés
+      </Pill>
     </div>
   );
 }

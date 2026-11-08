@@ -64,3 +64,51 @@ describe('terméktörzs: számlázási ütem', () => {
     expect(cleanProfile({ pay_days: '' }).pay_days).toBeNull();
   });
 });
+
+import { availableOf, deriveCatalog, productNameOf } from '../shared/catalog';
+import { partnerIdOf } from '../shared/partners';
+
+describe('törzs a partnerek tételeiből', () => {
+  it('terméknév: hónap, partner-előtag, részlet és előleg nélkül; számlaszám kimarad', () => {
+    expect(productNameOf('Marketing tanácsadás – 2026. november', 'Kalmia')).toBe('Marketing tanácsadás');
+    expect(productNameOf('Orvosmost - Marketing tanácsadás', 'Orvosmost')).toBe('Marketing tanácsadás');
+    expect(productNameOf('Weboldal készítése – 1. részlet', 'X')).toBe('Weboldal készítése');
+    expect(productNameOf('SEO oktatás - 1 rész', 'BWT')).toBe('SEO oktatás');
+    expect(productNameOf('Weboldal készítés - előleg', 'E')).toBe('Weboldal készítés');
+    expect(productNameOf('Penge / 2026-000001', 'Balogh')).toBeNull();
+  });
+  it('havi sorozat, havonta kétszer szereplő tétel = 2 db, részletek = egy egyszeri tétel, ajánlat külön jelölve', () => {
+    const leaves = [
+      { id: 'k', label: 'Kalmia', section: 'in' as const, offer: false },
+      { id: 'n', label: 'Naturtex', section: 'in' as const, offer: false },
+      { id: 'h', label: 'hitelespenzugyek', section: 'in' as const, offer: true },
+      { id: 'o', label: 'Rackforest', section: 'out' as const, offer: false },
+    ];
+    const plans = [
+      ...['2026-11', '2026-12', '2027-01'].map((m) => ({ leaf_id: 'k', name: 'Marketing tanácsadás', amount: 1497000, date: m + '-11', series_id: 's1' })),
+      ...['2026-12', '2027-01'].flatMap((m) => [
+        { leaf_id: 'n', name: 'Marketing feladatok', amount: 609000, date: m + '-09', series_id: 's2' },
+        { leaf_id: 'n', name: 'Marketing feladatok', amount: 609000, date: m + '-09', series_id: 's3' },
+      ]),
+      { leaf_id: 'h', name: 'Weboldal készítése – 1. részlet', amount: 490000, date: '2026-11-10' },
+      { leaf_id: 'h', name: 'Weboldal készítése – 2. részlet', amount: 490000, date: '2026-12-08' },
+      { leaf_id: 'o', name: 'Tárhely', amount: -8000, date: '2026-12-01' },
+      { leaf_id: 'k', name: 'Régi', amount: 1000, date: '2026-01-01' },
+    ];
+    const d = deriveCatalog(leaves, plans, { s1: 'monthly', s2: 'monthly', s3: 'monthly' }, '2026-11', partnerIdOf);
+    expect(d.products.map((p) => p.name)).toEqual(['Marketing feladatok', 'Marketing tanácsadás', 'Weboldal készítése']);
+    const k = d.assigns.find((a) => a.partner_key === 'kalmia')!;
+    expect(k).toMatchObject({ qty: 1, price: 1178740, billing: 'havi', start_ym: '2026-11', end_ym: '2027-01', offer: false });
+    expect(d.assigns.find((a) => a.partner_key === 'naturtex')).toMatchObject({ qty: 2, price: 479528, billing: 'havi' });
+    expect(d.assigns.find((a) => a.partner_key === 'hitelespenzugyek')).toMatchObject({ qty: 1, price: 771654, billing: 'egyszeri', offer: true });
+  });
+  it('elérhető darabszám: készlet − hozzárendelt mennyiség', () => {
+    const a = [
+      { product_id: 'p1', qty: 3 },
+      { product_id: 'p1', qty: 2 },
+      { product_id: 'p2', qty: 9 },
+    ] as any;
+    expect(availableOf({ id: 'p1', stock: 10 }, a)).toBe(5);
+    expect(availableOf({ id: 'p1', stock: null }, a)).toBeNull();
+  });
+});

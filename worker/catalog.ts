@@ -1,10 +1,11 @@
 // Termék- és szolgáltatástörzs, a partnerekhez rendelt (számlázandó) termékek és a partnerek számlázási adatai.
 // A táblák futáskor jönnek létre (CREATE TABLE IF NOT EXISTS), így az éles MySQL-en sem kell kézi sémafrissítés;
 // a típusok SQLite-on és MySQL-en is érvényesek.
-import { BILLING_STEP, VATS, cleanProfile, type Billing, type PartnerProduct, type PartnerProfile, type Product } from '../shared/catalog';
+import { BILLING_STEP, VATS, cleanProfile, deriveCatalog, type Billing, type PartnerProduct, type PartnerProfile, type Product } from '../shared/catalog';
 import { requireRole, type User } from './auth';
 import { logChange } from './changelog';
-import { Env, HttpError, json, now, randomId, readJson } from './util';
+import { partnerIdOf } from '../shared/partners';
+import { Env, HttpError, getSetting, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
 const DDL = [
   `CREATE TABLE IF NOT EXISTS products (
@@ -18,6 +19,7 @@ const DDL = [
     billing VARCHAR(12) NOT NULL DEFAULT 'havi',
     sku VARCHAR(60),
     note TEXT,
+    stock DOUBLE,
     archived INTEGER NOT NULL DEFAULT 0,
     updated_at BIGINT NOT NULL
   )`,
@@ -46,6 +48,12 @@ export function ensureCatalog(env: Env): Promise<boolean> {
   if (!ready)
     ready = (async () => {
       for (const s of DDL) await env.DB.prepare(s).run();
+      // később hozzáadott oszlop: készlet (a már létező táblába)
+      const hasStock = await env.DB.prepare('SELECT stock FROM products LIMIT 1')
+        .all()
+        .then(() => true)
+        .catch(() => false);
+      if (!hasStock) await env.DB.prepare('ALTER TABLE products ADD COLUMN stock DOUBLE').run();
       return true;
     })().catch((e) => {
       ready = null;
@@ -65,8 +73,13 @@ export interface CatalogBundle {
 export async function loadCatalog(env: Env): Promise<CatalogBundle> {
   if (!(await ensureCatalog(env)))
     return { products: [], partnerProducts: [], partnerProfiles: {}, catalogError: 'A termékadatbázis táblái nem hozhatók létre.' };
+  // első betöltéskor a partnereknél már felvitt tételekből feltöltjük a törzset
+  if (!(await getSetting(env, 'catalog_seeded'))) {
+    await syncCatalog(env).catch((e) => console.error('catalog seed', e));
+    await setSetting(env, 'catalog_seeded', String(now()));
+  }
   const [p, a, f] = await env.DB.batch([
-    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, archived, updated_at FROM products ORDER BY name'),
+    env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, stock, archived, updated_at FROM products ORDER BY name'),
     env.DB.prepare('SELECT id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at FROM partner_products ORDER BY start_ym'),
     env.DB.prepare('SELECT partner_key, data FROM partner_profiles'),
   ]);
@@ -80,10 +93,98 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
   }
   const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
-    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), archived: Number(r.archived) })),
+    products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), stock: num(r.stock), archived: Number(r.archived) })),
     partnerProducts: (a.results as any[]).map((r) => ({ ...r, qty: Number(r.qty), price: num(r.price) })),
     partnerProfiles: profiles,
   };
+}
+
+const IGNORE_KEY = 'catalog_ignore';
+const lc = (s: string) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+async function ignoreList(env: Env): Promise<Set<string>> {
+  try {
+    return new Set(JSON.parse((await getSetting(env, IGNORE_KEY)) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+/** a kézzel levett / törölt tételt a szinkron nem hozza vissza */
+async function addIgnore(env: Env, key: string) {
+  const s = await ignoreList(env);
+  s.add(key);
+  await setSetting(env, IGNORE_KEY, JSON.stringify([...s].slice(-2000)));
+}
+
+/**
+ * A partnereknél felvitt (bevételi) tervekből a hiányzó termékek és partner-hozzárendelések létrehozása.
+ * Csak hozzáad: a meglévőt nem írja felül (azt már szerkeszthették), a kézzel törölteket nem hozza vissza.
+ */
+export async function syncCatalog(env: Env): Promise<{ products: number; assigns: number }> {
+  if (!(await ensureCatalog(env))) return { products: 0, assigns: 0 };
+  const cur = todayHu().slice(0, 7);
+  const [gR, lR, eR, sR, pR, aR] = await env.DB.batch([
+    env.DB.prepare('SELECT id, section, label FROM groups'),
+    env.DB.prepare('SELECT id, group_id, label FROM leaves'),
+    env.DB.prepare("SELECT leaf_id, name, amount, date, period, series_id, tentative FROM entries WHERE kind = 'plan' AND date >= date('now', '-100 days')"),
+    env.DB.prepare('SELECT id, rep FROM series'),
+    env.DB.prepare('SELECT id, name, price FROM products'),
+    env.DB.prepare('SELECT partner_key, product_id FROM partner_products'),
+  ]);
+  const groups = new Map((gR.results as any[]).map((g) => [g.id, g]));
+  const leaves = (lR.results as any[]).map((l) => {
+    const g = groups.get(l.group_id);
+    return { id: l.id, label: l.label, section: g?.section === 'out' ? 'out' : 'in', offer: /aj[áa]nlat/i.test(g?.label || '') } as const;
+  });
+  const rep = Object.fromEntries((sR.results as any[]).map((x) => [x.id, x.rep]));
+  const d = deriveCatalog(leaves as any, eR.results as any, rep, cur, partnerIdOf);
+  const ignore = await ignoreList(env);
+  const byName = new Map((pR.results as any[]).map((p) => [lc(p.name), { id: p.id as string, price: Number(p.price) }]));
+  const have = new Set((aR.results as any[]).map((a) => a.partner_key + '|' + a.product_id));
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  let np = 0,
+    na = 0;
+  for (const p of d.products) {
+    if (byName.has(lc(p.name)) || ignore.has('*|' + lc(p.name))) continue;
+    const id = randomId('p');
+    byName.set(lc(p.name), { id, price: p.price });
+    stmts.push(
+      env.DB.prepare(
+        'INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(
+        id,
+        p.name.slice(0, 200),
+        'szolgaltatas',
+        p.billing === 'havi' ? 'hó' : 'db',
+        p.price,
+        '27',
+        'HUF',
+        p.billing,
+        null,
+        'A partnereknél felvitt tételekből',
+        0,
+        t,
+      ),
+    );
+    np++;
+  }
+  for (const a of d.assigns) {
+    const p = byName.get(lc(a.name));
+    if (!p || a.offer || have.has(a.partner_key + '|' + p.id) || ignore.has(a.partner_key + '|' + lc(a.name))) continue;
+    have.add(a.partner_key + '|' + p.id);
+    stmts.push(
+      env.DB.prepare(
+        'INSERT INTO partner_products (id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).bind(randomId('pp'), a.partner_key, p.id, a.qty, a.price === p.price ? null : a.price, a.billing, a.start_ym, a.end_ym, null, t),
+    );
+    na++;
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return { products: np, assigns: na };
 }
 
 const KINDS = new Set(['szolgaltatas', 'termek']);
@@ -111,6 +212,13 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
   if (!(await ensureCatalog(env))) throw new HttpError(500, 'A termékadatbázis táblái nem hozhatók létre a szerveren.');
   const t = now();
 
+  if (prod && prod[1] === 'sync' && req.method === 'POST') {
+    const r = await syncCatalog(env);
+    if (r.products || r.assigns)
+      await logChange(env, u.id, 'catalog_sync', `Törzs frissítve a partnerek tételeiből: ${r.products} új termék, ${r.assigns} új hozzárendelés`, [], null);
+    return json({ ok: true, ...r });
+  }
+
   if (prod) {
     const id = prod[1] ? decodeURIComponent(prod[1]).slice(0, 40) : null;
     const cur = id ? await env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first<any>() : null;
@@ -123,6 +231,7 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
         return json({ ok: true, archived: true });
       }
       await env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run();
+      await addIgnore(env, '*|' + lc(cur.name));
       await logChange(env, u.id, 'product_deleted', `Termék törölve: ${cur.name}`, [], null);
       return json({ ok: true, deleted: true });
     }
@@ -137,6 +246,7 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
       currency: b.currency !== undefined ? (['HUF', 'EUR', 'USD'].includes(b.currency) ? b.currency : 'HUF') : cur?.currency || 'HUF',
       billing: b.billing !== undefined ? billingOf(b.billing) || 'havi' : cur?.billing || 'havi',
       sku: b.sku !== undefined ? str(b.sku, 60) || null : (cur?.sku ?? null),
+      stock: b.stock !== undefined ? (b.stock === null || b.stock === '' ? null : money(b.stock, 'készlet')) : (cur?.stock ?? null),
       note:
         b.note !== undefined
           ? String(b.note ?? '')
@@ -152,11 +262,11 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
     if (clash) throw new HttpError(409, `Már van „${v.name}” nevű termék vagy szolgáltatás.`);
     const nid = id || randomId('p');
     await env.DB.prepare(
-      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO products (id, name, kind, unit, price, vat, currency, billing, sku, note, stock, archived, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind, unit = excluded.unit, price = excluded.price, vat = excluded.vat,
-         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, archived = excluded.archived, updated_at = excluded.updated_at`,
+         currency = excluded.currency, billing = excluded.billing, sku = excluded.sku, note = excluded.note, stock = excluded.stock, archived = excluded.archived, updated_at = excluded.updated_at`,
     )
-      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.archived, t)
+      .bind(nid, v.name, v.kind, v.unit, v.price, v.vat, v.currency, v.billing, v.sku, v.note, v.stock, v.archived, t)
       .run();
     await logChange(
       env,
@@ -175,6 +285,8 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
     if (id && !cur) throw new HttpError(404, 'Nincs ilyen hozzárendelés.');
     if (req.method === 'DELETE' && cur) {
       await env.DB.prepare('DELETE FROM partner_products WHERE id = ?').bind(id).run();
+      const pn = await env.DB.prepare('SELECT name FROM products WHERE id = ?').bind(cur.product_id).first<{ name: string }>();
+      if (pn) await addIgnore(env, cur.partner_key + '|' + lc(pn.name));
       await logChange(env, u.id, 'partner_product_deleted', `Partnertől levéve: ${cur.partner_key} · ${cur.product_id}`, [], null);
       return json({ ok: true });
     }

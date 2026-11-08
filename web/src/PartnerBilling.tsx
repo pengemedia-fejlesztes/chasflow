@@ -5,6 +5,7 @@ import {
   BILLINGS,
   BILLING_LABEL,
   PROFILE_FIELDS,
+  availableOf,
   billablesFor,
   effective,
   emptyProfile,
@@ -19,6 +20,8 @@ import { addMonths, fmt, monthLong } from '../../shared/model';
 import type { PartnerStat } from '../../shared/partners';
 import { api } from './api';
 import { MoneyInput } from './PartnerModal';
+import { ProductCombo } from './ProductCombo';
+import { normalizeText } from '../../shared/categories';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Pill, card, eyebrow, inputStyle, R } from './ui';
 
@@ -143,8 +146,10 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
   const { run, data } = useStore();
   const ym = data.today.slice(0, 7);
   const usable = products.filter((x) => !x.archived || x.id === a?.product_id);
-  const [productId, setProductId] = useState(a?.product_id || usable[0]?.id || '');
-  const prod = products.find((x) => x.id === productId);
+  const [name, setName] = useState(products.find((x) => x.id === a?.product_id)?.name || '');
+  // a beírt / kiválasztott név a törzsből (pontos egyezés); ha nincs ilyen, mentéskor új termék lesz belőle
+  const prod = usable.find((x) => normalizeText(x.name) === normalizeText(name));
+  const productId = prod?.id || '';
   const [qty, setQty] = useState(a ? fmtQty(a.qty) : '1');
   const [price, setPrice] = useState(digits(a?.price));
   const [billing, setBilling] = useState<Billing | ''>(a?.billing || '');
@@ -154,7 +159,7 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
   const [busy, setBusy] = useState(false);
   const months = useMemo(() => Array.from({ length: 50 }, (_, i) => addMonths(ym, i - 12)), [ym]);
   const save = async () => {
-    if (busy) return;
+    if (busy || !name.trim()) return;
     setBusy(true);
     const body = {
       partner_key: p.key,
@@ -167,8 +172,19 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
       note,
     };
     const ok = await run(
-      () => api(a ? `/api/partner-products/${encodeURIComponent(a.id)}` : '/api/partner-products', { method: a ? 'PUT' : 'POST', body }),
-      `${p.name}: ${prod?.name || 'szolgáltatás'} ${a ? 'mentve' : 'hozzárendelve'}`,
+      async () => {
+        if (!body.product_id) {
+          // új termék a törzsbe: a beírt név, ár és ütem (a partner ára egyben a törzsár)
+          const r = await api<{ id: string }>('/api/products', {
+            method: 'POST',
+            body: { name: name.trim(), price: Number(price || 0), billing: billing || 'havi', unit: billing === 'egyszeri' ? 'db' : 'hó' },
+          });
+          body.product_id = r.id;
+          body.price = null;
+        }
+        await api(a ? `/api/partner-products/${encodeURIComponent(a.id)}` : '/api/partner-products', { method: a ? 'PUT' : 'POST', body });
+      },
+      `${p.name}: ${name.trim()} ${a ? 'mentve' : prod ? 'hozzárendelve' : 'felvéve a törzsbe és hozzárendelve'}`,
     );
     setBusy(false);
     if (ok) onDone();
@@ -177,15 +193,6 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
     if (!a || !confirm(`Leveszed ${p.name} partnertől: ${prod?.name || 'ez a tétel'}?`)) return;
     if (await run(() => api(`/api/partner-products/${encodeURIComponent(a.id)}`, { method: 'DELETE' }), 'Levéve a partnerről')) onDone();
   };
-  if (!usable.length)
-    return (
-      <div style={{ padding: 16, borderTop: `1px solid ${C.line3}`, font: `400 14px ${FONT}`, color: C.muted }}>
-        Még nincs termék a törzsben. Előbb vedd fel a <a href="#/products">Termékek, szolgáltatások</a> oldalon.{' '}
-        <Pill small onClick={onDone}>
-          Mégse
-        </Pill>
-      </div>
-    );
   const sel: CSSProperties = { ...inputStyle, height: 42 };
   return (
     <form
@@ -194,13 +201,24 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
     >
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
         <Field label="Termék / szolgáltatás" style={{ gridColumn: 'span 2' }}>
-          <select value={productId} onChange={(e) => setProductId(e.target.value)} style={sel}>
-            {usable.map((x) => (
-              <option key={x.id} value={x.id}>
-                {x.name} · {money(x.price, x.currency)}/{x.unit}
-              </option>
-            ))}
-          </select>
+          <ProductCombo
+            value={name}
+            onChange={setName}
+            partnerKey={p.key}
+            label="Termék vagy szolgáltatás keresése a törzsben"
+            placeholder="Gépelj: a törzsből választ, vagy új nevet ír be"
+            onPick={(x) => {
+              setName(x.product.name);
+              if (!a) setQty(fmtQty(x.qty));
+            }}
+            style={sel}
+          />
+          {name.trim() && !prod && <span style={{ font: `500 12.5px ${FONT}`, color: C.offer }}>Új tétel: mentéskor felkerül a törzsbe is.</span>}
+          {prod && availableOf(prod, data.partnerProducts || []) !== null && (
+            <span style={{ font: `500 12.5px ${FONT}`, color: C.muted }}>
+              Elérhető: {fmt(availableOf(prod, data.partnerProducts || [])!)} {prod.unit}
+            </span>
+          )}
         </Field>
         <Field label={`Mennyiség (${prod?.unit || 'db'})`}>
           <input value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d,.]/g, ''))} inputMode="decimal" style={sel} />
@@ -244,7 +262,7 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           type="submit"
-          disabled={busy || !productId}
+          disabled={busy || !name.trim()}
           className={busy ? 'is-loading' : undefined}
           style={{ border: 0, borderRadius: 999, background: C.blue, color: '#fff', padding: '10px 20px', font: `600 14px ${FONT}`, cursor: 'pointer' }}
         >
