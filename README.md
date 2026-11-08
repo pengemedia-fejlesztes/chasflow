@@ -106,11 +106,11 @@ A regressziótesztek Node.js 22.13 vagy újabb verziót igényelnek (beépített
 | Mappa | Tartalom |
 |---|---|
 | `src/client/` | React felület (Vite), asztali és mobil nézet |
-| `src/server/app/` | Az API: hitelesítés, adatok, Billingo, bank, NAV, napi szinkron. Platformfüggetlen, `{ fetch, scheduled }` formájú; a platformtól várt felület: `platform.ts` |
-| `src/server/runtime/` | Node-os futtatás: HTTP-szerver (`entry.mjs`), ütemezett futás (`cron.mjs`), adatbázis-réteg (SQLite / MySQL) |
+| `src/server/app/` | Az API: hitelesítés és hozzáférés-kezelés, adatok, Billingo, bank, NAV, napi szinkron, feladatok, termék- és raktártörzs, Google Drive mentés. Platformfüggetlen, `{ fetch, scheduled }` formájú; a platformtól várt felület: `platform.ts`. Az új modulok táblái futáskor jönnek létre (`ensureOnce`, `util.ts`) |
+| `src/server/runtime/` | Node-os futtatás: HTTP-szerver (`entry.mjs`, statikus fájlok határa: `security.mjs`), ütemezett futás (`cron.mjs`), adatbázis-réteg (SQLite / MySQL), HTTPS-kényszerítés a cPanel webrootban (`enforce-https.mjs`) |
 | `src/shared/` | Közös logika (felület + szerver): kategóriák, xls-értelmezés, cashflow-számítás, banki párosítás |
 | `public/` | Statikus fájlok (ikonok, manifest, service worker) |
-| `mac-agent/` | A Macen futó bankletöltő (aggreg8); a build a `/mac/` útvonalra másolja |
+| `mac-agent/` | A Macen futó bankletöltő (aggreg8); a build a `/mac/` útvonalra másolja, a telepítőbe beágyazva a futtatható segédfájlokat (`vite.config.ts`) |
 | `migrations/` | Adatbázis-séma (SQLite) |
 | `tests/` | Tesztek (`vitest`), a forrás szerint: `client/`, `server/`, `shared/` |
 | `scripts/dev/` | Lokális fejlesztés: Docker-indítás, éles adat importja, lokális admin |

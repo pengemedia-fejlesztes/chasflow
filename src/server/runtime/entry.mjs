@@ -4,10 +4,11 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import worker from '../../../dist/server/worker.mjs';
 import { openDb } from './db.mjs';
+import { staticPath } from './security.mjs';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url)); // a repo gyokere
 
@@ -45,13 +46,16 @@ const db = await openDb(ROOT);
 const ASSETS = {
   async fetch(req) {
     const url = new URL(req.url);
-    let p = decodeURIComponent(url.pathname);
+    let p = url.pathname;
     if (BASE && p.startsWith(BASE)) p = p.slice(BASE.length) || '/';
-    let file = normalize(join(STATIC_DIR, p));
-    if (!file.startsWith(STATIC_DIR)) return new Response('Tiltott', { status: 403 });
+    let file = await staticPath(STATIC_DIR, p);
+    if (!file) return new Response('Tiltott', { status: 403 });
     try {
       const st = await stat(file);
-      if (st.isDirectory()) file = join(file, 'index.html');
+      if (st.isDirectory()) {
+        file = await staticPath(STATIC_DIR, p.replace(/\/$/, '') + '/index.html');
+        if (!file) return new Response('Tiltott', { status: 403 });
+      }
     } catch {
       file = join(STATIC_DIR, 'index.html'); // SPA fallback
     }

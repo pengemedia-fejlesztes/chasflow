@@ -255,9 +255,7 @@ async function main() {
     }
     step(`kezdő dátum: ${since || 'teljes lista'}`);
     await go('/transactions');
-    let exp = env.EXPORT_JS_FILE
-      ? readFileSync(env.EXPORT_JS_FILE, 'utf8')
-      : await (await fetch(`${CF_URL}/mac/aggreg8-export.js`, { signal: AbortSignal.timeout(20000) })).text();
+    let exp = readFileSync(env.EXPORT_JS_FILE || `${STATE}/aggreg8-export.js`, 'utf8');
     exp = exp.trim().replace(/;$/, '').replaceAll('https://standalone-backend.aggreg8.hu', BACKEND);
     const summary = await evaluate(`window.__cf_since = ${JSON.stringify(since)}; window.__cf_nofile = true; ${exp}`, 180000).catch((e) => 'HIBA ' + e.message);
     step(`letöltés: ${String(summary).slice(0, 200)}`);

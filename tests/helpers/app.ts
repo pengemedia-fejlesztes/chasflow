@@ -12,6 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import app from '../../src/server/app/index';
 import { newPasswordFields } from '../../src/server/app/auth';
 import type { Env } from '../../src/server/app/util';
+import { FULL_ACCESS, type Access } from '../../src/shared/access';
 import { SqliteD1, migrate } from '../../src/server/runtime/d1-sqlite.mjs';
 
 export type Role = 'admin' | 'member' | 'viewer'; // az adatbazis CHECK-je szerint (member = szerkeszto)
@@ -60,12 +61,23 @@ export async function createTestApp(opts: { role?: Role; env?: Partial<Env>; log
     return { status: res.status, data, headers: res.headers };
   }
 
-  async function addUser(email: string, role: Role, password = PASSWORD) {
+  /**
+   * Felhasználó felvétele. A nem admin felhasználó alapból TELJES menü- és adathozzáférést kap (user_access), mert
+   * ezek a tesztek a szerepkört (szerkesztő / olvasó) vizsgálják. access: null = nincs megadva, ami a szerveren tiltást
+   * jelent; a felhasználónkénti hozzáférés-kezelést a security-boundaries / access tesztek fedik.
+   */
+  async function addUser(email: string, role: Role, password = PASSWORD, access: Access | null = FULL_ACCESS) {
     const f = await newPasswordFields(password);
     const r = sql
       .prepare('INSERT INTO users (email, name, role, pw_hash, pw_salt, pw_iter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(email, email.split('@')[0], role, f.pw_hash, f.pw_salt, f.pw_iter, Date.now());
-    return Number(r.lastInsertRowid);
+    const id = Number(r.lastInsertRowid);
+    if (role !== 'admin' && access) {
+      const row = sql.prepare("SELECT value FROM settings WHERE key = 'user_access'").get() as { value: string } | undefined;
+      const all = { ...(row ? JSON.parse(row.value) : {}), [id]: access };
+      sql.prepare("INSERT INTO settings (key, value) VALUES ('user_access', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(all));
+    }
+    return id;
   }
 
   async function loginAs(email: string, password = PASSWORD) {

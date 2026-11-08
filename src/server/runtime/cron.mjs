@@ -32,7 +32,7 @@ const ctx = {
 };
 
 const t0 = Date.now();
-await worker.scheduled({ scheduledTime: Date.now(), cron: 'cpanel' }, env, ctx);
+await worker.scheduled({ scheduledTime: Date.now(), cron: process.argv[2] || 'cpanel' }, env, ctx);
 await Promise.allSettled(pending);
 console.log(`[${new Date().toISOString()}] szinkron kesz ${Date.now() - t0} ms`);
 process.exit(0);

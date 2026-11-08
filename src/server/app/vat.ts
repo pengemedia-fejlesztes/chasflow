@@ -35,7 +35,10 @@ export async function refreshVatPlans(env: Env): Promise<{ months: number; chang
        SELECT id, kind, date, leaf_id, name, amount, series_id, done, tentative, source, ext_ref, link_id, note, updated_at, updated_by, ?, NULL
        FROM entries WHERE kind = 'plan' AND done = 0 AND leaf_id = ? AND date >= ? AND COALESCE(source, '') != 'vat'`,
     ).bind(t, vatLeaf.id, next),
-    env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND done = 0 AND leaf_id = ? AND date >= ? AND COALESCE(source, '') != 'vat'").bind(vatLeaf.id, next),
+    env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND done = 0 AND leaf_id = ? AND date >= ? AND COALESCE(source, '') != 'vat'").bind(
+      vatLeaf.id,
+      next,
+    ),
   ];
   for (const m of plan) {
     const id = `vat_${m.ym}`;

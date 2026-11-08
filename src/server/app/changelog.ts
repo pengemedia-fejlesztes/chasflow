@@ -303,26 +303,35 @@ export async function handleChangelog(env: Env, req: Request, path: string, u: U
   if (um && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
     const b = await readJson<{ force?: boolean }>(req).catch(() => ({}) as { force?: boolean });
-    const row = await env.DB.prepare('SELECT id, ts, summary, leaf_ids, undo, undone_at FROM change_log WHERE id = ?')
-      .bind(Number(um[1]))
-      .first<{ id: number; ts: number; summary: string; leaf_ids: string; undo: string | null; undone_at: number | null }>();
-    if (!row) throw new HttpError(404, 'Nincs ilyen naplóbejegyzés.');
-    if (!row.undo) throw new HttpError(400, 'Ez a lépés nem vonható vissza.');
-    if (row.undone_at) throw new HttpError(400, 'Ezt már visszavonták.');
-    await undoChange(env, { id: row.id, ts: row.ts, undo: row.undo }, u, !!b.force);
-    const t = now();
-    await env.DB.batch([
-      env.DB.prepare('UPDATE change_log SET undone_at = ?, undone_by = ? WHERE id = ?').bind(t, u.id, row.id),
-      env.DB.prepare('INSERT INTO change_log (ts, user_id, action, summary, leaf_ids, undo_of) VALUES (?, ?, ?, ?, ?, ?)').bind(
-        t,
-        u.id,
-        'undo',
-        'Visszavonva: ' + row.summary,
-        row.leaf_ids,
-        row.id,
-      ),
-    ]);
+    await undoLogEntry(env, Number(um[1]), u, !!b.force);
     return json({ ok: true });
   }
   return null;
+}
+
+/**
+ * Egy naplóbejegyzés visszavonása (a Napló fülről és a műveletek saját visszavonásából is).
+ * onlyAction: csak ilyen típusú bejegyzés vonható vissza így (pl. a „számla a terv alá” toastja), más 400.
+ */
+export async function undoLogEntry(env: Env, id: number, u: User, force: boolean, onlyAction?: string) {
+  const row = await env.DB.prepare('SELECT id, ts, action, summary, leaf_ids, undo, undone_at FROM change_log WHERE id = ?')
+    .bind(id)
+    .first<{ id: number; ts: number; action: string; summary: string; leaf_ids: string; undo: string | null; undone_at: number | null }>();
+  if (!row) throw new HttpError(404, 'Nincs ilyen naplóbejegyzés.');
+  if (onlyAction && row.action !== onlyAction) throw new HttpError(400, 'Ez a lépés itt nem vonható vissza.');
+  if (!row.undo) throw new HttpError(400, 'Ez a lépés nem vonható vissza.');
+  if (row.undone_at) throw new HttpError(400, 'Ezt már visszavonták.');
+  await undoChange(env, { id: row.id, ts: row.ts, undo: row.undo }, u, force);
+  const t = now();
+  await env.DB.batch([
+    env.DB.prepare('UPDATE change_log SET undone_at = ?, undone_by = ? WHERE id = ?').bind(t, u.id, row.id),
+    env.DB.prepare('INSERT INTO change_log (ts, user_id, action, summary, leaf_ids, undo_of) VALUES (?, ?, ?, ?, ?, ?)').bind(
+      t,
+      u.id,
+      'undo',
+      'Visszavonva: ' + row.summary,
+      row.leaf_ids,
+      row.id,
+    ),
+  ]);
 }

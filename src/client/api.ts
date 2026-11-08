@@ -28,5 +28,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     if (res.status === 401 && !path.startsWith('/api/auth')) window.dispatchEvent(new Event('cf-logout'));
     throw new ApiError(res.status, data?.error || `Hiba (${res.status})`);
   }
+  const method = opts.method || (opts.body !== undefined ? 'POST' : 'GET');
+  if (method !== 'GET' && method !== 'HEAD') window.dispatchEvent(new CustomEvent('cf-mutation', { detail: path }));
   return data as T;
 }

@@ -550,8 +550,11 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
       list.sort((a, b) => a[0].sort - b[0].sort || a[0].label.localeCompare(b[0].label, 'hu'));
       for (const [l, mode] of list) {
         if (!matchesSearch(ix, l, f.search)) continue;
+        // az Ajánlatok szekció mindig mutatja az ajánlatok összegét; a kapcsoló csak azt dönti el, beleszámít-e a cashflow-ba
+        const isOfferSec = section === 'in' && offerGroup?.id === g.id;
+        const fx = isOfferSec ? { ...f, includeOffers: true } : f;
         const cells = columns.map((c) => {
-          const r = leafValue(ix, l.id, c, f, est, mode);
+          const r = leafValue(ix, l.id, c, fx, est, mode);
           return { v: r.v * sign, est: r.est * sign, offer: r.offer * sign };
         });
         // csak az aktív szűrőkhöz tartozó (nem üres) sorok – az Ajánlatok mappa sorai kikapcsolt ajánlat-szűrőnél is maradnak (üres számokkal)
@@ -576,14 +579,14 @@ export function buildMatrix(ix: Index, f: Filters): Matrix {
           gRow.cells[i].v += c.v;
           gRow.cells[i].est += c.est;
           gRow.cells[i].offer += c.offer;
-          net[i] += c.v * sign;
+          if (!isOfferSec || f.includeOffers) net[i] += c.v * sign;
         });
         leafRows.push(lr);
       }
       if (!leafRows.length) continue;
       gRow.total = gRow.cells.reduce((s, c) => s + c.v, 0);
       if (section === 'in' && offerGroup?.id === g.id) {
-        offerSec = { ...gRow, type: 'section', label: 'Ajánlatok', groupId: g.id };
+        offerSec = { ...gRow, type: 'section', label: f.includeOffers ? 'Ajánlatok' : 'Ajánlatok (nem számít bele)', groupId: g.id };
         offerChildren.push(...leafRows);
         continue;
       }

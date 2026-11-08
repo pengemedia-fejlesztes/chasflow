@@ -96,7 +96,13 @@ describe('alkategória (PATCH /api/leaves/:id)', () => {
     const empty = await t.patch(`/api/leaves/${L.minta}`, { label: '   ' });
     expect(empty.status).toBe(400);
     expect(empty.data.error).toBe('Adj meg nevet.');
-    for (const bad of [{ pay_rule: 'minden kedden' }, { pay_rule: 'day:45' }, { pay_days: 'harminc' }, { pay_days: 400 }, { label: 'Új név', pay_rule: 'xx' }]) {
+    for (const bad of [
+      { pay_rule: 'minden kedden' },
+      { pay_rule: 'day:45' },
+      { pay_days: 'harminc' },
+      { pay_days: 400 },
+      { label: 'Új név', pay_rule: 'xx' },
+    ]) {
       const r = await t.patch(`/api/leaves/${L.minta}`, bad);
       expect([bad, r.status]).toEqual([bad, 400]);
     }
@@ -198,7 +204,7 @@ describe('munkatársak (PUT /api/employees) és munkaidő (POST /api/worktime/im
       ],
     });
     expect(first.data).toEqual({ ok: true, months: 2, rows: 4 });
-    expect(rows("SELECT ym, project, tag, minutes, eur FROM worktime WHERE employee = ? ORDER BY ym, project", anna)).toEqual([
+    expect(rows('SELECT ym, project, tag, minutes, eur FROM worktime WHERE employee = ? ORDER BY ym, project', anna)).toEqual([
       { ym: '2026-09', project: 'Minta Kft.', tag: 'SEO', minutes: 600, eur: 120 },
       { ym: '2026-10', project: 'Alfa Bt.', tag: '', minutes: 90, eur: 0 },
       { ym: '2026-10', project: 'Minta Kft.', tag: 'SEO', minutes: 300, eur: 50.26 },
@@ -241,12 +247,25 @@ describe('beállítások (PUT /api/settings) – értékek ellenőrzése', () =>
   it('helyes értékek mentése és visszaolvasása; üres érték törli', async () => {
     t = await createTestApp();
     const L = await setupLeaves(t);
-    const r = await t.put('/api/settings', { opening_balance: '-250000', profit_target: '1500000', default_pay_days_in: '8', default_pay_days_out: '', billingo_leaf_default: L.minta });
+    const r = await t.put('/api/settings', {
+      opening_balance: '-250000',
+      profit_target: '1500000',
+      default_pay_days_in: '8',
+      default_pay_days_out: '',
+      billingo_leaf_default: L.minta,
+    });
     expect(r.status).toBe(200);
     const s = (await data()).settings;
-    expect(s).toMatchObject({ opening_balance: '-250000', profit_target: '1500000', default_pay_days_in: '8', default_pay_days_out: '', billingo_leaf_default: L.minta });
+    expect(s).toMatchObject({
+      opening_balance: '-250000',
+      profit_target: '1500000',
+      default_pay_days_in: '8',
+      default_pay_days_out: '',
+      billingo_leaf_default: L.minta,
+    });
     expect((await t.put('/api/settings', { profit_target: null })).status).toBe(200);
-    expect((await data()).settings.profit_target).toBeNull();
+    // törölve: a válaszban nem szerepel (a szerver csak a beállított értékeket adja ki)
+    expect((await data()).settings.profit_target ?? null).toBeNull();
   });
 
   it('szöveges összeg, tört, túl nagy határidő, ismeretlen alkategória: 400, és a kérés többi mezője sem íródik', async () => {

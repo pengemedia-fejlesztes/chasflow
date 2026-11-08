@@ -452,11 +452,14 @@ export function MobilePartnerScreen({
   onClose,
   onNewItem,
   onEditItem,
+  embedded,
 }: {
   p: PartnerStat;
   onClose: () => void;
   onNewItem: (leaf: string) => void;
   onEditItem: (leaf: string) => void;
+  /** az új partner adatlap „Értékesítések” fülén: saját fejléc (vissza, név, cégadatok) nélkül */
+  embedded?: boolean;
 }) {
   const { data, ix } = useStore();
   const [view, setView] = useState<'list' | 'cal' | 'company'>('list');
@@ -509,9 +512,9 @@ export function MobilePartnerScreen({
   const card: React.CSSProperties = { background: '#fff', border: `1px solid ${C.line}`, borderRadius: R.lg };
   const leaf = p.leaves[0]?.id;
   return (
-    <div style={{ position: 'fixed', inset: 0, background: C.bg, zIndex: 950, overflow: 'auto' }}>
+    <div style={embedded ? { background: C.bg } : { position: 'fixed', inset: 0, background: C.bg, zIndex: 950, overflow: 'auto' }}>
       <div style={{ background: '#fff', padding: '14px 18px 16px', display: 'flex', flexDirection: 'column', gap: 14, borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', gap: 12 }}>
           <button
             onClick={() => (view === 'company' ? setView('list') : onClose())}
             style={{ border: 0, background: 'transparent', font: `700 26px ${FONT}`, color: C.navy }}

@@ -191,6 +191,29 @@ export interface DataBundle {
   /** munkatársak és ledolgozott idejük (fedezeti pont) */
   employees?: import('./worktime').Employee[];
   worktime?: import('./worktime').WorktimeRow[];
+  /** termék- és szolgáltatástörzs, partnerhez rendelt termékek, partnerek számlázási adatai */
+  products?: import('./catalog').Product[];
+  partnerProducts?: import('./catalog').PartnerProduct[];
+  partnerProfiles?: Record<string, import('./catalog').PartnerProfile>;
+  catalogError?: string;
+  /** feladatok (admin: mind, más: a sajátjai) és a kiosztható felhasználók */
+  tasks?: import('./tasks').Task[];
+  taskUsers?: import('./tasks').TaskUser[];
+  /** saját feladat-jogosultság; adminnak mindenkié */
+  myTaskPerm?: import('./tasks').TaskPerm & { write: boolean };
+  taskPerms?: Record<string, import('./tasks').TaskPerm>;
+  tasksError?: string;
+  /** raktárak, raktárankénti készlet, legutóbbi készletmozgások */
+  warehouses?: import('./stock').Warehouse[];
+  stockLevels?: import('./stock').StockLevel[];
+  stockMoves?: import('./stock').StockMove[];
+  stockError?: string;
+  /** a bejelentkezett felhasználó hozzáférése; adminnak mindenkié és a 2FA-szabály */
+  myAccess?: import('./access').Access;
+  userAccess?: Record<string, import('./access').Access>;
+  twofaMode?: import('./access').TwoFaMode;
+  /** szerveroldali aggreg8-szinkron állapota (admin) */
+  aggreg8Server?: { connected: boolean; exp: number | null; lastRun: number | null; ok: boolean | null; message: string; needsAction?: string | null; banks?: string[] } | null;
 }
 
 export interface LostOffer {

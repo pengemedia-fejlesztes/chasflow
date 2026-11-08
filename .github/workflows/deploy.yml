@@ -34,6 +34,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run audit:security
       - run: npm run typecheck
       - run: npm test
       - run: npx vite build
@@ -56,6 +57,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run audit:security
       - name: Build (felület /Cashflow/ alá + szerveroldali csomag)
         run: |
           npx vite build --base /Cashflow/
@@ -107,13 +109,42 @@ jobs:
           TS=$(date +%Y%m%d-%H%M%S)
           BK=.backup/$TS
           mkdir -p "$BK"
+          # A cPanel domain webrootja eltérhet a public_html gyökértől.
+          WEB_CONFIG=""
+          for PUBLIC_ROOT in "$HOME/public_html" "$HOME/pmdev.hu" "$HOME/domains/pmdev.hu/public_html"; do
+            [ -d "$PUBLIC_ROOT" ] || continue
+            find -L "$PUBLIC_ROOT" -maxdepth 6 -type f -name .htaccess -print0 > "$NEW/web-configs.list" 2>/dev/null || true
+            while IFS= read -r -d '' CONFIG; do
+              if awk -v expected="$HOME/$APP_DIR" '$1 == "PassengerAppRoot" {gsub(/"/, "", $2); if ($2 == expected) found=1} END {exit !found}' "$CONFIG"; then
+                CANONICAL=$(readlink -f "$CONFIG")
+                if [ -n "$WEB_CONFIG" ] && [ "$WEB_CONFIG" != "$CANONICAL" ]; then echo "Több Passenger konfiguráció illeszkedik; kézi ellenőrzés kell."; exit 1; fi
+                WEB_CONFIG="$CANONICAL"
+              fi
+            done < "$NEW/web-configs.list"
+          done
+          [ -n "$WEB_CONFIG" ] || { echo "A Cashflow Passenger-konfiguráció nem található a publikus webgyökerekben."; exit 1; }
+          # Az SSH shell nem aktiválja a cPanel Node-környezetet.
+          NODE_BIN=""
+          CONFIG_NODE=$(awk '$1 == "PassengerNodejs" {gsub(/"/, "", $2); print $2; exit}' "$WEB_CONFIG" 2>/dev/null || true)
+          for CANDIDATE in "$CONFIG_NODE" "$(command -v node || true)" "$HOME/nodevenv/$APP_DIR"/*/bin/node /opt/alt/alt-nodejs*/root/usr/bin/node; do
+            [ -x "$CANDIDATE" ] || continue
+            if "$CANDIDATE" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)'; then NODE_BIN="$CANDIDATE"; break; fi
+          done
+          [ -n "$NODE_BIN" ] || { echo "Nem találom a tárhely meglévő Node futtatókörnyezetét."; exit 1; }
+          # A tárhely útvonalát még az alkalmazás cseréje előtt ellenőrizzük.
+          "$NODE_BIN" "$NEW/src/server/runtime/enforce-https.mjs" "$WEB_CONFIG" "$BK/public-htaccess"
           # a telepítés által kezelt mappák: mentés, majd csere
           for d in dist src deploy; do
             if [ -e "$d" ]; then mv "$d" "$BK/$d"; fi
             mv "$NEW/$d" "$d"
           done
           [ -f .deployed-sha ] && cp .deployed-sha "$BK/" || true
+          # a korábbi verzió részfájljai is maradjanak (a nyitva hagyott lapok ezeket kérhetik)
+          cp -n "$BK/dist/client/assets/"* dist/client/assets/ 2>/dev/null || true
           rm -rf "$NEW"
+          # Passenger útvonal: a HTTPS-átirányítás a publikus webrootban is kötelező.
+          # Előbb száraz próba, majd mentés és célzott, visszavonható beillesztés.
+          "$NODE_BIN" src/server/runtime/enforce-https.mjs "$WEB_CONFIG" "$BK/public-htaccess" --apply
           echo "$SHA" > .deployed-sha
           mkdir -p tmp && touch tmp/restart.txt
           # az utolsó 5 mentés marad meg
@@ -123,7 +154,7 @@ jobs:
       - name: Éles felület és API ellenőrzése
         run: |
           python3 - <<'PYSMOKE'
-          import hashlib, json, os, pathlib, time, urllib.request
+          import hashlib, json, os, pathlib, time, urllib.request, urllib.error
           from html.parser import HTMLParser
           class Scripts(HTMLParser):
               def __init__(self): super().__init__(); self.paths = []
@@ -148,6 +179,14 @@ jobs:
                       assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist/client' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
                   status = json.loads(get(site + '/api/auth/status'))
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
+                  assert status.get('twofaMode') in ('off', 'admin', 'all'), 'twofaMode missing from auth status'
+                  class NoRedirect(urllib.request.HTTPRedirectHandler):
+                      def redirect_request(self, *args): return None
+                  try:
+                      response = urllib.request.build_opener(NoRedirect).open(site.replace('https://', 'http://') + '/', timeout=30)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  assert response.code in (301, 302, 307, 308) and response.headers.get('Location', '').startswith(site), 'HTTP must redirect to the HTTPS application'
                   print('pmdev.hu/Cashflow: HTML, application assets and authentication API verified.')
                   break
               except Exception as error:

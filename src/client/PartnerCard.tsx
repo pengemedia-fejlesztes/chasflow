@@ -1,7 +1,7 @@
 // Partner adatlap: bárhonnan a partner nevére kattintva nyílik. Felül a partnertörzs adatai (név, típus, alternatív nevek,
 // adószám, megjegyzés, projektek), alatta a tervezett feladatok (mit számlázunk neki / mit fizetünk neki), majd a statisztika.
 // A PartnerEditor a partnertörzs oldalon is ugyanez.
-import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, lazy, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { displayGroup, normalizeText, groupPath } from '../shared/categories';
 import { offerConversion } from '../shared/insights';
 import { RejectedOffers } from './RejectedOffers';
@@ -13,9 +13,9 @@ import { partnerSubcontracts, sheetIdOf, type PartnerSubcontract } from '../shar
 import { api } from './api';
 import { importWorkbook } from './BreakevenView';
 import { acceptOffer, payDefaults, rowKey } from './logic';
-import { MobilePartnerScreen } from './MobileFlows';
+const PartnerView = lazy(() => import('./PartnerView').then((m) => ({ default: m.PartnerView })));
 import { PartnerModal } from './PartnerModal';
-import { PartnerSheet } from './PartnerSheet';
+import { PartnerServicesSummary } from './PartnerBilling';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Field, Modal, Pill, Seg, card, eyebrow, inputStyle, R } from './ui';
 
@@ -1468,7 +1468,7 @@ function SheetLink({ leafId }: { leafId: string }) {
         {missing && <span style={{ font: `600 12px ${FONT}`, color: C.neg }}> – kötelező, még nincs megadva</span>}
       </b>
       <span style={{ font: `500 12.5px/1.45 ${FONT}`, color: C.muted }}>
-        Ebből számolja a program havonta, melyik projekten mennyi munka volt. A táblát „Bárki, akinek megvan a link” – Megtekintő megosztásra kell állítani.
+        Ebből számolja a program havonta, melyik projekten mennyi munka volt. Használj privát Drive-kapcsolatot, vagy töltsd fel az XLS-fájlt a saját fiókodból.
       </span>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
@@ -1678,11 +1678,21 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
   const close = () => openPartner(null);
   if (task) return <PartnerModal leaf={task.leaf} edit={task.key ? { key: task.key } : null} onClose={() => setTask(null)} />;
   // mobilon teljes képernyős adatlap: lejárt · átl. késés · 12 hó, következő tétel, előzmények, „hogyan fizet?” naptár
-  if (mobile && p) return <MobilePartnerScreen p={p} onClose={close} onNewItem={(leaf) => setTask({ leaf })} onEditItem={(leaf) => setTask({ leaf })} />;
+  if (mobile && p)
+    return (
+      <PartnerView
+        p={p}
+        mobile
+        onClose={close}
+        onNewItem={(leaf) => setTask({ leaf })}
+        onEditItem={(leaf, key) => setTask({ leaf, key })}
+        onRenamed={(k) => openPartner(k)}
+      />
+    );
   return (
     <Modal onClose={close} width={1180}>
       {p ? (
-        <PartnerSheet
+        <PartnerView
           p={p}
           onClose={close}
           onNewItem={(leaf) => setTask({ leaf })}
@@ -1966,7 +1976,7 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                 return (
                   <div
                     key={p.key}
-                    onClick={() => setSel(p.key)}
+                    onClick={() => (window.matchMedia('(max-width: 900px)').matches ? openPartner(p.key) : setSel(p.key))}
                     role="button"
                     tabIndex={0}
                     aria-pressed={on}
@@ -2077,6 +2087,14 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
               </div>
               <div style={{ padding: '0 22px', overflowY: 'auto', flex: 1 }}>
                 <PartnerEditor key={selP.key + (selP.info?.updated_at || 0)} p={selP} part="panel" onSaved={(nk) => setSel(nk)} onPick={(k) => setSel(k)} />
+                <PartnerServicesSummary
+                  p={selP}
+                  onOpen={() => {
+                    // az adatlap a „Szolgáltatások és számlázás” fülön nyílik (a fület a címsorból olvassa)
+                    history.pushState(null, '', `#/partners?p=${encodeURIComponent(selP.key)}&t=srv`);
+                    openPartner(selP.key);
+                  }}
+                />
               </div>
               <div
                 style={{

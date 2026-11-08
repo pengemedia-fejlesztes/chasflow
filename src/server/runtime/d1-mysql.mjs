@@ -72,6 +72,9 @@ export function translate(sqlIn) {
   sql = sql.replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, 'REPLACE INTO');
   sql = sql.replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT IGNORE INTO');
 
+  // SQLite szöveg-összefűzés ('s' || id) -> CONCAT('s', id) (MySQL-ben a || logikai VAGY)
+  sql = sql.replace(/'([^']*)'\s*\|\|\s*([A-Za-z_][\w.]*)/g, "CONCAT('$1', $2)");
+  sql = sql.replace(/([A-Za-z_][\w.]*)\s*\|\|\s*'([^']*)'/g, "CONCAT($1, '$2')");
   // ON CONFLICT[(...)] DO NOTHING  ->  INSERT IGNORE (az ütközési cél nélküli „ON CONFLICT DO NOTHING” is)
   if (/ON\s+CONFLICT\s*(?:\([^)]*\))?\s*DO\s+NOTHING/i.test(sql)) {
     sql = sql.replace(/\s*ON\s+CONFLICT\s*(?:\([^)]*\))?\s*DO\s+NOTHING/gi, '');
