@@ -19,7 +19,7 @@ interface Store {
   resetFilters: () => void;
   reload: () => Promise<void>;
   commit: (b: EntryBatch, msg: string, opts?: { undoable?: boolean }) => Promise<boolean>;
-  run: (fn: () => Promise<unknown>, msg?: string, undo?: () => Promise<unknown>) => Promise<boolean>;
+  run: (fn: () => Promise<unknown>, msg?: string | ((result: any) => string), undo?: () => Promise<unknown>) => Promise<boolean>;
   toast: Toast | null;
   showToast: (t: Toast | string) => void;
   canEdit: boolean;
@@ -184,13 +184,13 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
   );
 
   const run = useCallback(
-    async (fn: () => Promise<unknown>, msg?: string, undo?: () => Promise<unknown>) => {
+    async (fn: () => Promise<unknown>, msg?: string | ((result: any) => string), undo?: () => Promise<unknown>) => {
       try {
-        await fn();
+        const result = await fn();
         await reload();
         if (msg)
           showToast({
-            msg,
+            msg: typeof msg === 'function' ? msg(result) : msg,
             undo: undo
               ? async () => {
                   setToast(null);

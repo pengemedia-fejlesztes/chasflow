@@ -900,8 +900,8 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     requireRole(u, 'admin', 'member');
     const b = await readJson<NavResolve>(req);
     if (!['recurring', 'unforeseen', 'assign', 'move', 'ignore', 'reopen'].includes(b.action)) throw new HttpError(400, 'Hibás művelet.');
-    await resolveNav(env, u.id, b);
-    return json({ ok: true });
+    const res = await resolveNav(env, u.id, b);
+    return json({ ok: true, ...res });
   }
   if (path === '/api/nav/sync' && req.method === 'POST') {
     requireRole(u, 'admin');

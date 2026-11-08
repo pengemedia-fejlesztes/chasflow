@@ -1,9 +1,9 @@
 // Partner-azonosság: ugyanaz a cég több néven fut – a partnertörzs neve és alternatív nevei, a NAV- és a Billingo-számla
 // cégneve (adószámmal), a munkaidő-elszámolás projektneve és a banki név. Ezek egy partnerhez tartoznak, ha a név
 // (jogi forma, írásjel, ékezet nélkül) egyezik, az egyik tartalmazza a másikat, vagy az adószám azonos.
-import { namesMatch } from './billingopay';
+import { nameHead, nameOwner, namesMatch } from './billingopay';
 import { partnerKey } from './match';
-import type { Leaf, Partner } from './types';
+import type { Entry, Leaf, Partner, Series } from './types';
 
 /** név → összehasonlítható alak (pl. „Mr. Big Kft.” → „mrbig”) */
 export const compactName = (s: string) => partnerKey(s || '').replace(/[^a-z0-9]/g, '');
@@ -90,4 +90,39 @@ export function suggestPartner(r: Resolver, name: string): PartnerRef | null {
     }
   }
   return score >= 2 ? best : null;
+}
+
+type PlanLike = Pick<Entry, 'id' | 'kind' | 'date' | 'leaf_id' | 'name' | 'amount' | 'series_id' | 'done'> & { period?: string | null };
+
+/**
+ * A partner meglévő havi tervének nyitott tételei (dátum szerint): egy havi sorozat (vagy sorozat nélkül legalább két
+ * hónapra felvett, azonos nevű terv, pl. TERVEK-importból), amely a partnerhez tartozik – a neve a partneré, vagy a partner
+ * saját alkategóriájában van általános névvel, vagy a sorozatot ennek a partnernek a számlája indította (`seriesIds`).
+ * Ha van ilyen, a „havonta” jóváhagyás / NAV „havonta tervbe” nem indít második sorozatot (különben a jövőbeli költség
+ * duplán lenne tervezve).
+ * @param o.from csak e nap (YYYY-MM-DD) hónapjától kezdődő tervek számítanak
+ */
+export function partnerMonthlyPlans<P extends PlanLike>(
+  plans: P[],
+  series: Pick<Series, 'id' | 'rep'>[],
+  o: { leaf: string | null; sign: number; from: string; own: string[]; known: string[]; leafLabel: (id: string) => string; seriesIds?: Set<string> },
+): P[] {
+  const rep = new Map(series.map((s) => [s.id, s.rep]));
+  const fromYm = o.from.slice(0, 7);
+  const ownLeaf = (id: string) => o.own.some((n) => namesMatch(n, o.leafLabel(id)));
+  const mine = (p: P) => {
+    if (p.series_id && o.seriesIds?.has(p.series_id)) return true;
+    const who = nameOwner(p.name, o.own, o.known, o.leafLabel(p.leaf_id));
+    return who === 'own' || (who === 'neutral' && p.leaf_id === o.leaf && ownLeaf(p.leaf_id));
+  };
+  const open = plans.filter(
+    (p) => p.kind === 'plan' && !p.done && Math.sign(p.amount) === Math.sign(o.sign) && (p.period || p.date.slice(0, 7)) >= fromYm && mine(p),
+  );
+  // sorozat nélkül: azonos alkategória + név legalább két különböző hónapban
+  const months = new Map<string, Set<string>>();
+  const keyOf = (p: P) => `${p.leaf_id}|${partnerKey(nameHead(p.name))}`;
+  for (const p of open) if (!p.series_id) (months.get(keyOf(p)) || months.set(keyOf(p), new Set()).get(keyOf(p))!).add(p.date.slice(0, 7));
+  return open
+    .filter((p) => (p.series_id ? rep.get(p.series_id) === 'monthly' : (months.get(keyOf(p))?.size || 0) >= 2))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
