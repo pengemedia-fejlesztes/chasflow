@@ -14,14 +14,20 @@ afterEach(() => {
 const PW = 'Teszt-jelszo-12345';
 const NEW_PW = 'Uj-Biztos-Jelszo-2026';
 const user = (email: string) => t!.sql.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-const count = (table: string, where = '1=1', ...args: any[]) => (t!.sql.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${where}`).get(...args) as any).n as number;
+const count = (table: string, where = '1=1', ...args: any[]) =>
+  (t!.sql.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${where}`).get(...args) as any).n as number;
 const auditActions = () => (t!.sql.prepare('SELECT action FROM audit_log ORDER BY id').all() as any[]).map((r) => r.action);
 
 /** Külön munkamenet (süti) egy felhasználónak, a teszt-app saját sütijének érintése nélkül. */
 async function session(email: string, password = PW, extra: Record<string, unknown> = {}) {
   const r = await t!.call('POST', '/api/auth/login', { email, password, ...extra }, { Cookie: '' });
   const cookie = (r.headers.get('Set-Cookie') || '').split(';')[0];
-  return { r, cookie, get: (p: string) => t!.call('GET', p, undefined, { Cookie: cookie }), call: (m: string, p: string, b?: unknown) => t!.call(m, p, b ?? {}, { Cookie: cookie }) };
+  return {
+    r,
+    cookie,
+    get: (p: string) => t!.call('GET', p, undefined, { Cookie: cookie }),
+    call: (m: string, p: string, b?: unknown) => t!.call(m, p, b ?? {}, { Cookie: cookie }),
+  };
 }
 const now30 = () => Math.floor(Date.now() / 30000);
 
@@ -146,20 +152,19 @@ describe('elfelejtett jelszó (POST /api/auth/forgot, /api/auth/reset)', () => {
     expect(reuse.data.error).toMatch(/lejárt vagy már felhasználták/);
   });
 
-  it('bekapcsolt 2FA mellett a kód nélkül nem állítható vissza a jelszó', async () => {
+  // A kétlépcsős azonosítás ki van kapcsolva (Laci döntése, 2026-11-08, access.ts twofaMode = 'off'):
+  // a felhasználónál korábban bekapcsolt 2FA sem kér kódot – sem belépéskor, sem jelszó-visszaállításkor.
+  it('2FA kikapcsolva: a bekapcsolt 2FA-jú felhasználó jelszava is kód nélkül visszaállítható (a link egyszer használható)', async () => {
     const sent = mailbox();
     t = await createTestApp({ env: mailEnv });
     t.sql.prepare("UPDATE users SET totp_enabled = 1, totp_secret = 'JBSWY3DPEHPK3PXP' WHERE email = 'admin@teszt.hu'").run();
     await t.post('/api/auth/forgot', { email: 'admin@teszt.hu' });
     const token = tokenOf(sent[0]);
     const before = user('admin@teszt.hu').pw_hash;
-    const r = await t.post('/api/auth/reset', { token, password: NEW_PW, totp: '000000' });
-    expect(r.status).toBe(400);
-    expect(r.data.error).toMatch(/kétlépcsős/);
-    expect(user('admin@teszt.hu').pw_hash).toBe(before);
-    const ok = await t.post('/api/auth/reset', { token, password: NEW_PW, totp: await totpCode('JBSWY3DPEHPK3PXP', now30()) });
+    const ok = await t.post('/api/auth/reset', { token, password: NEW_PW });
     expect(ok.status).toBe(200);
     expect(user('admin@teszt.hu').pw_hash).not.toBe(before);
+    expect((await t.post('/api/auth/reset', { token, password: 'Harmadik-Jelszo-2026' })).status).toBe(400);
   });
 
   it('e-mail küldés nélkül érthető 503, és nem jön létre visszaállító link', async () => {
@@ -205,7 +210,7 @@ describe('saját fiók (/api/account/*)', () => {
     expect((await s.get('/api/data')).status).toBe(200);
   });
 
-  it('2FA: beállítás → hibás kód nem kapcsolja be → jó kód bekapcsolja → belépéshez kell a kód; adminon nem kapcsolható ki', async () => {
+  it('2FA: beállítás → hibás kód nem kapcsolja be → jó kód bekapcsolja; a belépés (2FA kikapcsolva) kód nélkül is megy; adminon nem kapcsolható ki', async () => {
     t = await createTestApp();
     const setup = await t.post('/api/account/totp/setup');
     expect(setup.status).toBe(200);
@@ -221,11 +226,11 @@ describe('saját fiók (/api/account/*)', () => {
     expect((await t.post('/api/account/totp/setup')).status).toBe(400); // a titok nem cserélhető le csendben
     expect(user('admin@teszt.hu').totp_secret).toBe(setup.data.secret);
 
+    // 2FA kikapcsolva (twofaMode = 'off'): kód nélkül is belép
     const noCode = await session('admin@teszt.hu');
-    expect(noCode.r.data).toEqual({ needTotp: true });
-    expect(noCode.cookie).toBe('');
-    const withCode = await session('admin@teszt.hu', PW, { totp: await totpCode(setup.data.secret, now30()) });
-    expect(withCode.r.status).toBe(200);
+    expect(noCode.r.status).toBe(200);
+    expect(noCode.cookie).not.toBe('');
+    expect((await t.get('/api/auth/status')).data.twofaMode).toBe('off');
 
     const off = await t.post('/api/account/totp/disable', { password: PW });
     expect(off.status).toBe(400);

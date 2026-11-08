@@ -1,0 +1,6 @@
+# Also install this rule in the public /Cashflow/ webroot when Passenger serves the application.
+# HTTPS must be enforced at the TLS terminator, before the internal Node proxy.
+RewriteEngine On
+RewriteCond %{REQUEST_URI} ^/Cashflow(?:/|$)
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://pmdev.hu%{REQUEST_URI} [R=308,L,NE]

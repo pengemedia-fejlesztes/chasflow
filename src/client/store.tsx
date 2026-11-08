@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { buildIndex, defaultFilters, type Filters, type Index } from '../shared/model';
 import type { DataBundle, EntryBatch } from '../shared/types';
 import { api } from './api';
+import { DATA_SECTIONS, SECTION_FIELDS, mutationSections, type BundlePatch, type DataSection } from '../shared/data-sections';
 import { applyLocal, inverseOf } from './logic';
 
 export interface Toast {
@@ -50,8 +51,11 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         const saved = JSON.parse(raw);
         // az időszakot nem őrizzük meg napokon át, ha az már a múltba csúszott;
         // a v3 előtti mentésből sem, így mindenki az alapidőszakra (következő 8 hónap) áll
-        if (saved.savedFor === initial.today.slice(0, 7) && saved.v === 3) return { ...def, ...saved.f };
-        return { ...def, ...saved.f, from: def.from, to: def.to };
+        // a többi beállítás (ajánlatok, becslés, nézet) megmarad; az időszak csak ezen a böngészőlapon (frissítéskor),
+        // új megnyitáskor mindig a mai hónaptól indul – így nem ragad egy régen kiválasztott, távoli időszakon
+        const per = JSON.parse(sessionStorage.getItem(FKEY + ':period') || 'null');
+        const keepPer = per && per.savedFor === initial.today.slice(0, 7) && per.from && per.to;
+        return { ...def, ...saved.f, from: keepPer ? per.from : def.from, to: keepPer ? per.to : def.to };
       }
     } catch {}
     return def;
@@ -64,6 +68,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         if (n.from > n.to) n.to = n.from;
         try {
           localStorage.setItem(FKEY + ':' + initial.me.id, JSON.stringify({ f: n, savedFor: initial.today.slice(0, 7), v: 3 }));
+          sessionStorage.setItem(FKEY + ':period', JSON.stringify({ from: n.from, to: n.to, savedFor: initial.today.slice(0, 7) }));
         } catch {}
         return n;
       }),
@@ -78,18 +83,79 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
   }, []);
 
   const revision = useRef(0);
-  const reload = useCallback(async () => {
-    const requestedRevision = revision.current;
-    try {
-      const refreshed = await api<DataBundle>('/api/data');
-      if (requestedRevision === revision.current) {
-        dataRef.current = refreshed;
-        setData(refreshed);
+  const pending = useRef<Set<DataSection> | null>(null);
+  const loading = useRef<Promise<void> | null>(null);
+  const refresh = useCallback(
+    (sections: DataSection[] = DATA_SECTIONS): Promise<void> => {
+      pending.current = new Set([...(pending.current || []), ...sections]);
+      if (loading.current) return loading.current;
+      loading.current = (async () => {
+        while (pending.current) {
+          const next = [...pending.current];
+          pending.current = null;
+          const full = DATA_SECTIONS.every((s) => next.includes(s));
+          const requestedRevision = revision.current;
+          try {
+            const result = await api<DataBundle | BundlePatch>(full ? '/api/data' : '/api/data?sections=' + next.sort().join(','));
+            // A mutation completed during this read: retry rather than letting an older response overwrite it.
+            if (requestedRevision !== revision.current) {
+              pending.current = new Set([...(pending.current || []), ...next]);
+              continue;
+            }
+            if (!full && JSON.stringify(result.myAccess) !== JSON.stringify(dataRef.current.myAccess)) {
+              // A revoked grant must clear every previously loaded module, not just the requested section.
+              pending.current = new Set(DATA_SECTIONS);
+              continue;
+            }
+            const refreshed = full ? (result as DataBundle) : ({ ...dataRef.current, ...result } as DataBundle);
+            if (!full) {
+              delete (refreshed as any).sections;
+              for (const section of next)
+                for (const key of SECTION_FIELDS[section]) {
+                  if (result[key] == null) delete (refreshed as any)[key];
+                }
+            }
+            dataRef.current = refreshed;
+            setData(refreshed);
+          } catch (e: any) {
+            showToast({ msg: e.message, error: true });
+          }
+        }
+      })().finally(() => {
+        loading.current = null;
+      });
+      return loading.current;
+    },
+    [showToast],
+  );
+  const reload = useCallback(() => refresh(), [refresh]);
+
+  // Collect successful writes for this operation, including multi-request actions and undo.
+  // Concurrent operations see the union of their writes, which deliberately over-refreshes.
+  const runAndRefresh = useCallback(
+    async <T,>(fn: () => Promise<T>): Promise<T> => {
+      const sections = new Set<DataSection>();
+      let full = false;
+      let wrote = false;
+      const onMutation = (event: Event) => {
+        wrote = true;
+        const affected = mutationSections((event as CustomEvent<string>).detail);
+        if (!affected) full = true;
+        else affected.forEach((s) => sections.add(s));
+      };
+      window.addEventListener('cf-mutation', onMutation);
+      revision.current++;
+      try {
+        return await fn();
+      } finally {
+        window.removeEventListener('cf-mutation', onMutation);
+        revision.current++;
+        // Even a failed multi-step action may have saved its earlier requests.
+        await refresh(!wrote || full ? DATA_SECTIONS : [...sections]);
       }
-    } catch (e: any) {
-      showToast({ msg: e.message, error: true });
-    }
-  }, [showToast]);
+    },
+    [refresh],
+  );
 
   // változásfigyelés: percenként egyetlen sor (adat-verzió); a teljes adat csak akkor töltődik újra, ha változott
   // (a teljes újratöltés sok sort olvas – ezért nem percenként fut)
@@ -159,8 +225,10 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
             return [id, s ? JSON.stringify([s.leaf_id, s.name, s.rep, s.day]) : null];
           }),
         );
-        // a törölt tervek áthúzva megjelennek (kuka) – ehhez friss adat kell; sorozat átnevezésekor a többi hónap neve és verziója is változott
-        if ((b.delete?.length && !b.purge) || result.reload) reload();
+        // sorozat átnevezésekor a többi hónap neve és verziója is változott: teljes újratöltés;
+        // a törölt tervek áthúzva megjelennek (kuka) – ehhez elég a pénzügyi adat frissítése
+        if (result.reload) reload();
+        else if (b.delete?.length && !b.purge) refresh(['ledger']);
         const undoable = opts.undoable !== false;
         showToast({
           msg,
@@ -180,14 +248,13 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         committing.current = false;
       }
     },
-    [reload, showToast],
+    [reload, refresh, showToast],
   );
 
   const run = useCallback(
     async (fn: () => Promise<unknown>, msg?: string | ((result: any) => string), undo?: () => Promise<unknown>) => {
       try {
-        const result = await fn();
-        await reload();
+        const result = await runAndRefresh(fn);
         if (msg)
           showToast({
             msg: typeof msg === 'function' ? msg(result) : msg,
@@ -195,8 +262,7 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
               ? async () => {
                   setToast(null);
                   try {
-                    await undo();
-                    await reload();
+                    await runAndRefresh(undo);
                     showToast('Visszavonva');
                   } catch (e: any) {
                     showToast({ msg: e.message, error: true });
@@ -210,10 +276,10 @@ export function StoreProvider({ initial, children }: { initial: DataBundle; chil
         return false;
       }
     },
-    [reload, showToast],
+    [runAndRefresh, showToast],
   );
 
-  const ix = useMemo(() => buildIndex(data), [data]);
+  const ix = useMemo(() => buildIndex(data), [data.groups, data.leaves, data.entries, data.accounts, data.settings, data.today]);
   const [partnerCard, openPartner] = useState<string | null>(null);
   const role = data.me.role;
   const value: Store = {

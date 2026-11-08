@@ -8,6 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "audit:security": "npm audit --audit-level=moderate",
     "format": "prettier --write src tests",
     "deploy": "echo 'Élesítés: push a GitHubra (claude/dreamy-johnson-9ejay9) – a GitHub Actions a pmdev.hu/Cashflow-ra telepít.' && exit 1",
     "build:server": "esbuild src/server/app/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/server/worker.mjs"
@@ -28,7 +29,7 @@
     "jsdom": "^26.1.0",
     "mysql2": "^3.24.6",
     "typescript": "^5.9.3",
-    "vite": "^6.4.4",
-    "vitest": "^3.2.7"
+    "vite": "^6.4.5",
+    "vitest": "^4.1.12"
   }
 }

@@ -136,11 +136,18 @@ export function MergeSigns() {
   const { ix, canEdit } = useStore();
   const [, ack] = useAck();
   const rows = useSignChecks();
-  if (!rows.length)
-    return <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>✓ Nincs gyanús előjelű tény.</div>;
+  if (!rows.length) return <div style={{ ...card, padding: '22px 20px', font: `600 14px ${FONT}`, color: C.blueDark }}>✓ Nincs gyanús előjelű tény.</div>;
   const parts: [string, string, Entry[]][] = [
-    ['Pozitív összegű kiadás', 'Kiadás-kategóriában pénz jött be. Lehet visszatérítés vagy jóváírás – de ha elírt előjel, csökkenti a költséget.', rows.filter((e) => e.amount > 0)],
-    ['Negatív összegű bevétel', 'Bevételi kategóriában pénz ment ki. Lehet visszafizetés – de ha elírt előjel, csökkenti a bevételt.', rows.filter((e) => e.amount < 0)],
+    [
+      'Pozitív összegű kiadás',
+      'Kiadás-kategóriában pénz jött be. Lehet visszatérítés vagy jóváírás – de ha elírt előjel, csökkenti a költséget.',
+      rows.filter((e) => e.amount > 0),
+    ],
+    [
+      'Negatív összegű bevétel',
+      'Bevételi kategóriában pénz ment ki. Lehet visszafizetés – de ha elírt előjel, csökkenti a bevételt.',
+      rows.filter((e) => e.amount < 0),
+    ],
   ];
   return (
     <>
@@ -302,7 +309,8 @@ export function MergeBillingo() {
                       run(
                         async () => (logId = (await api<{ log_id: number | null }>('/api/billingo/attach', { body: { id: e.id, plan_id: p.id } })).log_id),
                         `${d?.number || 'Számla'} → ${p.name || leaf?.label}`,
-                        () => (logId ? api(`/api/changelog/${logId}/undo`, { body: {} }) : Promise.reject(new Error('Ez a lépés nem vonható vissza.'))),
+                        () =>
+                          logId ? api('/api/billingo/attach/undo', { body: { log_id: logId } }) : Promise.reject(new Error('Ez a lépés nem vonható vissza.')),
                       );
                     }}
                   >

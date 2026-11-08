@@ -9,6 +9,7 @@ import { requireRole, type User } from './auth';
 import { reapplyRules } from './bank';
 import { rematchNav } from './nav';
 import { aliasRuleStmts } from './partnertax';
+import { ensureCatalog } from './catalog';
 import { Env, HttpError, audit, json, now, readJson } from './util';
 
 const KINDS = new Set(['vevo', 'szallito', 'mindketto']);
@@ -88,7 +89,15 @@ export async function handlePartners(env: Env, req: Request, path: string, u: Us
           .slice(0, 1000) || null
       : [...new Set([into?.note, cur?.note].filter(Boolean))].join('\n').slice(0, 1000) || null;
 
-  if (newKey !== key) stmts.push(env.DB.prepare('DELETE FROM partners WHERE key = ?').bind(key));
+  if (newKey !== key) {
+    stmts.push(env.DB.prepare('DELETE FROM partners WHERE key = ?').bind(key));
+    // a számlázási adatok és a hozzárendelt termékek az átnevezett partnerhez kerülnek
+    if (await ensureCatalog(env)) {
+      stmts.push(env.DB.prepare('UPDATE partner_products SET partner_key = ? WHERE partner_key = ?').bind(newKey, key));
+      stmts.push(env.DB.prepare('DELETE FROM partner_profiles WHERE partner_key = ?').bind(newKey));
+      stmts.push(env.DB.prepare('UPDATE partner_profiles SET partner_key = ? WHERE partner_key = ?').bind(newKey, key));
+    }
+  }
   stmts.push(
     env.DB.prepare(
       `INSERT INTO partners (key, name, kind, aliases, tax_number, note, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)

@@ -200,7 +200,9 @@ describe('ugyanaz a szám minden nézetben', () => {
     });
     it(`jövőbeli hónap: az áttekintés bevétel / kiadás = a táblázat Bevétel / Kiadás sora${includeOffers ? ' (ajánlatokkal)' : ''}`, () => {
       const i = col('2026-12p');
-      const sec = (id: string) => m.rows.filter((r) => r.type === 'section' && r.section === id).reduce((s, r) => s + r.cells[i].v, 0);
+      // az Ajánlatok szekció mindig látszik, de csak bekapcsolt kapcsolónál számít bele (a „(nem számít bele)” sor nem)
+      const counts = (r: (typeof m.rows)[number]) => includeOffers || !r.label.startsWith('Ajánlatok');
+      const sec = (id: string) => m.rows.filter((r) => r.type === 'section' && r.section === id && counts(r)).reduce((s, r) => s + r.cells[i].v, 0);
       expect(ol.months[1].inc).toBe(sec('in'));
       expect(ol.months[1].exp).toBe(sec('out'));
     });

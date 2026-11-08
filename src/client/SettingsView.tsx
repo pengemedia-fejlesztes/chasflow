@@ -1,5 +1,5 @@
 // Beállítások: saját fiók (jelszó, 2FA), felhasználók, integrációk (Billingo, bankok), adatok (import, nyitó egyenleg), kategóriák.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { displayGroup, groupPath } from '../shared/categories';
 import { parseBankRows } from '../shared/bankfile';
 import { addMonths, fmt } from '../shared/model';
@@ -17,6 +17,7 @@ import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './
 import { SYNC_HOURS } from '../shared/aggreg8';
 import { payDefaults } from './logic';
 import { useStore } from './store';
+import { DATA_SCOPES, FULL_ACCESS, INVITE_ACCESS, MENUS, type Access } from '../shared/access';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp, R } from './ui';
 
 type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'partners' | 'categories' | 'rules' | 'trash' | 'log';
@@ -214,7 +215,11 @@ function Users() {
   const { data, showToast } = useStore();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [nu, setNu] = useState({ email: '', name: '', role: 'member' });
+  const [nuAccess, setNuAccess] = useState<Access>(INVITE_ACCESS);
   const [temp, setTemp] = useState<{ email: string; pw: string } | null>(null);
+  const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
+  const [accessFor, setAccessFor] = useState<number | null>(null);
+  const linkOf = (token: string) => `${location.origin}${location.pathname}?reset=${encodeURIComponent(token)}`;
   const load = () => api<UserRow[]>('/api/users').then(setUsers, (e) => showToast({ msg: e.message, error: true }));
   useEffect(() => {
     load();
@@ -230,9 +235,10 @@ function Users() {
   };
   return (
     <>
+      <TwoFaPolicy />
       <Section
-        title="Új felhasználó"
-        sub="Ideiglenes jelszót kap, amit első belépéskor meg kell változtatnia. Az adatokhoz csak a meghívott felhasználók férnek hozzá."
+        title="Új felhasználó meghívása"
+        sub="A meghívott egy egyszer használható, 7 napig érvényes linket kap tőled: azon maga állítja be a jelszavát (más nem látja). Belépni e-mail címmel és jelszóval lehet; ha a kétlépcsős azonosítás kötelező, első belépéskor be kell állítania."
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
           <input placeholder="E-mail" type="email" value={nu.email} onChange={(e) => setNu({ ...nu, email: e.target.value })} style={inputStyle} />
@@ -245,16 +251,19 @@ function Users() {
           <Pill
             kind="dark"
             onClick={async () => {
-              const r = await act(() => api('/api/users', { body: nu }));
-              if (r?.tempPassword) {
-                setTemp({ email: nu.email, pw: r.tempPassword });
+              const r = await act(() => api('/api/users', { body: { ...nu, invite: true, access: nuAccess } }));
+              if (r?.inviteToken) {
+                setInvite({ email: nu.email, link: linkOf(r.inviteToken) });
                 setNu({ email: '', name: '', role: 'member' });
+                setNuAccess(INVITE_ACCESS);
               }
             }}
           >
-            Hozzáadás
+            Meghívás
           </Pill>
         </div>
+        {nu.role !== 'admin' && <AccessEditor value={nuAccess} onChange={setNuAccess} />}
+        {invite && <InviteBox email={invite.email} link={invite.link} />}
         {temp && (
           <div style={{ background: C.bg2, borderRadius: R.lg, padding: 14, font: `500 14px/1.5 ${FONT}`, color: C.navy }}>
             Ideiglenes jelszó ({temp.email}): <b style={{ fontFamily: 'ui-monospace,monospace', userSelect: 'all' }}>{temp.pw}</b>
@@ -305,6 +314,22 @@ function Users() {
             </select>
             {u.id !== data.me.id && (
               <>
+                {u.role !== 'admin' && (
+                  <Pill small kind={accessFor === u.id ? 'primary' : 'light'} onClick={() => setAccessFor(accessFor === u.id ? null : u.id)}>
+                    Hozzáférés
+                  </Pill>
+                )}
+                {!u.last_login && (
+                  <Pill
+                    small
+                    onClick={async () => {
+                      const r = await act(() => api(`/api/users/${u.id}/invite`, { body: {} }));
+                      if (r?.inviteToken) setInvite({ email: u.email, link: linkOf(r.inviteToken) });
+                    }}
+                  >
+                    Új meghívó link
+                  </Pill>
+                )}
                 <Pill
                   small
                   onClick={async () => {
@@ -322,6 +347,11 @@ function Users() {
                   Törlés
                 </Pill>
               </>
+            )}
+            {accessFor === u.id && (
+              <div style={{ flexBasis: '100%' }}>
+                <UserAccess id={u.id} name={u.name} onDone={() => setAccessFor(null)} />
+              </div>
             )}
           </div>
         ))}
@@ -568,6 +598,8 @@ function Integrations() {
           </div>
         ))}
       </Section>
+      <ServerAggreg8 />
+      <DriveSettings />
       <AutoUpload />
       <Section
         title="Banki kivonat import (CSV / XLSX / aggreg8 XML)"
@@ -1247,6 +1279,374 @@ function PayDefaultsSection() {
           </div>
         )}
       </div>
+    </Section>
+  );
+}
+
+/** menüpontok és adatkörök kijelölése (meghíváskor és felhasználónként) */
+function AccessEditor({ value, onChange }: { value: Access; onChange: (a: Access) => void }) {
+  const box: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, font: `400 14px ${FONT}`, color: C.ink, cursor: 'pointer' };
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, background: C.bg, borderRadius: R.lg, padding: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted }}>Látható menüpontok</span>
+        {MENUS.map(([k, l]) => (
+          <label key={k} style={box}>
+            <input
+              type="checkbox"
+              checked={value.menus.includes(k)}
+              onChange={(e) => onChange({ ...value, menus: e.target.checked ? [...value.menus, k] : value.menus.filter((m) => m !== k) })}
+            />
+            {l}
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted }}>Érzékeny adatok</span>
+        {DATA_SCOPES.map(([k, l, sub]) => (
+          <label key={k} style={{ ...box, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={value.data[k]}
+              onChange={(e) => onChange({ ...value, data: { ...value.data, [k]: e.target.checked } })}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              {l}
+              <span style={{ display: 'block', font: `400 12.5px ${FONT}`, color: C.muted }}>{sub}</span>
+            </span>
+          </label>
+        ))}
+        <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted, marginTop: 6 }}>
+          A ki nem jelölt adatok el sem jutnak a böngészőjébe, és a hozzájuk tartozó műveleteket a szerver is tiltja. A szerepkör (szerkesztő / csak olvasó)
+          ezen felül érvényes.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function UserAccess({ id, name, onDone }: { id: number; name: string; onDone: () => void }) {
+  const { data, run } = useStore();
+  const [v, setV] = useState<Access>(data.userAccess?.[String(id)] || FULL_ACCESS);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
+      <AccessEditor value={v} onChange={setV} />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Pill
+          kind="primary"
+          small
+          onClick={async () => (await run(() => api(`/api/users/${id}/access`, { method: 'PUT', body: v }), `${name}: hozzáférés mentve`)) && onDone()}
+        >
+          Mentés
+        </Pill>
+        <Pill small onClick={onDone}>
+          Mégse
+        </Pill>
+      </div>
+    </div>
+  );
+}
+
+function InviteBox({ email, link }: { email: string; link: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div
+      style={{
+        background: C.bg2,
+        borderRadius: R.lg,
+        padding: 14,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        font: `500 14px/1.5 ${FONT}`,
+        color: C.navy,
+      }}
+    >
+      <span>Meghívó link ({email}) – 7 napig érvényes, egyszer használható:</span>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <code
+          style={{
+            flex: '1 1 320px',
+            font: `500 12.5px ui-monospace,monospace`,
+            wordBreak: 'break-all',
+            background: '#fff',
+            padding: '8px 10px',
+            borderRadius: 6,
+            userSelect: 'all',
+          }}
+        >
+          {link}
+        </code>
+        <Pill
+          small
+          kind="primary"
+          onClick={() => {
+            navigator.clipboard?.writeText(link).then(() => setCopied(true));
+          }}
+        >
+          {copied ? 'Másolva ✓' : 'Link másolása'}
+        </Pill>
+      </div>
+      <span style={{ color: C.muted, fontSize: 12.5 }}>
+        Küldd el neki e-mailben vagy üzenetben. A linken beállítja a jelszavát, utána e-mail címmel és jelszóval lép be.
+      </span>
+    </div>
+  );
+}
+
+/** admin: kinek kötelező a kétlépcsős azonosítás */
+function TwoFaPolicy() {
+  const { data, run } = useStore();
+  const mode = data.twofaMode || 'admin';
+  return (
+    <Section
+      title="Kétlépcsős azonosítás"
+      sub="Belépéskor a jelszó mellett a hitelesítő alkalmazás (Google Authenticator, Microsoft Authenticator, 1Password, iCloud Jelszavak) 6 jegyű kódja is kell. Ha kötelező, akinek még nincs beállítva, belépés után előbb beállítja, csak utána használhatja a programot."
+    >
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ font: `500 14px ${FONT}`, color: C.ink }}>Kötelező:</span>
+        <select
+          value={mode}
+          onChange={(e) => run(() => api('/api/security', { method: 'PUT', body: { require_2fa: e.target.value } }), 'Kétlépcsős azonosítás beállítva')}
+          style={{ ...inputStyle, height: 38, width: 240 }}
+        >
+          <option value="admin">Adminisztrátoroknak</option>
+          <option value="all">Mindenkinek</option>
+        </select>
+        {!data.me.totp_enabled && <span style={{ font: `500 13px ${FONT}`, color: C.neg }}>Előbb a saját fiókodnál kapcsold be (Fiók fül).</span>}
+      </div>
+    </Section>
+  );
+}
+
+/** Szerveroldali aggreg8: a böngészőben lévő aggreg8-belépés egyszeri átadása könyvjelzővel; utána a szerver frissít és tölt le */
+function ServerAggreg8() {
+  const { data, run } = useStore();
+  const st = data.aggreg8Server;
+  const target = `${location.origin}${location.pathname}`;
+  // a könyvjelző az aggreg8 oldalán fut: a belépési tokent a címsor # része viszi át (az a szerverre nem jut el), a Cashflow azonnal törli
+  const bookmarklet = `javascript:(function(){var t=localStorage.getItem('token');if(!t||location.host.indexOf('aggreg8')<0){alert('Előbb nyisd meg és jelentkezz be: standalone.aggreg8.hu');return;}window.open('${target}#a8='+t,'_blank');})();`;
+  const dt = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString('hu-HU', { dateStyle: 'medium', timeStyle: 'short' }) : '–');
+  return (
+    <Section
+      title="Bankszinkron a szerverről (aggreg8)"
+      sub="A szerver maga indítja az aggreg8-ban a MagNet és a BiNX frissítését, és letölti a tételeket – munkanapokon 5, 13 és 17 órakor és a „Szinkron most” gombra –, a Mac nélkül. A Google-belépést a szerver nem tudja elvégezni, ezért egyszer át kell adni a belépést (lásd lent); utána a szerver magától megújítja."
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', font: `500 14px ${FONT}` }}>
+        <span
+          style={{
+            padding: '4px 12px',
+            borderRadius: 999,
+            background: st?.connected ? (st.ok === false ? C.negBg : C.incBg) : C.bg,
+            color: st?.connected ? (st.ok === false ? C.neg : C.inc) : C.muted,
+            fontWeight: 600,
+          }}
+        >
+          {st?.connected ? (st.ok === false ? 'Hiba' : 'Bekapcsolva') : 'Nincs beállítva'}
+        </span>
+        {st?.connected && <span style={{ color: C.muted }}>belépés érvényes: {dt(st.exp)}</span>}
+        {st?.lastRun && (
+          <span style={{ color: C.muted }}>
+            utolsó futás: {dt(st.lastRun)} · {st.message}
+          </span>
+        )}
+      </div>
+      {st?.needsAction && (
+        <div style={{ background: C.negBg, color: C.neg, borderRadius: R.lg, padding: 12, font: `500 14px/1.5 ${FONT}` }}>{st.needsAction}</div>
+      )}
+      <ol style={{ margin: 0, paddingLeft: 20, font: `400 14px/1.7 ${FONT}`, color: C.ink }}>
+        <li>
+          Húzd ezt a gombot a böngésző könyvjelzősávjára:{' '}
+          <a
+            href={bookmarklet}
+            onClick={(e) => (e.preventDefault(), alert('Ne kattints rá itt: húzd a könyvjelzősávra, és az aggreg8 oldalán kattints rá.'))}
+            style={{
+              display: 'inline-block',
+              padding: '4px 12px',
+              borderRadius: 999,
+              background: C.blue,
+              color: '#fff',
+              font: `600 13px ${FONT}`,
+              textDecoration: 'none',
+            }}
+          >
+            aggreg8 → Cashflow
+          </a>
+        </li>
+        <li>
+          Nyisd meg a{' '}
+          <a href="https://standalone.aggreg8.hu/synchronizations" target="_blank" rel="noreferrer">
+            standalone.aggreg8.hu
+          </a>{' '}
+          oldalt, és jelentkezz be (Google).
+        </li>
+        <li>Ott kattints a könyvjelzőre: új lapon megnyílik a Cashflow, és beállítja a kapcsolatot. Jelszót, kódot senkinek nem kell begépelned.</li>
+      </ol>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {st?.connected && (
+          <Pill kind="primary" onClick={() => run(() => api('/api/aggreg8/sync', { body: {} }), 'aggreg8: szinkron kész')}>
+            ↻ Szinkron most (szerver)
+          </Pill>
+        )}
+        {st?.connected && (
+          <Pill
+            kind="danger"
+            onClick={() =>
+              confirm('Leválasztod a szerveroldali aggreg8-kapcsolatot?') && run(() => api('/api/aggreg8/session', { method: 'DELETE' }), 'Leválasztva')
+            }
+          >
+            Leválasztás
+          </Pill>
+        )}
+      </div>
+      <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted }}>
+        A belépést a szerver titkos táblában tárolja (a böngészőkbe nem kerül ki), és lejárat előtt megújítja. Ha a bank 90/180 naponta új jóváhagyást kér, itt
+        jelzi: akkor az aggreg8-ban kell frissíteni a bankkapcsolatot. A lenti Mac-es feltöltés tartaléknak megmaradhat.
+      </span>
+    </Section>
+  );
+}
+
+/** Google Drive: a tételekhez feltöltött számlák másolata a kiválasztott fiók kiválasztott mappájába */
+function DriveSettings() {
+  const { run, showToast } = useStore();
+  const [st, setSt] = useState<{ clientSet: boolean; email: string | null; folder: { id: string; name: string } | null; redirectUri?: string } | null>(null);
+  const [cid, setCid] = useState('');
+  const [sec, setSec] = useState('');
+  const [q, setQ] = useState('');
+  const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
+  const load = () => api<any>('/api/google/status').then(setSt, () => setSt(null));
+  useEffect(() => {
+    load();
+    const g = new URLSearchParams(location.search).get('google');
+    if (g) {
+      showToast(g === 'ok' ? 'Google-fiók összekötve – válaszd ki a mappát' : { msg: 'Google: ' + g, error: true });
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+  }, []);
+  const search = () =>
+    api<{ folders: { id: string; name: string }[] }>(`/api/google/folders?q=${encodeURIComponent(q)}`).then(
+      (r) => setFolders(r.folders),
+      (e) => showToast({ msg: e.message, error: true }),
+    );
+  const inp: React.CSSProperties = { ...inputStyle, height: 38 };
+  return (
+    <Section
+      title="Számlák mentése Google Drive-ba"
+      sub="A Bankszinkron › Számlatörténet alatt a tételekhez feltöltött számlák másolata automatikusan a kiválasztott Google-fiók kiválasztott mappájába kerül (név: dátum – partner – összeg – eredeti fájlnév)."
+    >
+      {!st?.clientSet && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ font: `400 13.5px/1.6 ${FONT}`, color: C.ink }}>
+            1. lépés: a Google Cloud Console-ban (console.cloud.google.com › API-k és szolgáltatások) kapcsold be a <b>Google Drive API</b>-t, és hozz létre egy{' '}
+            <b>OAuth-ügyfélazonosítót</b> (típus: Webalkalmazás). Engedélyezett átirányítási URI:{' '}
+            <code style={{ userSelect: 'all', background: C.bg, padding: '2px 6px', borderRadius: 4 }}>{st?.redirectUri || ''}</code>. Az OAuth-hozzájárulási
+            képernyőt állítsd „Éles” (In production) állapotba, különben a hozzáférés 7 nap után lejár. Utána másold ide az azonosítót és a titkot:
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={cid}
+              onChange={(e) => setCid(e.target.value)}
+              placeholder="Ügyfélazonosító (….apps.googleusercontent.com)"
+              style={{ ...inp, flex: '2 1 320px' }}
+            />
+            <input
+              value={sec}
+              onChange={(e) => setSec(e.target.value)}
+              type="password"
+              placeholder="Ügyfélkulcs (titok)"
+              style={{ ...inp, flex: '1 1 200px' }}
+            />
+            <Pill
+              kind="primary"
+              onClick={() =>
+                run(() => api('/api/google/client', { method: 'PUT', body: { client_id: cid, client_secret: sec } }), 'OAuth-kliens mentve').then(load)
+              }
+            >
+              Mentés
+            </Pill>
+          </div>
+        </div>
+      )}
+      {st?.clientSet && !st.email && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ font: `400 14px ${FONT}` }}>2. lépés: kösd össze a Google-fiókot, amelynek a Drive-jába a számlák kerüljenek.</span>
+          <Pill
+            kind="primary"
+            onClick={() =>
+              api<{ url: string }>('/api/google/auth').then(
+                (r) => (location.href = r.url),
+                (e) => showToast({ msg: e.message, error: true }),
+              )
+            }
+          >
+            Google-fiók összekötése
+          </Pill>
+        </div>
+      )}
+      {st?.email && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ font: `500 14px ${FONT}`, color: C.ink }}>
+            Fiók: <b>{st.email}</b> · Mappa: <b>{st.folder ? st.folder.name || st.folder.id : 'még nincs kiválasztva'}</b>
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && search()}
+              placeholder="Mappa keresése név szerint…"
+              style={{ ...inp, flex: '1 1 260px' }}
+            />
+            <Pill onClick={search}>Keresés</Pill>
+            <Pill onClick={() => api<{ url: string }>('/api/google/auth').then((r) => (location.href = r.url))}>Másik fiók</Pill>
+            <Pill
+              kind="danger"
+              onClick={() => confirm('Leválasztod a Google-fiókot?') && run(() => api('/api/google', { method: 'DELETE' }), 'Leválasztva').then(load)}
+            >
+              Leválasztás
+            </Pill>
+          </div>
+          {folders && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
+              {!folders.length && <span style={{ color: C.muted, font: `400 13px ${FONT}` }}>Nincs ilyen nevű mappa.</span>}
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => run(() => api('/api/google/folder', { method: 'PUT', body: f }), `Számlák mappája: ${f.name}`).then(load)}
+                  style={{
+                    textAlign: 'left',
+                    border: `1px solid ${C.line}`,
+                    background: st.folder?.id === f.id ? C.bg2 : '#fff',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    font: `500 13.5px ${FONT}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  📁 {f.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {st.folder && (
+            <div>
+              <Pill
+                small
+                onClick={() =>
+                  api<{ uploaded: number; pending: number; errors: string[] }>('/api/google/sync-files', { body: {} }).then(
+                    (r) => showToast(r.errors.length ? { msg: r.errors[0], error: true } : `${r.uploaded} korábbi számla átmásolva a Drive-ba`),
+                    (e) => showToast({ msg: e.message, error: true }),
+                  )
+                }
+              >
+                Korábban feltöltött számlák másolása
+              </Pill>
+            </div>
+          )}
+        </div>
+      )}
     </Section>
   );
 }

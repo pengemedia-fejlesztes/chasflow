@@ -13,6 +13,8 @@ import { usePlanOfActual } from './LinkChain';
 import { itemLabel } from './MonthList';
 import { rowKey, shiftDate } from './logic';
 import { kindOf, PartnerEditor, PartnerTitle, PaymentTerms, PlannedTasks, SecHead, SettingRow, usePartnerSubcontract } from './PartnerCard';
+import { PartnerBillingTab } from './PartnerBilling';
+import { PartnerTasks } from './TasksView';
 import { useStore } from './store';
 import { C, FONT, FONT_H, Pill, card, relTime, R } from './ui';
 
@@ -65,20 +67,24 @@ export function PartnerSheet({
   onNewItem,
   onEditItem,
   onRenamed,
+  embedded,
 }: {
   p: PartnerStat;
   onClose: () => void;
   onNewItem: (leaf: string) => void;
   onEditItem: (leaf: string, key?: string) => void;
   onRenamed: (key: string) => void;
+  /** az új partner adatlap „Értékesítések” fülén: fejléc nélkül, csak Áttekintés / Számlák / Szolgáltatások */
+  embedded?: boolean;
 }) {
   const { data, ix, commit, canEdit, showToast } = useStore();
-  const [tab, setTab0] = useState<'main' | 'inv' | 'set'>(() => {
+  const openTasks = (data.tasks || []).filter((t) => t.partner_key === p.key && (t.status === 'nyitott' || t.status === 'folyamatban')).length;
+  const [tab, setTab0] = useState<'main' | 'inv' | 'tasks' | 'srv' | 'set'>(() => {
     const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
-    return t === 'inv' || t === 'set' ? t : 'main';
+    return t === 'inv' || t === 'set' || t === 'srv' || t === 'tasks' ? t : 'main';
   });
   // a fül is a címsorba kerül, hogy frissítéskor ugyanitt nyíljon meg
-  const setTab = (k: 'main' | 'inv' | 'set') => {
+  const setTab = (k: 'main' | 'inv' | 'tasks' | 'srv' | 'set') => {
     setTab0(k);
     const [path, qs] = location.hash.split('?');
     const q = new URLSearchParams(qs || '');
@@ -253,8 +259,8 @@ export function PartnerSheet({
   );
 
   return (
-    <div style={{ padding: '26px 30px 30px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+    <div style={{ padding: embedded ? 0 : '26px 30px 30px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: embedded ? 'none' : 'flex', alignItems: 'flex-start', gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <PartnerTitle p={p} onSaved={onRenamed} />
@@ -295,9 +301,13 @@ export function PartnerSheet({
           [
             ['main', 'Áttekintés'],
             ['inv', 'Számlák és fizetések'],
+            ['tasks', `Feladatok${openTasks ? ` (${openTasks})` : ''}`],
+            ['srv', 'Szolgáltatások és számlázás'],
             ['set', 'Beállítások'],
           ] as const
-        ).map(([k, l]) => (
+        )
+          .filter(([k]) => !embedded || k === 'main' || k === 'inv' || k === 'srv')
+          .map(([k, l]) => (
           <button
             key={k}
             type="button"
@@ -487,6 +497,9 @@ export function PartnerSheet({
           </div>
         </div>
       )}
+
+      {tab === 'tasks' && <PartnerTasks partnerKey={p.key} />}
+      {tab === 'srv' && <PartnerBillingTab p={p} />}
 
       {tab === 'set' && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>

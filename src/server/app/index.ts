@@ -8,15 +8,26 @@ import { handleRules } from './rules';
 import { navEnabled, syncNav } from './nav';
 import { handleIngest, handleIngestToken } from './ingest';
 import { handlePartners } from './partners';
+import { handleCatalog } from './catalog';
+import { handleTasks } from './tasks';
+import { handleLedger } from './ledger';
+import { handleTxFiles } from './txfiles';
+import { handleDrive } from './drive';
+import { handleAccess, loadAccessMap, twofaMode } from './access';
+import { a8KeepAlive, handleAggreg8Server } from './aggreg8srv';
+import { accessOf, allowed, needs2fa } from '../../shared/access';
+import { handleStock } from './stock';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { handleChangelog } from './changelog';
-import { Env, HttpError, getSetting, json, safeEqual, setSetting, withSecurityHeaders } from './util';
+import { Env, HttpError, audit, enforceHttps, getSetting, json, readJson, safeEqual, setSetting, withSecurityHeaders } from './util';
 import { SYNC_HOURS } from '../../shared/aggreg8';
 import { isWorkday } from '../../shared/workdays';
 
 async function route(req: Request, env: Env): Promise<Response> {
+  const transport = enforceHttps(req);
+  if (transport) return transport;
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
 
@@ -80,19 +91,50 @@ async function route(req: Request, env: Env): Promise<Response> {
   // olcsó változásfigyelés: az oldal csak ezt az egy sort kérdezi percenként, és csak változáskor tölti újra az adatokat
   if (path === '/api/version' && req.method === 'GET') return json({ rev: (await getSetting(env, 'data_rev')) || '0' });
 
+  // böngészőben történt kirajzolási hiba naplózása (a hibakereséshez)
+  if (path === '/api/client-error' && req.method === 'POST') {
+    const b = await readJson(req).catch(() => ({}));
+    console.error('client-error', u.email, JSON.stringify(b).slice(0, 2500));
+    await audit(env, u.id, 'client_error', {
+      message: String((b as any).message || '').slice(0, 300),
+      url: String((b as any).url || '').slice(0, 100),
+      component: String((b as any).component || '').slice(0, 600),
+    }).catch(() => null);
+    return json({ ok: true });
+  }
   const acc = await handleAccount(env, req, path, u);
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
   // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
-  if ((env as any).REQUIRE_ADMIN_2FA === '1' && u.role === 'admin' && !u.totp_enabled)
-    throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
+  if (!u.totp_enabled && needs2fa(await twofaMode(env), u.role))
+    throw new HttpError(403, 'A kétlépcsős azonosítás (2FA) bekapcsolása kötelező. Állítsd be a hitelesítő alkalmazással.');
+  // menüpont- és adatkör-jogosultság (admin mindenhez hozzáfér)
+  const access = accessOf(u, await loadAccessMap(env));
+  if (!allowed(path, access)) throw new HttpError(403, 'Ehhez nincs jogosultságod. Kérd az adminisztrátort.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleChangelog]) {
+  for (const h of [
+    handleUsers,
+    handleData,
+    handleIngestToken,
+    handlePartners,
+    handleAccess,
+    handleAggreg8Server,
+    handleCatalog,
+    handleTasks,
+    handleStock,
+    handleChangelog,
+  ]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }
   const rr = await handleRules(env, req, path, u, () => reapplyRules(env));
   if (rr) return rr;
+  const gd = await handleDrive(env, req, path, u);
+  if (gd) return gd;
+  const tf = await handleTxFiles(env, req, path, u);
+  if (tf) return tf;
+  const lg = await handleLedger(env, req, path, u);
+  if (lg) return lg;
   const b = await handleBank(env, req, path, u, url);
   if (b) return b;
   throw new HttpError(404, 'Nincs ilyen végpont.');
@@ -135,6 +177,13 @@ export default {
   },
 
   async scheduled(ev: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    // aggreg8-munkamenet életben tartása (4 óránként, hétvégén is): csak megújít, nem szinkronizál
+    if (ev.cron === 'keepalive') {
+      ctx.waitUntil(a8KeepAlive(env).then((r) => console.log('aggreg8 keepalive', r)));
+      return;
+    }
+    // minden ütemezett futásnál (szinkron-órán kívül és munkaszüneti napon is) életben tartjuk az aggreg8-belépést
+    ctx.waitUntil(a8KeepAlive(env).then((r) => console.log('aggreg8 keepalive', r)));
     // csak budapesti idő szerint 5, 9, 13, 17, 21 órakor (a cron UTC-ben mindkét időeltolásra fut)
     const hour = Number(
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Budapest', hour: '2-digit', hourCycle: 'h23' }).format(new Date(ev.scheduledTime)),

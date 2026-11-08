@@ -16,6 +16,7 @@ export interface Env {
   NAV_TAX_NUMBER?: string; // a cég adószámának első 8 jegye
   NAV_API_URL?: string; // csak teszteléshez (pl. https://api-test.onlineszamla.nav.gov.hu/invoiceService/v3)
   DIAG_TOKEN?: string; // csak a diagnosztika futása idejére (GitHub Actions állítja be és törli)
+  GOOGLE_DRIVE_ACCESS_TOKEN?: string; // szerveroldali, csak olvasó Drive-hozzáférés; soha nem kerül a válaszba
   MAIL_FROM?: string; // pl. "Cashflow <laszlo.nagy@360-marketing.eu>"
 }
 
@@ -50,6 +51,14 @@ export function withSecurityHeaders(res: Response): Response {
   const r = new Response(res.body, res);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) r.headers.set(k, v);
   return r;
+}
+
+export function enforceHttps(req: Request): Response | null {
+  const url = new URL(req.url);
+  if (url.protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return null;
+  if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'Titkosított HTTPS-kapcsolat szükséges.' }, 403);
+  url.protocol = 'https:';
+  return new Response(null, { status: 308, headers: { Location: url.toString(), 'Cache-Control': 'no-store' } });
 }
 
 export async function readJson<T = any>(req: Request, maxBytes = 5_000_000): Promise<T> {
@@ -128,4 +137,27 @@ export async function getSetting(env: Env, key: string): Promise<string | null> 
 
 export async function setSetting(env: Env, key: string, value: string | null) {
   await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(key, value).run();
+}
+
+/**
+ * Futáskor létrehozott táblák (CREATE TABLE IF NOT EXISTS, utólagos oszlopok): adatbázisonként egyszer fut le.
+ * Hiba esetén false, és a következő kérés újra próbálja. Az adatbázis-objektum a kulcs (nem a folyamat),
+ * így egy új adatbázis (pl. tesztenként egy memóriabeli) is megkapja a tábláit.
+ */
+export function ensureOnce(label: string, setup: (env: Env) => Promise<unknown>): (env: Env) => Promise<boolean> {
+  const done = new WeakMap<Db, Promise<boolean>>();
+  return (env) => {
+    let p = done.get(env.DB);
+    if (!p) {
+      p = setup(env)
+        .then(() => true)
+        .catch((e) => {
+          done.delete(env.DB);
+          console.error(label, e);
+          return false;
+        });
+      done.set(env.DB, p);
+    }
+    return p;
+  };
 }

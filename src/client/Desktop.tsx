@@ -1,28 +1,33 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../shared/categories';
-import { buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../shared/model';
+import { addMonths, buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../shared/model';
 import { useMergeCounts } from './MergeTabs';
 import { AlertsView, useFlags } from './AlertsView';
-import { api, ApiError } from './api';
-import { BankView } from './BankView';
-import { BreakevenView } from './BreakevenView';
-import { CategoryView } from './CategoryView';
+const BankView = lazy(() => import('./BankView').then((m) => ({ default: m.BankView })));
+const BreakevenView = lazy(() => import('./BreakevenView').then((m) => ({ default: m.BreakevenView })));
+const CategoryView = lazy(() => import('./CategoryView').then((m) => ({ default: m.CategoryView })));
 import type { EditTarget } from './EntryModal';
 import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
+const CatalogView = lazy(() => import('./CatalogView').then((m) => ({ default: m.CatalogView })));
+const StockView = lazy(() => import('./StockView').then((m) => ({ default: m.StockView })));
+const ChartsView = lazy(() => import('./ChartsView').then((m) => ({ default: m.ChartsView })));
+import { NavMenu, applySub } from './NavMenu';
+import { useMyTaskCount } from './useMyTaskCount';
+const TasksView = lazy(() => import('./TasksView').then((m) => ({ default: m.TasksView })));
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
-import { IncomeView } from './IncomeView';
+const IncomeView = lazy(() => import('./IncomeView').then((m) => ({ default: m.IncomeView })));
 import { setCellValue } from './logic';
-import { SettingsView } from './SettingsView';
+const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
 import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
 
-export type View = 'overview' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'breakeven' | 'settings';
-const VIEWS: View[] = ['overview', 'alerts', 'cat', 'income', 'bank', 'partners', 'breakeven', 'settings'];
+export type View = 'overview' | 'charts' | 'tasks' | 'alerts' | 'cat' | 'income' | 'bank' | 'partners' | 'products' | 'stock' | 'breakeven' | 'settings';
+const VIEWS: View[] = ['overview', 'charts', 'tasks', 'alerts', 'cat', 'income', 'bank', 'partners', 'products', 'stock', 'breakeven', 'settings'];
 
 /** #/nézet[/kategória][?p=partner&t=fül] */
 export function parseHash(): { view: View; group: string | null; partner: string | null; tab: string | null } {
@@ -100,7 +105,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
-  const sideMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
+  // az Áttekintés „Havi cashflow” sora: a beállított időszakra, minden szekcióval (az oszlopok száma egyezzen a táblázatéval)
+  const netMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
+  const sideMatrix = useMemo(
+    () => buildMatrix(ix, { ...filters, from: ix.cur, to: addMonths(ix.cur, 7), section: 'all', groupId: null, search: '', includeOffers: true }),
+    [ix, filters],
+  );
   const groupRows = sideMatrix.rows.filter((r) => r.type === 'group');
   // oldalsáv: három főkategória (Ajánlatok, Bevétel, Kiadás), az összegek az aktuális hónapra (tény + nyitott terv)
   const offerGroup = ix.groups.find((g) => g.section === 'in' && /aj[áa]nlat/i.test(g.label));
@@ -133,15 +143,15 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     setFilters({ groupId: id });
     setView('cat');
   };
-  const nav: [View, string, number][] = [
-    ['overview', 'Áttekintés', 0],
-    ['alerts', 'Összevonás', flags.length + mc.billingo + mc.bank + mc.names],
-    ['income', 'Tervezett bevételek, kiadások', openIncome],
-    ['bank', 'Bankszinkron', newTx],
-    ['partners', 'Partnertörzs', 0],
-    ['breakeven', 'Fedezeti pont', 0],
-    ['settings', 'Beállítások', 0],
-  ];
+  const myTasks = useMyTaskCount();
+  const canCat = !data.myAccess || data.myAccess.menus.includes('cat');
+  // nem engedélyezett nézetre (pl. régi könyvjelző) az első engedélyezett menüpontra lépünk
+  useEffect(() => {
+    const ok = !data.myAccess || data.myAccess.menus.includes(view);
+    if (!ok && data.myAccess?.menus.length) setView(data.myAccess.menus.find((m) => m !== 'cat') as View);
+  }, [view, data.myAccess]);
+  const [navKey, setNavKey] = useState(0);
+  const badges = { tasks: myTasks, alerts: flags.length + mc.billingo + mc.bank + mc.names, income: openIncome, bank: newTx };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '256px minmax(0,1fr)', minHeight: '100vh', alignItems: 'start' }}>
@@ -206,98 +216,72 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             </button>
           </div>
         )}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '0 10px' }}>
-          {nav.map(([v, label, badge]) => (
-            <button
-              key={v}
-              className="side-btn"
-              aria-current={view === v ? 'page' : undefined}
-              onClick={() => setView(v)}
+        <NavMenu
+          view={view}
+          badges={badges}
+          allowed={(v) => !data.myAccess || data.myAccess.menus.includes(v)}
+          onPick={(l) => {
+            applySub(l);
+            setView(l.view);
+            setNavKey((k) => k + 1);
+          }}
+        />
+        {canCat && (
+          <>
+            <div
               style={{
+                padding: '22px 22px 8px',
+                font: `600 11px ${FONT}`,
+                letterSpacing: '.16em',
+                textTransform: 'uppercase',
+                color: C.muted2,
                 display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-                padding: '10px 12px',
-                borderRadius: R.md,
-                background: view === v ? C.navy3 : 'transparent',
-                color: '#fff',
-                font: `600 14px ${FONT}`,
+                justifyContent: 'space-between',
+                gap: 8,
               }}
             >
-              <span style={{ flex: 1 }}>{label}</span>
-              {badge > 0 && (
-                <span
-                  style={{
-                    minWidth: 22,
-                    textAlign: 'center',
-                    background: v === 'alerts' ? C.negLight : C.blue2,
-                    color: C.navy,
-                    borderRadius: 999,
-                    padding: '1px 7px',
-                    font: `700 11.5px ${FONT}`,
-                  }}
-                >
-                  {badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div
-          style={{
-            padding: '22px 22px 8px',
-            font: `600 11px ${FONT}`,
-            letterSpacing: '.16em',
-            textTransform: 'uppercase',
-            color: C.muted2,
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 8,
-          }}
-        >
-          <span>Kategóriák</span>
-          <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{monthLong(ix.cur)}</span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
-          <SideSection
-            title="Ajánlatok"
-            total={offerNow}
-            closed={!!closedSec.offers}
-            onToggle={() => toggleSec('offers')}
-            onAll={offerGroup ? () => goGroup(offerGroup.id) : undefined}
-            allActive={view === 'cat' && filters.groupId === offerGroup?.id}
-          >
-            {offerRows.map((r) => (
-              <SideRow key={r.id} label={r.label} value={curOf(ix.offer, r.id)} onClick={() => st.openPartner(r.id)} />
-            ))}
-          </SideSection>
-          <SideSection
-            title="Bevétel"
-            total={inNow}
-            closed={!!closedSec.in}
-            onToggle={() => toggleSec('in')}
-            onAll={incomeGroup ? () => goGroup(incomeGroup.id) : undefined}
-            allActive={view === 'cat' && filters.groupId === incomeGroup?.id}
-          >
-            {incomeRows.map((r) => (
-              <SideRow key={r.id} label={r.label} value={leafNow(r.id)} onClick={() => st.openPartner(r.id)} />
-            ))}
-          </SideSection>
-          <SideSection title="Kiadás" total={outNow} closed={!!closedSec.out} onToggle={() => toggleSec('out')}>
-            {groupRows.map((g) => (
-              <SideRow
-                key={g.id}
-                label={displayGroup(g.label)}
-                value={-sumNow((l) => l.group_id === g.id)}
-                active={view === 'cat' && filters.groupId === g.id}
-                onClick={() => goGroup(g.id)}
-              />
-            ))}
-          </SideSection>
-        </div>
+              <span>Kategóriák</span>
+              <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{monthLong(ix.cur)}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
+              <SideSection
+                title="Ajánlatok"
+                total={offerNow}
+                closed={!!closedSec.offers}
+                onToggle={() => toggleSec('offers')}
+                onAll={offerGroup ? () => goGroup(offerGroup.id) : undefined}
+                allActive={view === 'cat' && filters.groupId === offerGroup?.id}
+              >
+                {offerRows.map((r) => (
+                  <SideRow key={r.id} label={r.label} value={curOf(ix.offer, r.id)} onClick={() => st.openPartner(r.id)} />
+                ))}
+              </SideSection>
+              <SideSection
+                title="Bevétel"
+                total={inNow}
+                closed={!!closedSec.in}
+                onToggle={() => toggleSec('in')}
+                onAll={incomeGroup ? () => goGroup(incomeGroup.id) : undefined}
+                allActive={view === 'cat' && filters.groupId === incomeGroup?.id}
+              >
+                {incomeRows.map((r) => (
+                  <SideRow key={r.id} label={r.label} value={leafNow(r.id)} onClick={() => st.openPartner(r.id)} />
+                ))}
+              </SideSection>
+              <SideSection title="Kiadás" total={outNow} closed={!!closedSec.out} onToggle={() => toggleSec('out')}>
+                {groupRows.map((g) => (
+                  <SideRow
+                    key={g.id}
+                    label={displayGroup(g.label)}
+                    value={-sumNow((l) => l.group_id === g.id)}
+                    active={view === 'cat' && filters.groupId === g.id}
+                    onClick={() => goGroup(g.id)}
+                  />
+                ))}
+              </SideSection>
+            </div>
+          </>
+        )}
         <div
           style={{ marginTop: 'auto', padding: '16px 22px', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 6 }}
         >
@@ -336,26 +320,38 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         </div>
       </aside>
 
-      <main style={{ position: 'relative', minWidth: 0 }}>
-        {view === 'overview' && (
-          <Overview
-            matrix={matrix}
-            netAll={sideMatrix.net}
-            goBank={() => setView('bank')}
-            goAlerts={() => setView('alerts')}
-            goGroup={goGroup}
-            openNew={(leaf) => setModal(leaf ? { leaf } : {})}
-          />
-        )}
-        {view === 'alerts' && <AlertsView />}
-        {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
-        {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
-        {view === 'income' && <IncomeView />}
-        {view === 'bank' && <BankView />}
-        {view === 'partners' && <PartnerRegistry page />}
-        {view === 'breakeven' && <BreakevenView />}
-        {view === 'settings' && <SettingsView onLogout={onLogout} />}
-      </main>
+      <Suspense
+        fallback={
+          <main role="status" style={{ padding: 32 }}>
+            Betöltés…
+          </main>
+        }
+      >
+        <main style={{ position: 'relative', minWidth: 0 }}>
+          {view === 'overview' && (
+            <Overview
+              matrix={matrix}
+              netAll={netMatrix.net}
+              goBank={() => setView('bank')}
+              goAlerts={() => setView('alerts')}
+              goGroup={goGroup}
+              openNew={(leaf) => setModal(leaf ? { leaf } : {})}
+            />
+          )}
+          {view === 'charts' && <ChartsView />}
+          {view === 'tasks' && <TasksView key={navKey} />}
+          {view === 'alerts' && <AlertsView />}
+          {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
+          {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
+          {view === 'income' && <IncomeView />}
+          {view === 'bank' && <BankView />}
+          {view === 'partners' && <PartnerRegistry page />}
+          {view === 'products' && <CatalogView />}
+          {view === 'stock' && <StockView />}
+          {view === 'breakeven' && <BreakevenView />}
+          {view === 'settings' && <SettingsView onLogout={onLogout} />}
+        </main>
+      </Suspense>
       {modal && <PartnerModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}
       {toast && <ToastView {...toast} />}
     </div>
@@ -762,6 +758,16 @@ function Overview({
         </h1>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <PeriodPicker label={periodLabel(filters, ix.cur, ix.firstActual)} />
+          {(filters.from > ix.cur || filters.to < ix.cur) && (
+            <button
+              type="button"
+              onClick={() => st.setFilters({ from: ix.cur, to: addMonths(ix.cur, 7), granularity: 'month' })}
+              style={{ border: 0, borderRadius: 999, background: C.neg, color: '#fff', padding: '7px 14px', font: `600 13px ${FONT}`, cursor: 'pointer' }}
+              title="A kiválasztott időszakban nincs benne a mai hónap"
+            >
+              Vissza a mai hónaphoz
+            </button>
+          )}
           <button
             type="button"
             onClick={() => st.setFilters({ includeOffers: !filters.includeOffers })}
@@ -966,7 +972,7 @@ function Overview({
             <Cell
               key={i}
               h={rowH + 16}
-              bg={cols[i].current ? C.bg2 : 'transparent'}
+              bg={cols[i]?.current ? C.bg2 : 'transparent'}
               fg={!Math.round(v) ? C.muted : v < 0 ? NEG : C.blueDark}
               fw={700}
               size={15}
@@ -989,7 +995,7 @@ function Overview({
             <Cell
               key={i}
               h={rowH + 8}
-              bg={cols[i].current ? C.navy2 : 'transparent'}
+              bg={cols[i]?.current ? C.navy2 : 'transparent'}
               fg={v < 0 ? C.negLight : '#fff'}
               fw={700}
               title={matrix.balanceKind[i] === 'proj' ? 'előrejelzett záró egyenleg' : 'tényleges záró egyenleg'}
@@ -1334,14 +1340,4 @@ function SideRow({ label, value, active, onClick }: { label: string; value: numb
       <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{value ? fmt(value) : '–'}</span>
     </button>
   );
-}
-
-/** Kijelentkezés: csak akkor sikeres, ha a szerver törölte a munkamenetet (401 = már nincs érvényes munkamenet). */
-export async function logout(): Promise<void> {
-  try {
-    await api('/api/auth/logout', { body: {} });
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 401) return;
-    throw e;
-  }
 }

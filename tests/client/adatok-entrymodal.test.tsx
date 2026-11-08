@@ -10,13 +10,7 @@ import { api } from '../../src/client/api';
 vi.mock('../../src/client/api', () => ({ api: vi.fn() }));
 vi.mock('../../src/client/LeafPicker', () => ({
   LeafPicker: ({ section, onChange }: { section: string; onChange: (id: string) => void }) => (
-    <div>
-      {section === 'in' ? (
-        <button onClick={() => onChange('l_in')}>Minta Kft.</button>
-      ) : (
-        <button onClick={() => onChange('l_out')}>Szoftver</button>
-      )}
-    </div>
+    <div>{section === 'in' ? <button onClick={() => onChange('l_in')}>Minta Kft.</button> : <button onClick={() => onChange('l_out')}>Szoftver</button>}</div>
   ),
 }));
 
@@ -88,7 +82,7 @@ beforeEach(() => {
   root = createRoot(host);
   vi.mocked(api).mockReset();
   vi.mocked(api).mockImplementation(async (path: string, opts?: any) =>
-    path === '/api/data' ? initial() : { versions: Object.fromEntries((opts?.body?.upsert || []).map((e: any) => [e.id, 101])) },
+    path.split('?')[0] === '/api/data' ? initial() : { versions: Object.fromEntries((opts?.body?.upsert || []).map((e: any) => [e.id, 101])) },
   );
 });
 afterEach(async () => {

@@ -1,3 +1,4 @@
+import { syncAggreg8Server } from './aggreg8srv';
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
@@ -24,7 +25,7 @@ import { fetchInvoiceData, navEnabled, navInvoiceRefs, rematchNav, resolveNav, s
 import * as eb from './enablebanking';
 import { refreshVatPlans } from './vat';
 import { Env, HttpError, audit, json, now, randomId, readJson, setSetting, todayHu } from './util';
-import { describeEntries, logChange, rowsById } from './changelog';
+import { describeEntries, logChange, rowsById, undoLogEntry } from './changelog';
 
 type PartnerNameSets = Awaited<ReturnType<typeof partnerNames>>;
 
@@ -388,6 +389,12 @@ export async function syncAll(env: Env) {
     } catch (e: any) {
       res.billingoError = e.message;
     }
+  }
+  // aggreg8 a szerverről (ha át van adva a munkamenet): banki frissítés + letöltés, a Mac nélkül
+  try {
+    res.aggreg8 = await syncAggreg8Server(env);
+  } catch (e: any) {
+    res.aggreg8Error = e.message;
   }
   if (env.EB_APP_ID && env.EB_PRIVATE_KEY) {
     try {
@@ -948,6 +955,14 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     await mergePartnerNames(env);
     return json({ ok: true, moved: n });
   }
+  if (path === '/api/billingo/attach/undo' && req.method === 'POST') {
+    // az összevonás visszavonása a toastból: ugyanaz a jogosultság kell hozzá, mint az összevonáshoz (számlák), nem a Naplóé –
+    // ezért külön végpont, ami csak „számla a terv alá” bejegyzést fogad el
+    requireRole(u, 'admin', 'member');
+    const b = await readJson<{ log_id: number; force?: boolean }>(req);
+    await undoLogEntry(env, Number(b.log_id), u, !!b.force, 'billingo.attach');
+    return json({ ok: true });
+  }
   if (path === '/api/billingo/attach' && req.method === 'POST') {
     // kézi összevonás: a számlából létrejött külön sor a partner kiválasztott saját tervéhez kerül
     requireRole(u, 'admin', 'member');
@@ -1018,7 +1033,8 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
   }
   if (path === '/api/nav/sync' && req.method === 'POST') {
     requireRole(u, 'admin');
-    if (!navEnabled(env)) throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (a szerver .env-jében: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
+    if (!navEnabled(env))
+      throw new HttpError(400, 'Nincs beállítva NAV kapcsolat (a szerver .env-jében: NAV_LOGIN, NAV_PASSWORD, NAV_SIGN_KEY, NAV_TAX_NUMBER).');
     const b = await readJson<{ from?: string }>(req).catch(() => ({}) as { from?: string });
     const from = b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from) ? b.from : undefined;
     const r = await syncNav(env, { from }).catch((e: any) => {
@@ -1126,7 +1142,9 @@ export async function handleBank(env: Env, req: Request, path: string, u: User, 
     // előbb az ellenőrzés, utána egy lépésben az írás
     const stmts: DbStatement[] = [];
     if (b.label !== undefined) {
-      const label = String(b.label ?? '').trim().slice(0, 80);
+      const label = String(b.label ?? '')
+        .trim()
+        .slice(0, 80);
       if (!label) throw new HttpError(400, 'Adj meg nevet.');
       stmts.push(env.DB.prepare('UPDATE bank_accounts SET label = ? WHERE id = ?').bind(label, am[1]));
     }

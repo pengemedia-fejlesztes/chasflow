@@ -49,8 +49,7 @@ const leaves = [
   { id: 'konyv', group_id: 'gmuk', label: 'Könyvelés', sort: 0, archived: 0 },
   { id: 'regi', group_id: 'gmuk', label: 'Régi szolgáltató', sort: 1, archived: 1 },
 ];
-const ixOf = (entries: Entry[], today = '2026-11-07') =>
-  buildIndex({ groups, leaves, entries, accounts: [], settings: { opening_balance: '3000000' }, today });
+const ixOf = (entries: Entry[], today = '2026-11-07') => buildIndex({ groups, leaves, entries, accounts: [], settings: { opening_balance: '3000000' }, today });
 
 describe('szűrők: a sorok szűrődnek, az egyenleg nem', () => {
   const entries = [
@@ -105,14 +104,16 @@ describe('ajánlatok: külön felső szint, a Bevételbe nem számít', () => {
       const m = buildMatrix(ix, { ...f, includeOffers });
       const i = m.columns.findIndex((c) => c.key === '2026-12p');
       const bev = m.rows.find((r) => r.type === 'section' && r.id === 'in')!;
-      const aj = m.rows.find((r) => r.type === 'section' && r.label === 'Ajánlatok')!;
+      // az Ajánlatok szekció mindig mutatja a kiadott ajánlatok összegét (Laci, 2026-11-08); kikapcsolt kapcsolónál
+      // „(nem számít bele)” címkével – a kapcsoló csak azt dönti el, beleszámít-e a cashflow-ba és az egyenlegbe
+      const aj = m.rows.find((r) => r.type === 'section' && r.label === (includeOffers ? 'Ajánlatok' : 'Ajánlatok (nem számít bele)'))!;
       expect(bev.cells[i].v).toBe(800_000);
-      expect(aj.cells[i].v).toBe(includeOffers ? 1_800_000 : 0);
+      expect(aj.cells[i].v).toBe(1_800_000);
       expect(m.net[i]).toBe(800_000 + (includeOffers ? 1_800_000 : 0));
       expect(m.balance[i] - m.balance[i - 1]).toBe(m.net[i]);
-      // a más mappában lévő partner sora a saját mappájában nem duplázza az ajánlatot
+      // a más mappában lévő partner ajánlata egyszer, az Ajánlatok alatt látszik (a saját mappájában nem duplázza)
       const peldaRows = m.rows.filter((r) => r.type === 'leaf' && r.id === 'pelda');
-      expect(peldaRows.reduce((s, r) => s + r.cells[i].v, 0)).toBe(includeOffers ? 300_000 : 0);
+      expect(peldaRows.reduce((s, r) => s + r.cells[i].v, 0)).toBe(300_000);
     });
   }
 });

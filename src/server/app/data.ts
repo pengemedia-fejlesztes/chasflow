@@ -1,9 +1,17 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
 import type { DbResult, DbStatement } from './platform';
+import { bundlePatch, DATA_SECTIONS, parseSections, type DataSection } from '../../shared/data-sections';
 import { baseName, withMonth } from '../../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, normalizeText, type ImportRow } from '../../shared/categories';
 import { partnerKey } from '../../shared/match';
 import { partnerIdOf } from '../../shared/partners';
+import { loadCatalog, syncCatalog } from './catalog';
+import { loadTasks } from './tasks';
+import { loadAccessMap, twofaMode } from './access';
+import { a8Status } from './aggreg8srv';
+import { accessOf } from '../../shared/access';
+import { visibleBundle } from './visibility';
+import { loadStock } from './stock';
 import { sheetIdOf } from '../../shared/worktime';
 import { addMonths, ymOf } from '../../shared/model';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../../shared/types';
@@ -40,71 +48,111 @@ async function hasPeriod(env: Env) {
   return periodCol;
 }
 
-export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const P = (await hasPeriod(env)) ? 'period, ' : '';
-  const [
-    groups,
-    leaves,
-    series,
-    entries,
-    accounts,
-    bankTx,
-    billingo,
-    settings,
-    deleted,
-    monthStats,
-    partnerNames,
-    lostOffers,
-    navInvoices,
-    partners,
-    employees,
-    worktime,
-  ] = await env.DB.batch([
-    env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
-    env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
-    env.DB.prepare('SELECT * FROM series'),
-    env.DB.prepare(
-      `SELECT id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
-    ),
-    env.DB.prepare(
-      'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
-    ),
-    env.DB.prepare(
-      "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
-    ),
-    env.DB.prepare(
-      "SELECT id, number, partner, partner_tax, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
-    ),
-    env.DB.prepare('SELECT key, value FROM settings'),
-    env.DB.prepare(
-      `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
+export async function loadBundle(env: Env, u: User, sections: DataSection[] = DATA_SECTIONS): Promise<DataBundle> {
+  const wanted = new Set(sections);
+  const P = wanted.has('ledger') && (await hasPeriod(env)) ? 'period, ' : '';
+  const queries: [string, DbStatement][] = [];
+  if (wanted.has('ledger')) queries.push(['groups', env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label')]);
+  if (wanted.has('ledger')) queries.push(['leaves', env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label')]);
+  if (wanted.has('ledger')) queries.push(['series', env.DB.prepare('SELECT * FROM series')]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'entries',
+      env.DB.prepare(
+        `SELECT id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'accounts',
+      env.DB.prepare(
+        'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'bankTx',
+      env.DB.prepare(
+        "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'billingo',
+      env.DB.prepare(
+        "SELECT id, number, partner, partner_tax, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
+      ),
+    ]);
+  if (wanted.has('ledger')) queries.push(['settings', env.DB.prepare('SELECT key, value FROM settings')]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'deleted',
+      env.DB.prepare(
+        `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
        FROM deleted_entries d
        WHERE d.kind = 'plan' AND d.date >= date('now', '-62 days') AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.date LIMIT 2000`,
-    ),
-    env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
-    // partnerek banki (számlázási) nevei kategóriánként
-    env.DB.prepare(
-      `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'monthStats',
+      env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'partnerNames',
+      env.DB.prepare(
+        `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
        WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
-    ),
-    // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
-    env.DB.prepare(
-      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.series_id, d.deleted_at, d.offer_at FROM deleted_entries d
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'lostOffers',
+      env.DB.prepare(
+        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.series_id, d.deleted_at, d.offer_at FROM deleted_entries d
        WHERE d.rejected = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
-    ),
-    // NAV bejövő számlák (terv nélküliek mind, a többi az elmúlt fél évből)
-    env.DB.prepare(
-      `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'navInvoices',
+      env.DB.prepare(
+        `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
        FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
-    ),
-    env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
-    env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name'),
-    env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym'),
-  ]);
+      ),
+    ]);
+  if (wanted.has('ledger')) queries.push(['partners', env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners')]);
+  if (wanted.has('payroll')) queries.push(['employees', env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name')]);
+  if (wanted.has('payroll')) queries.push(['worktime', env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym')]);
+  const results = queries.length ? await env.DB.batch(queries.map(([, query]) => query)) : [];
+  const rows = Object.fromEntries(queries.map(([key], i) => [key, results[i]]));
+  const empty = { results: [] };
+  const {
+    groups = empty,
+    leaves = empty,
+    series = empty,
+    entries = empty,
+    accounts = empty,
+    bankTx = empty,
+    billingo = empty,
+    settings = empty,
+    deleted = empty,
+    monthStats = empty,
+    partnerNames = empty,
+    lostOffers = empty,
+    navInvoices = empty,
+    partners = empty,
+    employees = empty,
+    worktime = empty,
+  } = rows;
+  const catalog = wanted.has('catalog') ? await loadCatalog(env) : {};
+  const tasks = wanted.has('tasks') ? await loadTasks(env, u) : {};
+  const stock = wanted.has('stock') ? await loadStock(env) : {};
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -129,6 +177,9 @@ export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
     partners: (partners.results as any[]).map((p) => ({ ...p, aliases: JSON.parse(p.aliases || '[]') })),
     employees: employees.results as any,
     worktime: worktime.results as any,
+    ...catalog,
+    ...tasks,
+    ...stock,
     integrations: { billingo: !!env.BILLINGO_API_KEY, enableBanking: !!(env.EB_APP_ID && env.EB_PRIVATE_KEY), nav: navEnabled(env) },
   };
 }
@@ -303,9 +354,7 @@ export async function applyBatch(env: Env, b: EntryBatch, userId: number) {
   // különben egy újabb törlés után kétszer látszanának a kukában
   if (b.purge)
     for (const e of b.upsert || [])
-      stmts.push(
-        env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_by = ? AND deleted_at > ?').bind(String(e.id), userId, t - 15 * 60_000),
-      );
+      stmts.push(env.DB.prepare('DELETE FROM deleted_entries WHERE id = ? AND deleted_by = ? AND deleted_at > ?').bind(String(e.id), userId, t - 15 * 60_000));
   for (const id of b.deleteSeries || []) stmts.push(env.DB.prepare('DELETE FROM series WHERE id = ?').bind(String(id)));
   if (stmts.length > 2000) throw new HttpError(413, 'Túl sok módosítás egyszerre.');
   stmts.push(env.DB.prepare('DELETE FROM mutation_guard'));
@@ -399,9 +448,7 @@ async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], 
     // terveket – az előtte és utána lévő hónapok tervei megmaradnak (egy 2 hónapos fájl nem törli a teljes jövőt)
     const from = ymOf(minDate) + '-01';
     const until = addMonths(ymOf(maxDate), 1) + '-01';
-    stmts.push(
-      env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND source = 'import' AND done = 0 AND date >= ? AND date < ?").bind(from, until),
-    );
+    stmts.push(env.DB.prepare("DELETE FROM entries WHERE kind = 'plan' AND source = 'import' AND done = 0 AND date >= ? AND date < ?").bind(from, until));
   }
   for (const { lid, n, ext } of prepared) {
     stmts.push(
@@ -417,7 +464,24 @@ async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], 
 }
 
 export async function handleData(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
-  if (path === '/api/data' && req.method === 'GET') return json(await loadBundle(env, u));
+  if (path === '/api/data' && req.method === 'GET') {
+    // a nem engedélyezett adatkörök és menüpontok adatai ki sem mennek a böngészőbe
+    const access = accessOf(u, await loadAccessMap(env));
+    const started = performance.now();
+    let sections: DataSection[] | null;
+    try {
+      sections = parseSections(new URL(req.url).searchParams.get('sections'));
+    } catch {
+      throw new HttpError(400, 'Hibás adatkör.');
+    }
+    const b = visibleBundle(await loadBundle(env, u, sections ?? DATA_SECTIONS), access);
+    if (u.role === 'admin' && (!sections || sections.includes('ledger'))) {
+      b.userAccess = await loadAccessMap(env);
+      b.twofaMode = await twofaMode(env);
+      b.aggreg8Server = await a8Status(env).catch(() => null);
+    }
+    return json(sections ? bundlePatch(b, sections) : b, 200, { 'Server-Timing': `data;dur=${(performance.now() - started).toFixed(1)}` });
+  }
 
   if (path === '/api/entries/batch' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');
@@ -428,6 +492,8 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const seriesIds = [...(b.series || []).map((x) => String(x.id)), ...(b.deleteSeries || []).map(String)];
     const seriesBefore = await rowsById(env, 'series', seriesIds);
     const n = await applyBatch(env, b, u.id);
+    // a partnernél felvitt új tétel a termék- és szolgáltatástörzsbe is bekerül
+    if ((b.upsert || []).length) await syncCatalog(env).catch((e) => console.error('catalog sync', e));
     const after = (b.upsert || []).map((e) => e as unknown as Record<string, unknown>);
     const { items, counts } = describeEntries(before, after, (b.delete || []).map(String));
     const had = new Set(before.map((r) => String(r.id)));
@@ -495,14 +561,19 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       if (prev.gsection && ng.section !== prev.gsection) {
         const used = await env.DB.prepare('SELECT 1 AS x FROM entries WHERE leaf_id = ? LIMIT 1').bind(lm[1]).first();
         if (used)
-          throw new HttpError(400, 'Bevételi és kiadási mappa között nem helyezhető át, mert vannak tételei (az előjelük nem illene a mappához). Vegyél fel új alkategóriát a másik oldalon.');
+          throw new HttpError(
+            400,
+            'Bevételi és kiadási mappa között nem helyezhető át, mert vannak tételei (az előjelük nem illene a mappához). Vegyél fel új alkategóriát a másik oldalon.',
+          );
       }
     }
     // egyetlen UPDATE a modositott mezokre (korabban mezonkent ment egy-egy kerdes)
     const setParts: string[] = [];
     const setVals: unknown[] = [];
     if (b.label !== undefined) {
-      const label = String(b.label ?? '').trim().slice(0, 80);
+      const label = String(b.label ?? '')
+        .trim()
+        .slice(0, 80);
       if (!label) throw new HttpError(400, 'Adj meg nevet.');
       setParts.push('label = ?');
       setVals.push(label);
@@ -544,7 +615,9 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const stmts: DbStatement[] = [];
     if (b.pay_rule !== undefined) stmts.push(env.DB.prepare('UPDATE groups SET pay_rule = ? WHERE id = ?').bind(cleanPayRule(b.pay_rule), gm[1]));
     if (b.label !== undefined) {
-      const label = String(b.label ?? '').trim().slice(0, 80);
+      const label = String(b.label ?? '')
+        .trim()
+        .slice(0, 80);
       if (!label) throw new HttpError(400, 'Adj meg nevet.');
       stmts.push(env.DB.prepare('UPDATE groups SET label = ? WHERE id = ?').bind(label, gm[1]));
     }
@@ -598,13 +671,18 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
       .first<{ name: string; sheet_url: string | null }>();
     const id = sheetIdOf(row?.sheet_url);
     if (!row || !id) throw new HttpError(400, 'Ehhez a partnerhez nincs megadva elszámoló tábla link.');
-    const res = await fetch(`https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`, { redirect: 'follow' });
+    // Privát táblázatokhoz hitelesített Drive-kapcsolat kell; névtelen exportot nem támogatunk.
+    if (!env.GOOGLE_DRIVE_ACCESS_TOKEN) throw new HttpError(503, 'A privát Drive-kapcsolat nincs beállítva. Töltsd fel az XLS-fájlt a saját fiókodból.');
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application%2Fvnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+      {
+        headers: { Authorization: `Bearer ${env.GOOGLE_DRIVE_ACCESS_TOKEN}` },
+        redirect: 'error',
+      },
+    );
     const type = res.headers.get('content-type') || '';
     if (!res.ok || !type.includes('spreadsheetml'))
-      throw new HttpError(
-        400,
-        `${row.name}: nem érem el a táblát. A Google-táblázatban: Megosztás → Általános hozzáférés → „Bárki, akinek megvan a link” – Megtekintő.`,
-      );
+      throw new HttpError(400, `${row.name}: nem érem el a privát táblát. Ellenőrizd a Drive-kapcsolat jogosultságát, vagy töltsd fel az XLS-fájlt.`);
     const bytes = new Uint8Array(await res.arrayBuffer());
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -783,7 +861,9 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const pick = async (ids: number[]) =>
       ids.length
         ? (
-            await env.DB.prepare(`SELECT rowid AS rid, id, name, leaf_id, date, amount, kind, done, link_id FROM deleted_entries WHERE rowid IN (${ids.map(() => '?').join(',')})`)
+            await env.DB.prepare(
+              `SELECT rowid AS rid, id, name, leaf_id, date, amount, kind, done, link_id FROM deleted_entries WHERE rowid IN (${ids.map(() => '?').join(',')})`,
+            )
               .bind(...ids)
               .all<Record<string, unknown>>()
           ).results
@@ -828,10 +908,18 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     for (const r of cur) {
       if (!r.link_id) continue;
       const other = tById.get(String(r.link_id));
-      if (r.kind === 'plan' && r.done && !other) fix.push(env.DB.prepare("UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND kind = 'plan'").bind(r.id));
+      if (r.kind === 'plan' && r.done && !other)
+        fix.push(env.DB.prepare("UPDATE entries SET done = 0, link_id = NULL WHERE id = ? AND kind = 'plan'").bind(r.id));
       if (r.kind === 'actual' && other && other.kind === 'plan' && !other.done && !other.link_id && !curById.has(String(other.id))) {
         linkBefore.push(other);
-        fix.push(env.DB.prepare("UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ? AND done = 0 AND link_id IS NULL").bind(r.id, now(), u.id, other.id));
+        fix.push(
+          env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ?, updated_by = ? WHERE id = ? AND done = 0 AND link_id IS NULL').bind(
+            r.id,
+            now(),
+            u.id,
+            other.id,
+          ),
+        );
       }
     }
     if (fix.length) await env.DB.batch(fix);

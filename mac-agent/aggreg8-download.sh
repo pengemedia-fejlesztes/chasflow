@@ -31,14 +31,13 @@ for n in "$(command -v node 2>/dev/null)" /opt/homebrew/bin/node /usr/local/bin/
 done
 [ -n "$NODE" ] || fail "Nincs megfelelő Node.js a Macen (22-es vagy újabb kell)."
 
-# a script letöltése (ha a szerver nem érhető el, a legutóbbi helyi példány)
+# Csak a felhasználó által telepített helyi csomag fut; futás közben nem töltünk le kódot.
 CDPJS="$STATE/aggreg8-cdp.mjs"
-curl -fsS -m 30 "$URL/mac/aggreg8-cdp.mjs" -o "$CDPJS.new" && mv "$CDPJS.new" "$CDPJS" || rm -f "$CDPJS.new"
-[ -f "$CDPJS" ] || fail "Nem érem el a cashflow tervezőt (nincs internet?)."
+[ -f "$CDPJS" ] && [ -f "$STATE/aggreg8-export.js" ] || fail "A helyi banki csomag hiányos. Telepítsd újra a Cashflow bankfeltöltőt."
 
 # a használt Google-fiók (a céges): felülírható a $STATE/google_account fájlban
 ACC=$(cat "$STATE/google_account" 2>/dev/null | tr -d " \n")
-OUT=$(CF_TOKEN="$TOKEN" CF_URL="$URL" CF_STATE="$STATE" CF_GOOGLE_ACCOUNT="${ACC:-laszlo.nagy@360-marketing.eu}" "$NODE" "$CDPJS" 2>>"$LOG")
+OUT=$(CF_TOKEN="$TOKEN" CF_URL="$URL" CF_STATE="$STATE" EXPORT_JS_FILE="$STATE/aggreg8-export.js" CF_GOOGLE_ACCOUNT="${ACC:-laszlo.nagy@360-marketing.eu}" "$NODE" "$CDPJS" 2>>"$LOG")
 RES=$(echo "$OUT" | tail -1)
 log "eredmény: $(echo "$RES" | cut -c1-600)"
 # az eredmény (JSON) elemzése a Node-dal

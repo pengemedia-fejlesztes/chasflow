@@ -6,6 +6,7 @@ import { createTestApp, type TestApp } from '../helpers/app';
 import { installMocks, mockBillingo, mockNav, type BillingoMock, type NavMock } from '../helpers/mocks';
 import { syncBillingo } from '../../src/server/app/billingo';
 import { rematchNav } from '../../src/server/app/nav';
+import { INVITE_ACCESS } from '../../src/shared/access';
 
 let t: TestApp | undefined;
 afterEach(() => {
@@ -187,7 +188,11 @@ describe('Enable Banking kapcsolat (POST /api/bank/connect, GET /api/bank/callba
     expect(cb.status).toBe(302);
     expect(cb.headers.get('Location')).toBe('https://cashflow.test/?bank=ok');
     expect(calls.find((x) => x.path === '/sessions')?.body).toEqual({ code: 'kod-123' });
-    expect(rows("SELECT provider, bank_name, label, iban, eb_account_uid, eb_session_id, valid_until, active, balance FROM bank_accounts WHERE provider = 'enablebanking'")).toEqual([
+    expect(
+      rows(
+        "SELECT provider, bank_name, label, iban, eb_account_uid, eb_session_id, valid_until, active, balance FROM bank_accounts WHERE provider = 'enablebanking'",
+      ),
+    ).toEqual([
       {
         provider: 'enablebanking',
         bank_name: 'Minta Bank',
@@ -278,7 +283,12 @@ describe('Billingo kézi összevonás (POST /api/billingo/attach) és „Projekt
     await setup();
     billingo.addDocument({ id: 9401, number: 'MNT-2026-000301', partner: 'Minta Kft.', gross: 190_500, dueDate: day(8), invoiceDate: day(-2) });
     await syncBillingo(t!.env);
-    expect(row("SELECT id, leaf_id, amount, ext_ref FROM entries WHERE id = 'b9401'")).toEqual({ id: 'b9401', leaf_id: 'l_minta', amount: 190_500, ext_ref: 'billingo:9401' });
+    expect(row("SELECT id, leaf_id, amount, ext_ref FROM entries WHERE id = 'b9401'")).toEqual({
+      id: 'b9401',
+      leaf_id: 'l_minta',
+      amount: 190_500,
+      ext_ref: 'billingo:9401',
+    });
     entry({ id: 'p_sajat', date: day(20), leaf_id: 'l_minta', amount: 254_000, name: 'Havi díj', period: day(20).slice(0, 7) });
 
     const r = await t!.post('/api/billingo/attach', { id: 'b9401', plan_id: 'p_sajat' });
@@ -345,6 +355,29 @@ describe('Billingo kézi összevonás (POST /api/billingo/attach) és „Projekt
     ]);
     // újra összevonható
     expect((await t!.post('/api/billingo/attach', { id: 'b9403', plan_id: 'p_ajanlat' })).status).toBe(200);
+  });
+
+  it('a toast „Visszavon”-ja a meghívott alap-jogosultságával (Beállítások menü nélkül) is működik; a Napló végpontja nem, és a saját végpont más bejegyzést nem von vissza', async () => {
+    await setup();
+    billingo.addDocument({ id: 9405, number: 'MNT-2026-000305', partner: 'Minta Kft.', gross: 80_000, dueDate: day(8), invoiceDate: day(-2) });
+    await syncBillingo(t!.env);
+    entry({ id: 'p_terv5', date: day(30), leaf_id: 'l_minta', amount: 200_000, tentative: 1, name: 'Karbantartás' });
+    await t!.addUser('meghivott@minta.hu', 'member', undefined, INVITE_ACCESS);
+    await t!.loginAs('meghivott@minta.hu');
+    const r = await t!.post('/api/billingo/attach', { id: 'b9405', plan_id: 'p_terv5' });
+    expect(r.status).toBe(200);
+    expect((await t!.post(`/api/changelog/${r.data.log_id}/undo`, {})).status).toBe(403);
+    expect((await t!.post('/api/billingo/attach/undo', { log_id: r.data.log_id })).status).toBe(200);
+    expect(rows("SELECT id, ext_ref FROM entries WHERE kind = 'plan' ORDER BY id")).toEqual([
+      { id: 'b9405', ext_ref: 'billingo:9405' },
+      { id: 'p_terv5', ext_ref: null },
+    ]);
+    expect((await t!.post('/api/billingo/attach/undo', { log_id: r.data.log_id })).status).toBe(400); // már visszavonva
+    // más típusú naplóbejegyzés (pl. a visszavonás saját bejegyzése) ezen a végponton nem vonható vissza
+    const other = row("SELECT id FROM change_log WHERE action <> 'billingo.attach' ORDER BY id DESC LIMIT 1").id;
+    const wrong = await t!.post('/api/billingo/attach/undo', { log_id: other });
+    expect(wrong.status).toBe(400);
+    expect(wrong.data.error).toMatch(/itt nem vonható vissza/);
   });
 
   it('visszavonás: ha a tervet azóta módosították 409 (kényszerítve visszaáll); ha a számla már nem ehhez a tervhez tartozik 400', async () => {
@@ -600,7 +633,14 @@ describe('kézi NAV-szinkron (POST /api/nav/sync, csak admin)', () => {
     const ext = installMocks(navMock);
     t = await createTestApp({ env: ext.env as any });
     seed();
-    navMock.addInvoice({ number: 'TSZ-2026/0815', supplierName: 'Tárhely Szolgáltató Kft.', supplierTax: '12345678-2-41', issueDate: day(-6), paymentDate: day(2), gross: 12_700 });
+    navMock.addInvoice({
+      number: 'TSZ-2026/0815',
+      supplierName: 'Tárhely Szolgáltató Kft.',
+      supplierTax: '12345678-2-41',
+      issueDate: day(-6),
+      paymentDate: day(2),
+      gross: 12_700,
+    });
     const r = await t.post('/api/nav/sync', { from: day(-30) });
     expect(r.status).toBe(200);
     expect(r.data).toMatchObject({ invoices: 1, unplanned: 1 });
@@ -625,7 +665,14 @@ describe('diagnosztikai végpontok (/api/diag/*)', () => {
     const ext = installMocks(navMock);
     t = await createTestApp({ env: { ...ext.env, DIAG_TOKEN: TOKEN } as any, login: false });
     seed();
-    navMock.addInvoice({ number: 'KI-2026-515', supplierName: 'Könyvelő Iroda Kft.', supplierTax: '87654321-2-13', issueDate: day(-8), paymentDate: day(5), gross: 36_830 });
+    navMock.addInvoice({
+      number: 'KI-2026-515',
+      supplierName: 'Könyvelő Iroda Kft.',
+      supplierTax: '87654321-2-13',
+      issueDate: day(-8),
+      paymentDate: day(5),
+      gross: 36_830,
+    });
     for (const p of ['/api/diag/sync', '/api/diag/nav', '/api/diag/autopay']) {
       expect([p, (await t.call('POST', p, {})).status]).toEqual([p, 404]);
       expect([p, (await t.call('POST', p, {}, { 'X-Diag-Token': TOKEN.slice(0, -1) + 'Q' })).status]).toEqual([p, 404]);

@@ -1,11 +1,12 @@
+import { createInvite, setUserAccess, twofaMode } from './access';
 // Hitelesítés: jelszó (PBKDF2), munkamenet süti, opcionális TOTP 2FA, brute-force védelem.
 import type { Me, Role } from '../../shared/types';
 import { changedMail, mailEnabled, resetMail, sendMail } from './mail';
 import { Env, HttpError, audit, b64decode, b64url, clientIp, json, now, randomBytes, readJson, safeEqual, sha256 } from './util';
 
 const COOKIE = '__Host-cf_session';
-const SESSION_TTL = 30 * 86400_000; // abszolút lejárat
-const IDLE_TTL = 7 * 86400_000; // inaktivitás után kilép
+// Laci kérése (2026-11-08): ne léptessen ki. 400 nap (a böngészők ennél hosszabb sütit nem tartanak meg), használatkor megújul.
+const SESSION_TTL = 400 * 86400_000;
 const PBKDF2_ITER = 100_000; // a Workers futtatókörnyezet maximuma
 const MAX_IP_ATTEMPTS = 20; // 15 percen belül
 const MAX_USER_FAILS = 5;
@@ -125,16 +126,17 @@ export async function currentUser(env: Env, req: Request): Promise<User | null> 
   const token = getCookie(req, COOKIE);
   if (!token || token.length > 100) return null;
   const th = await sha256(token);
-  const row = await env.DB.prepare(`SELECT s.expires_at, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
+  const row = await env.DB.prepare(`SELECT s.created_at AS session_created_at, s.expires_at, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
     .bind(th)
-    .first<User & { expires_at: number; last_seen: number }>();
+    .first<User & { session_created_at: number; expires_at: number; last_seen: number }>();
   if (!row) return null;
   const t = now();
-  if (row.expires_at < t || row.last_seen + IDLE_TTL < t || row.disabled) {
+  if (row.expires_at < t || row.disabled) {
     await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(th).run();
     return null;
   }
-  if (t - row.last_seen > 60_000) await env.DB.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?').bind(t, th).run();
+  if (t - row.last_seen > 60_000)
+    await env.DB.prepare('UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token_hash = ?').bind(t, t + SESSION_TTL, th).run();
   return row;
 }
 
@@ -164,7 +166,8 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
       hasUsers: (c?.n || 0) > 0,
       setupAvailable: !c?.n && !!env.SETUP_TOKEN,
       mailEnabled: mailEnabled(env),
-      require2fa: (env as any).REQUIRE_ADMIN_2FA === '1',
+      require2fa: (await twofaMode(env)) !== 'off',
+      twofaMode: await twofaMode(env),
       me: u ? publicUser(u) : null,
     });
   }
@@ -230,10 +233,7 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
     if (u.disabled) return fail();
     if (u.locked_until > t) throw new HttpError(429, 'A fiók átmenetileg zárolva a sok hibás próbálkozás miatt. Próbáld újra 15 perc múlva.');
     if (!(await verifyPassword(u, String(body.password || '')))) return fail();
-    if (u.totp_enabled) {
-      if (!body.totp) return json({ needTotp: true });
-      if (!(await verifyTotp(u.totp_secret || '', String(body.totp)))) return fail('Hibás kétlépcsős kód.');
-    }
+    // a kétlépcsős azonosítás ki van kapcsolva (Laci kérése, 2026-11-08): belépéshez elég a jelszó
     const login = await env.DB.prepare(
       'UPDATE users SET failed_logins = 0, locked_until = 0, last_login = ? WHERE id = ? AND locked_until <= ? AND disabled = 0',
     )
@@ -292,15 +292,13 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
     const body = await readJson(req);
     const r = await validResetToken(env, String(body.token || ''));
     if (!r) return json({ valid: false });
-    return json({ valid: true, needTotp: !!r.user.totp_enabled, email: r.user.email });
+    return json({ valid: true, needTotp: false, email: r.user.email, invite: !(r.user as any).last_login });
   }
 
   if (path === '/api/auth/reset' && req.method === 'POST') {
     const body = await readJson(req);
     const r = await validResetToken(env, String(body.token || ''));
     if (!r) throw new HttpError(400, 'A link lejárt vagy már felhasználták. Kérj újat.');
-    // a jelszó-visszaállítás nem kerülheti meg a kétlépcsős azonosítást
-    if (r.user.totp_enabled && !(await verifyTotp(r.user.totp_secret || '', String(body.totp || '')))) throw new HttpError(400, 'Hibás kétlépcsős kód.');
     const pw = await newPasswordFields(String(body.password || ''));
     const t = now();
     await env.DB.batch([
@@ -411,6 +409,13 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
       throw new HttpError(409, 'Ezzel az e-mail címmel már van felhasználó.');
     }
     await audit(env, u.id, 'user_created', { email, role });
+    if (body.invite) {
+      // meghívás: jelszó nélkül, egyszer használható linkkel; a hozzáférés a megadott menüpontokra / adatkörökre
+      const nu = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: number }>();
+      if (body.access && role !== 'admin') await setUserAccess(env, nu!.id, body.access);
+      await env.DB.prepare('UPDATE users SET must_change_pw = 0 WHERE id = ?').bind(nu!.id).run();
+      return json({ ok: true, id: nu!.id, inviteToken: await createInvite(env, nu!.id) });
+    }
     return json({ ok: true, tempPassword: temp });
   }
   const m = path.match(/^\/api\/users\/(\d+)(\/reset)?$/);
