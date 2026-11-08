@@ -1,6 +1,7 @@
 // NAV bejövő számlák újrapárosítása (rematchNav): terv nélküli számla riasztás, „tervezett” / „fizetve” állapot.
 import { afterEach, describe, expect, it } from 'vitest';
 import { rematchNav, storeDigests, type NavDigest } from '../../src/server/app/nav';
+import { fixLinkedLeaves, settleNavPlans } from '../../src/server/app/bank';
 import { createTestApp, type TestApp } from '../helpers/app';
 
 let t: TestApp | undefined;
@@ -158,5 +159,46 @@ describe('NAV – „havonta tervbe”, ha a szállítónak már van havi terve'
     expect(own).toHaveLength(1);
     expect(own[0]).toMatchObject({ amount: -36_830, series_id: null });
     expect(nav('nav:33333333:KI-2026-700')).toMatchObject({ status: 'planned', plan_id: own[0].id });
+  });
+});
+
+describe('NAV-terv automatikus rendezése csak ugyanattól a partnertől (settleNavPlans)', () => {
+  const plan = (id: string) => t!.sql.prepare('SELECT done, link_id FROM entries WHERE id = ?').get(id) as any;
+  /** a könyvelő lejárt NAV-számlája egyszeri tervként (a felületen „Mentés: Könyvelés”) */
+  async function konyvPlan() {
+    await setup();
+    t!.sql.exec("INSERT INTO leaves (id, group_id, label) VALUES ('l_szerviz', 'g_ki', 'Autó szerviz')");
+    await storeDigests(t!.env, [navDoc('KI-2026-801', 36_830, day(-15), day(-10), 'Könyvelő Iroda Kft.', '33333333')]);
+    expect((await t!.post('/api/nav/resolve', { id: 'nav:33333333:KI-2026-801', action: 'assign', leaf_id: 'l_konyv' })).status).toBe(200);
+    return (t!.sql.prepare("SELECT plan_id FROM nav_invoices WHERE id = 'nav:33333333:KI-2026-801'").get() as any).plan_id as string;
+  }
+
+  it('egy másik partner azonos összegű ténye nem teljesíti a tervet és nem kerül át a terv kategóriájába; a saját ténye igen', async () => {
+    const pid = await konyvPlan();
+    entry('i_szerviz', 'actual', 'l_szerviz', day(-8), -36_830, 'Gumiszerviz Bt.', { source: 'import' });
+    await settleNavPlans(t!.env);
+    await fixLinkedLeaves(t!.env);
+    expect(plan(pid)).toMatchObject({ done: 0, link_id: null });
+    expect((t!.sql.prepare("SELECT leaf_id FROM entries WHERE id = 'i_szerviz'").get() as any).leaf_id).toBe('l_szerviz');
+
+    entry('i_konyv', 'actual', 'l_konyv', day(-7), -36_830, 'Könyvelési díj', { source: 'import' });
+    await settleNavPlans(t!.env);
+    expect(plan(pid)).toMatchObject({ done: 1, link_id: 'i_konyv' });
+  });
+
+  it('egy másik partner várakozó banki tétele nem hagyódik jóvá a tervre; a szállító (más írásmódú) tétele igen', async () => {
+    const pid = await konyvPlan();
+    t!.sql.exec(`INSERT INTO bank_accounts (id, provider, bank_name, label) VALUES ('acc1', 'manual', 'Minta Bank', 'Folyószámla');
+      INSERT INTO bank_tx (id, account_id, ext_id, date, amount, partner, memo, status, created_at) VALUES
+        ('t_mas', 'acc1', 'e1', '${day(-9)}', -36830, 'Valaki Más Bt', 'szamla 2026/77', 'new', 1)`);
+    await settleNavPlans(t!.env);
+    expect(plan(pid)).toMatchObject({ done: 0, link_id: null });
+    expect((t!.sql.prepare("SELECT status FROM bank_tx WHERE id = 't_mas'").get() as any).status).toBe('new');
+
+    t!.sql.exec(`INSERT INTO bank_tx (id, account_id, ext_id, date, amount, partner, memo, status, created_at) VALUES
+        ('t_ki', 'acc1', 'e2', '${day(-6)}', -36830, 'KÖNYVELŐ IRODA KFT', 'KI-2026-801', 'ignored', 1)`);
+    await settleNavPlans(t!.env);
+    expect(plan(pid)).toMatchObject({ done: 1, link_id: 'at_ki' });
+    expect((t!.sql.prepare("SELECT status FROM bank_tx WHERE id = 't_mas'").get() as any).status).toBe('new');
   });
 });

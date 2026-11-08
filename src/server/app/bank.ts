@@ -1,7 +1,7 @@
 // Bankkapcsolat (BiNX, Magnet … PSD2-n keresztül), banki tételek jóváhagyása, CSV import.
 import type { DbStatement } from './platform';
 import { normalizeText, parseAmount, parseDate } from '../../shared/categories';
-import { namesMatch } from '../../shared/billingopay';
+import { nameOwner, namesMatch } from '../../shared/billingopay';
 import { matchPlan, partnerKey, planFitsTx, suggestLeaf } from '../../shared/match';
 import { autoApprove, loadContains } from './rules';
 import { payDate } from '../../shared/workdays';
@@ -298,6 +298,9 @@ export async function linkSameMonthActuals(env: Env): Promise<number> {
  * A NAV-számlából felvett terv már kifizetett tény, ha: van hozzá azonos összegű tény (→ összekötés), vagy egy várakozó /
  * kihagyott banki tétel (→ jóváhagyás a tervhez), különben ha kártyával / készpénzzel fizették, a terv lezárul (a vásárláskor
  * fizetve) – így nem marad „lejárt tervezett kiadás” (pl. SimplePay, Szilvási Trader kártyás vásárlás).
+ * A tény / banki tétel csak ugyanattól a partnertől jöhet: a neve a szállítóé, vagy általános név a terv kategóriájában –
+ * különben egy másik partner azonos összegű költsége teljesítené a tervet, és (fixLinkedLeaves) át is kerülne a terv
+ * kategóriájába.
  */
 export async function settleNavPlans(env: Env): Promise<number> {
   const [pR, aR, tR] = await env.DB.batch([
@@ -307,15 +310,17 @@ export async function settleNavPlans(env: Env): Promise<number> {
        WHERE p.kind = 'plan' AND p.done = 0 AND COALESCE(p.tentative, 0) = 0 AND p.date < date('now') AND p.date >= date('now', '-400 days')`,
     ),
     env.DB.prepare(
-      `SELECT a.id, a.date, a.amount FROM entries a WHERE a.kind = 'actual' AND a.amount < 0 AND a.date >= date('now', '-420 days')
+      `SELECT a.id, a.date, a.amount, a.name, a.leaf_id FROM entries a WHERE a.kind = 'actual' AND a.amount < 0 AND a.date >= date('now', '-420 days')
        AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.kind = 'plan' AND p.link_id = a.id)`,
     ),
     env.DB.prepare(
-      "SELECT id, date, amount, status, partner FROM bank_tx WHERE amount < 0 AND actual_id IS NULL AND status IN ('new', 'ignored') AND date >= date('now', '-420 days')",
+      "SELECT id, date, amount, status, partner, leaf_id FROM bank_tx WHERE amount < 0 AND actual_id IS NULL AND status IN ('new', 'ignored') AND date >= date('now', '-420 days')",
     ),
   ]);
   const acts = aR.results as any[];
   const txs = tR.results as any[];
+  const names = await partnerNames(env, {}, 'out');
+  const label = new Map((await env.DB.prepare('SELECT id, label FROM leaves').all<{ id: string; label: string }>()).results.map((l) => [l.id, l.label]));
   const usedA = new Set<string>(),
     usedT = new Set<string>();
   const t0 = now();
@@ -327,13 +332,19 @@ export async function settleNavPlans(env: Env): Promise<number> {
     seen.add(p.id);
     const from = p.issue_date || p.date;
     const inWin = (d: string) => d >= addDaysIso(from, -5) && d <= addDaysIso(p.payment_date || p.date, 60);
-    const a = acts.find((x) => !usedA.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    // partner-egyezés: a szállító (vagy alternatív) neve, vagy általános név (pl. „Könyvelési díj”) a terv saját kategóriájában
+    const own = names.own(p.partner_name || '');
+    const samePartner = (name: string, leaf: string | null) => {
+      const who = nameOwner(name || '', own, names.known, label.get(p.leaf_id) || '');
+      return who === 'own' || (who === 'neutral' && leaf === p.leaf_id);
+    };
+    const a = acts.find((x) => !usedA.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date) && samePartner(x.name, x.leaf_id));
     if (a) {
       usedA.add(a.id);
       stmts.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(a.id, t0, p.id));
       continue;
     }
-    const tx = txs.find((x) => !usedT.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date));
+    const tx = txs.find((x) => !usedT.has(x.id) && Math.abs(x.amount - p.amount) < 1 && inWin(x.date) && samePartner(x.partner, x.leaf_id));
     if (tx) {
       usedT.add(tx.id);
       if (tx.status === 'ignored') stmts.push(env.DB.prepare("UPDATE bank_tx SET status = 'new' WHERE id = ? AND status = 'ignored'").bind(tx.id));
