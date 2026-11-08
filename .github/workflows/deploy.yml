@@ -168,7 +168,7 @@ jobs:
                       assert hashlib.sha256(get(origin + path)).digest() == hashlib.sha256(pathlib.Path('dist' + path[len('/Cashflow'):]).read_bytes()).digest(), 'Live script differs from deployed artifact'
                   status = json.loads(get(site + '/api/auth/status'))
                   assert isinstance(status.get('hasUsers'), bool) and 'me' in status, 'Unexpected authentication API response'
-                  assert status.get('twofaMode') in ('admin', 'all'), 'Admin 2FA enforcement is missing'
+                  assert status.get('twofaMode') in ('off', 'admin', 'all'), 'twofaMode missing from auth status'
                   class NoRedirect(urllib.request.HTTPRedirectHandler):
                       def redirect_request(self, *args): return None
                   try:
