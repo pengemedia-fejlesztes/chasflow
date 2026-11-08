@@ -226,7 +226,54 @@ describe('Billingo szinkron – nyitott számlák a tervezett bevételbe', () =>
     expect(doc(9012).plan_id).toBe('p_havi');
   });
 
-  it.todo('helyesbítő (módosító) számla: az eredeti terv összege / bill_amount kövesse-e a különbözetet? (ma a „modification” típust figyelmen kívül hagyja)');
+  it('helyesbítő (módosító) számla: a különbözet az eredeti számlából lett terv összegét igazítja, nem lesz külön bevétel', async () => {
+    await setup();
+    billingo.addDocument({ id: 9016, number: 'MNT-2026-000116', partner: 'Minta Kft.', gross: 254_000, dueDate: day(8) });
+    await sync();
+    // utólag kevesebb lett a teljesítés: −54 000 Ft-os helyesbítő számla
+    const m = billingo.modify(9016, -54_000);
+    await sync();
+    expect(entry('b9016')).toMatchObject({ amount: 200_000, bill_amount: 200_000, done: 0, ext_ref: 'billingo:9016' });
+    expect(entries().map((e) => e.id)).toEqual(['b9016']);
+    // a bizonylat a saját összegével marad; a helyesbítő nem önálló számla-sor
+    expect(doc(9016).gross).toBe(254_000);
+    expect(doc(m.id)).toBeUndefined();
+    // ismételt szinkron nem vonja le újra
+    await sync();
+    expect(entry('b9016')).toMatchObject({ amount: 200_000, bill_amount: 200_000 });
+    // a helyesbítőt sztornózzák: az eredeti összeg áll vissza
+    billingo.cancel(m.id);
+    await sync();
+    expect(entry('b9016')).toMatchObject({ amount: 254_000, bill_amount: 254_000 });
+  });
+
+  it('helyesbítő számla a saját (előre felvett) tervhez kötött számlához: a bill_amount követi, a terv összege marad', async () => {
+    await setup();
+    plan('p_havi', 'l_minta', day(10), 300_000, 'Marketing tanácsadás – 2026. november');
+    billingo.addDocument({ id: 9017, number: 'MNT-2026-000117', partner: 'Minta Kft.', gross: 281_940, dueDate: day(8) });
+    await sync();
+    expect(entry('p_havi')).toMatchObject({ amount: 300_000, bill_amount: 281_940 });
+    billingo.modify(9017, 18_060);
+    await sync();
+    expect(entry('p_havi')).toMatchObject({ amount: 300_000, plan_amount: 300_000, bill_amount: 300_000, ext_ref: 'billingo:9017', done: 0 });
+    expect(entries("kind = 'plan'").map((e) => e.id)).toEqual(['p_havi']);
+  });
+
+  it('helyesbítés után a helyesbített összeget fizették ki: a terv lezárul, a tény a befolyt összeg', async () => {
+    await setup();
+    billingo.addDocument({ id: 9018, number: 'MNT-2026-000118', partner: 'Minta Kft.', gross: 254_000, dueDate: day(2) });
+    await sync();
+    billingo.modify(9018, -54_000);
+    // az ügyfél a helyesbített 200 000 Ft-ot utalja; az eredeti számla a Billingóban „részben fizetett”
+    billingo.pay(9018, { date: day(-1), amount: 200_000 });
+    await sync();
+    expect(entry('b9018')).toMatchObject({ done: 1, bill_amount: 200_000, link_id: 'bp9018_1' });
+    expect(entries("kind = 'actual'")).toEqual([expect.objectContaining({ id: 'bp9018_1', amount: 200_000, link_id: 'b9018' })]);
+    const data = (await t!.get('/api/data')).data;
+    const ix = buildIndex(data);
+    expect(ix.openPlan.get('l_minta')?.get(day(2).slice(0, 7)) || 0).toBe(0);
+    expect(computeFlags(data.entries, [], ix.sectionOf, data.today).filter((f) => f.entry_id === 'bp9018_1')).toEqual([]);
+  });
 });
 
 describe('Billingo szinkron – hibakezelés', () => {

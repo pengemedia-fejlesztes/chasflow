@@ -24,6 +24,9 @@ interface BillingoDocument {
   due_date?: string;
   paid_date?: string;
   partner?: { name?: string; taxcode?: string };
+  /** helyesbítő (módosító) számlánál az eredeti számla */
+  original_document_id?: number;
+  related_documents?: { id: number; invoice_number?: string }[];
 }
 
 const INCOME_TYPES = new Set(['invoice', 'advance']);
@@ -317,7 +320,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
    * Részben fizetett számla: a befolyt összeg (fizetésenként) részleges tény, a tervhez kötve (tény.link_id); a terv nyitva
    * marad, a még várható része a számla összege a részfizetések nélkül. A már rögzített részfizetések nem duplázódnak.
    */
-  const partialStmts = async (planId: string, leaf: string, d: BillingoDocument, rate: number, partner: string): Promise<DbStatement[]> => {
+  const partialStmts = async (planId: string, leaf: string, d: BillingoDocument, rate: number, gross: number, partner: string): Promise<DbStatement[]> => {
     let pays: BillingoPayment[];
     try {
       pays = await fetchPayments(env.BILLINGO_API_URL || BASE, env.BILLINGO_API_KEY!, d.id);
@@ -349,16 +352,31 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
             ).bind(aid, on, leaf, `${partner} · ${d.invoice_number || ''} · részfizetés`.trim(), amount, `bpaid:${d.id}_${i + 1}`, planId, t),
           );
       });
+    // a részletek már kiadják a (helyesbített) számla összegét – pl. a helyesbítés utáni összeget fizették ki, de az eredeti
+    // számla a Billingóban „részben fizetett” maradt: a terv lezárul, az utolsó részlethez kötve
+    if (prior.length && prior.reduce((s, p) => s + p.amount, 0) >= gross - 0.5)
+      out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(prior[prior.length - 1].id, t, planId));
     return out;
   };
   const stmts: DbStatement[] = [];
   let plans = 0;
   // a sztornózott számlák előbb: a saját tervről leváló számla helyére még ebben a körben beköthető a helyesbítő (új) számla
   const isCancelled = (d: BillingoDocument) => !!d.cancelled || d.payment_status === 'cancelled';
+  const rateOf = (d: BillingoDocument) => (d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1);
+  // helyesbítő (módosító) számla: nem külön bevétel, a különbözete az eredeti számla összegét igazítja (a sztornózott nem számít)
+  const modDiff = new Map<number, number>();
+  for (const m of docs) {
+    if (m.type !== 'modification' || isCancelled(m)) continue;
+    const orig = m.original_document_id ?? m.related_documents?.find((r) => docs.some((x) => x.id === r.id && INCOME_TYPES.has(String(x.type))))?.id;
+    if (!orig) continue;
+    modDiff.set(orig, (modDiff.get(orig) || 0) + Math.round((Number(m.gross_total) || 0) * rateOf(m)));
+  }
   for (const d of [...docs].sort((a, b) => Number(isCancelled(b)) - Number(isCancelled(a)))) {
     if (!d.id || !INCOME_TYPES.has(String(d.type))) continue;
-    const rate = d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1;
-    const gross = Math.round((Number(d.gross_total) || 0) * rate);
+    const rate = rateOf(d);
+    // a számla bizonylat szerinti összege (billingo_docs), és a helyesbítésekkel igazított összeg (terv / bill_amount / tény)
+    const docGross = Math.round((Number(d.gross_total) || 0) * rate);
+    const gross = docGross + (modDiff.get(d.id) || 0);
     const partnerRaw = d.partner?.name || 'Ismeretlen partner';
     const partner = alias[partnerKey(partnerRaw)] || partnerRaw;
     const ext = `billingo:${d.id}`;
@@ -402,7 +420,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       );
       plans++;
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
-      else if (!ex.done && d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(ex.id, ex.leaf_id, d, rate, partner)));
+      else if (!ex.done && d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(ex.id, ex.leaf_id, d, rate, gross, partner)));
     } else if (gross > 0) {
       // adószám (partnertörzs) alapján a partner bevételi alkategóriája, különben név/szabály alapján
       const lid0 = byTax.get(taxBase(d.partner?.taxcode))?.in || (await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains));
@@ -426,7 +444,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
           ).bind(lid, ext, coveredSum, coveredSum, gross, due, t, t, matched.id),
         );
         if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
-        else if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(matched.id, lid, d, rate, partner)));
+        else if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(matched.id, lid, d, rate, gross, partner)));
         plans++;
       } else if (OPEN_STATUSES.has(String(d.payment_status))) {
         planId = 'b' + d.id;
@@ -436,7 +454,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
            VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'billingo', ?, ?) ON CONFLICT DO NOTHING`,
           ).bind(planId, due, lid, `${partner} · ${d.invoice_number || ''}`.trim(), gross, gross, ext, t),
         );
-        if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(planId, lid, d, rate, partner)));
+        if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(planId, lid, d, rate, gross, partner)));
         plans++;
       }
     }
@@ -451,7 +469,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         d.id,
         d.invoice_number || null,
         partnerRaw, // a számlázási (cég)név változatlanul; az álnév csak a terv nevében
-        gross,
+        docGross,
         d.currency || 'HUF',
         d.invoice_date || null,
         due,
