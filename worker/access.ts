@@ -21,8 +21,9 @@ export async function setUserAccess(env: Env, userId: number, a: unknown) {
 
 /** kötelező 2FA: a beállítás, különben a régi környezeti kapcsoló (csak adminoknak) */
 export async function twofaMode(env: Env): Promise<TwoFaMode> {
-  const v = await getSetting(env, 'require_2fa').catch(() => null);
-  return v === 'all' ? 'all' : 'admin';
+  // kikapcsolva (Laci kérése, 2026-11-08): senkitől nem kérünk kétlépcsős kódot
+  void env;
+  return 'off';
 }
 
 /**

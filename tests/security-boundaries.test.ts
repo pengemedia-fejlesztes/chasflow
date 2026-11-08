@@ -132,8 +132,8 @@ describe('HTTP router: tényleges tiltás a kezelő előtt', () => {
     const r = await worker.fetch(new Request('https://test.invalid/api/trash'), e);
     expect(r.status).toBe(403);
   });
-  it('a régi off beállítás sem kapcsolja ki az adminok kötelező 2FA-ját', async () => {
-    expect(await twofaMode(env())).toBe('admin');
+  it('a kétlépcsős azonosítás ki van kapcsolva (Laci kérése, 2026-11-08)', async () => {
+    expect(await twofaMode(env())).toBe('off');
   });
 });
 
