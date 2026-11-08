@@ -138,8 +138,8 @@ export function StockView() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, font: `500 13.5px ${FONT}`, color: C.muted }}>
-            <input type="checkbox" checked={onlyTracked} onChange={(e) => setOnlyTracked(e.target.checked)} /> csak készletnyilvántartott (termék, vagy volt
-            mozgása, foglalása)
+            <input type="checkbox" checked={onlyTracked} onChange={(e) => setOnlyTracked(e.target.checked)} /> csak készletnyilvántartott (termék típus, vagy
+            volt készletmozgása)
           </label>
           <span style={{ marginLeft: 'auto', font: `400 13.5px ${FONT}`, color: C.muted }}>{rows.length} tétel</span>
         </div>
