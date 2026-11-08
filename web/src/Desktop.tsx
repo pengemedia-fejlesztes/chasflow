@@ -103,6 +103,8 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
   const newTx = data.bankTx.filter((t) => t.status === 'new').length;
   const openIncome = data.entries.filter((e) => e.kind === 'plan' && !e.done && ix.sectionOf(e.leaf_id) === 'in' && !e.tentative).length;
   // az oldalsáv mindig mutatja a bevételi és a kiadási kategóriákat is (a Bevétel/Kiadás szűrőtől függetlenül)
+  // az Áttekintés „Havi cashflow” sora: a beállított időszakra, minden szekcióval (az oszlopok száma egyezzen a táblázatéval)
+  const netMatrix = useMemo(() => buildMatrix(ix, { ...filters, section: 'all', groupId: null, search: '' }), [ix, filters]);
   const sideMatrix = useMemo(
     () => buildMatrix(ix, { ...filters, from: ix.cur, to: addMonths(ix.cur, 7), section: 'all', groupId: null, search: '', includeOffers: true }),
     [ix, filters],
@@ -360,7 +362,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         {view === 'overview' && (
           <Overview
             matrix={matrix}
-            netAll={sideMatrix.net}
+            netAll={netMatrix.net}
             goBank={() => setView('bank')}
             goAlerts={() => setView('alerts')}
             goGroup={goGroup}
@@ -978,7 +980,7 @@ function Overview({
             <Cell
               key={i}
               h={rowH + 16}
-              bg={cols[i].current ? C.bg2 : 'transparent'}
+              bg={cols[i]?.current ? C.bg2 : 'transparent'}
               fg={!Math.round(v) ? C.muted : v < 0 ? NEG : C.blueDark}
               fw={700}
               size={15}
@@ -1001,7 +1003,7 @@ function Overview({
             <Cell
               key={i}
               h={rowH + 8}
-              bg={cols[i].current ? C.navy2 : 'transparent'}
+              bg={cols[i]?.current ? C.navy2 : 'transparent'}
               fg={v < 0 ? C.negLight : '#fff'}
               fw={700}
               title={matrix.balanceKind[i] === 'proj' ? 'előrejelzett záró egyenleg' : 'tényleges záró egyenleg'}
