@@ -31,12 +31,17 @@ describe('számlatörténet', () => {
     ins.run('t2', 'e2', cur + '-02', -200, 'OMV', null, 'a2');
     db.exec("INSERT INTO billingo_docs (number, plan_id) VALUES ('PENGE-1', 'p1'); INSERT INTO nav_invoices VALUES ('n','NAV-9',NULL,'a2');");
     const env = { DB: d1(db) } as any;
-    // csak banki adat: a mostani, bank által jelentett egyenleg a mai nappal; korábbi banki egyenleg nincs → nyitó: nincs adat
+    // a mostani, bank által jelentett egyenleg a mai nappal; a korábbi hónapok a banki tételekkel visszavezetve
     let s = await ledgerSummary(env);
     let m = Object.fromEntries(s.months.map((x) => [x.ym, x.accounts.m]));
     expect(m[cur].close).toMatchObject({ amount: 1000, source: 'aggreg8' });
-    expect(m[cur].open).toBeNull();
-    expect(m[prev]).toMatchObject({ open: null, close: null, inc: 500 });
+    if (todayHu() >= cur + '-02') {
+      // 1000 − (−200 a hónap 2-án) = 1200 az előző hónap végén
+      expect(m[cur].open).toMatchObject({ amount: 1200, source: 'visszavezetve' });
+      expect(m[prev].close).toMatchObject({ amount: 1200, source: 'visszavezetve' });
+    }
+    // az első banki tétel előtti napra nincs banki előzmény → nem vezethető vissza
+    expect(m[prev]).toMatchObject({ open: null, inc: 500 });
     // kivonat szerinti záró egyenleg az előző hónapra → ez lesz az előző záró és a mostani nyitó
     const u0 = { id: 1, role: 'admin' } as any;
     await handleLedger(

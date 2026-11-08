@@ -22,6 +22,7 @@ const lastDay = (ym: string) => {
   const [y, m] = ym.split('-').map(Number);
   return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 };
+const prevDay = (d: string) => new Date(Date.parse(d + 'T12:00:00Z') - 86400000).toISOString().slice(0, 10);
 const prevYm = (ym: string) => {
   const [y, m] = ym.split('-').map(Number);
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
@@ -124,6 +125,14 @@ export async function ledgerSummary(env: Env): Promise<{ accounts: Acc[]; months
   for (const r of rows) flow.set(r.account_id + '|' + r.ym, { inc: Number(r.inc) || 0, out: Number(r.outv) || 0, n: Number(r.n) || 0 });
   const cashOpening = Number((await getSetting(env, 'cash_opening')) || 0);
   const months: LedgerMonth[] = yms.map((ym) => ({ ym, accounts: {} }));
+  // napi banki tételek számlánként: a visszavezetéshez (egy későbbi banki egyenlegből a közbeeső banki tételek levonásával)
+  const txs = (
+    await env.DB.prepare("SELECT account_id, date, amount FROM bank_tx WHERE account_id <> 'cash' ORDER BY date").all<{
+      account_id: string;
+      date: string;
+      amount: number;
+    }>()
+  ).results;
   for (const a of accounts) {
     const mine = bals.filter((b) => b.account_id === a.id);
     // a hónap záró egyenlege: kivonat (a hónapra), különben a hónapon belüli utolsó banki egyenleg
@@ -132,6 +141,17 @@ export async function ledgerSummary(env: Env): Promise<{ accounts: Acc[]; months
       if (st) return { amount: st.balance, date: st.date, source: 'kivonat' };
       const last = mine.filter((b) => b.date.slice(0, 7) === ym).pop();
       return last ? { amount: last.balance, date: last.date, source: last.source } : null;
+    };
+    const myTx = txs.filter((t) => t.account_id === a.id).map((t) => ({ date: t.date, amount: Number(t.amount) || 0 }));
+    const firstTx = myTx[0]?.date || null;
+    /** a nap végi egyenleg visszavezetve: a legközelebbi későbbi banki egyenlegből levonva a közbeeső banki tételek
+     *  (csak ha arra a napra már van banki tétel-előzmény, különben nem tudható) */
+    const derive = (day: string): BankBal | null => {
+      if (!firstTx || day < prevDay(firstTx)) return null;
+      const anchor = mine.find((b) => b.date >= day);
+      if (!anchor) return null;
+      const between = myTx.filter((t) => t.date > day && t.date <= anchor.date).reduce((x, t) => x + t.amount, 0);
+      return { amount: Math.round(anchor.balance - between), date: day, source: 'visszavezetve' };
     };
     let cashRun = cashOpening;
     for (const [i, ym] of yms.entries()) {
@@ -150,7 +170,20 @@ export async function ledgerSummary(env: Env): Promise<{ accounts: Acc[]; months
         : before
           ? { amount: before.balance, date: before.date, source: before.source }
           : null;
-      months[i].accounts[a.id] = { open, close: closeOf(ym), inc: f.inc, out: f.out, n: f.n };
+      // nyitó: az előző havi kivonat, különben visszavezetve az előző hónap utolsó napjára, végül az utolsó korábbi banki egyenleg
+      const stClose = mine.filter((b) => b.source === 'kivonat' && b.date.slice(0, 7) === ym).pop();
+      const close: BankBal | null = stClose
+        ? { amount: stClose.balance, date: stClose.date, source: 'kivonat' }
+        : ym === cur
+          ? closeOf(ym)
+          : derive(lastDay(ym)) || closeOf(ym);
+      months[i].accounts[a.id] = {
+        open: open?.source === 'kivonat' ? open : derive(prevDay(ym + '-01')) || open,
+        close,
+        inc: f.inc,
+        out: f.out,
+        n: f.n,
+      };
     }
   }
   return { accounts, months };

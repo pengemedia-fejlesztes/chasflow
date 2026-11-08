@@ -337,7 +337,7 @@ export function ChartsView({ mobile, onBank }: { mobile?: boolean; onBank?: () =
         <Card
           i={n++}
           title="Bankszámlák egyenlege"
-          sub="Havi záró egyenleg számlánként – csak banki adatból (a bank által jelentett vagy a kivonat szerinti). Ahol nincs banki adat, a vonal megszakad."
+          sub="Havi záró egyenleg számlánként – csak banki adatból: kivonat szerinti, a bank által jelentett, vagy abból a banki tételekkel visszavezetett. Ahol nincs banki adat, a vonal megszakad."
           legend={bank ? <Legend items={bank.series.map((s) => ({ label: s.label, color: s.color }))} /> : null}
         >
           {!bank ? (

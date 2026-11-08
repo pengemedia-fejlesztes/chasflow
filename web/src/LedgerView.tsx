@@ -200,7 +200,12 @@ export function LedgerView() {
   );
 }
 
-const SRC: Record<string, string> = { aggreg8: 'bank jelentette', kivonat: 'kivonat szerint', pénztár: 'pénztár' };
+const SRC: Record<string, string> = {
+  aggreg8: 'bank jelentette',
+  kivonat: 'kivonat szerint',
+  pénztár: 'pénztár',
+  visszavezetve: 'bankból visszavezetve (banki egyenleg − későbbi banki tételek)',
+};
 export const balNote = (b: BankBal) => `${SRC[b.source] || b.source}, ${b.date.replace(/-/g, '.')}.`;
 
 function BalLine({ l, b, bold }: { l: string; b: BankBal | null; bold?: boolean }) {
