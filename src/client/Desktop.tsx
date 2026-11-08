@@ -431,7 +431,7 @@ function TaskCard(p: { n: number; title: string; sub: string; tone: 'blue' | 're
   );
 }
 
-function HeroKpi(p: { label: string; value: string; sub: string; color?: string; boxed?: boolean }) {
+function HeroKpi(p: { label: string; value: string; sub: string; color?: string; boxed?: boolean; note?: string; noteTitle?: string }) {
   return (
     <div
       style={{
@@ -456,6 +456,11 @@ function HeroKpi(p: { label: string; value: string; sub: string; color?: string;
         {p.value}
       </span>
       {p.sub && <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{p.sub}</span>}
+      {p.note && (
+        <span title={p.noteTitle} style={{ font: `500 12px ${FONT}`, color: C.neg }}>
+          {p.note}
+        </span>
+      )}
     </div>
   );
 }
@@ -836,6 +841,12 @@ function Overview({
               value={(curOl.net > 0 ? '+' : curOl.net < 0 ? '−' : '') + fmt(Math.abs(curOl.net))}
               color={curOl.net < 0 ? NEG : C.blueDark}
               sub={`hó vége: ${fmt(curOl.bal)}`}
+              note={
+                ol.overdue.n
+                  ? `+ lejárt, még nyitott (korábbi hónapok): ${ol.overdue.amount > 0 ? '+' : ol.overdue.amount < 0 ? '−' : ''}${fmt(Math.abs(ol.overdue.amount))} · ${ol.overdue.n} db`
+                  : undefined
+              }
+              noteTitle="A hó végi egyenleg = a mai egyenleg + a hónap még hátralévő tételei + a korábbi hónapok lejárt, még nyitott tervei."
             />
             <HeroKpi
               label="Mélypont"

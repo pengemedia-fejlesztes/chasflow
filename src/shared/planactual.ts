@@ -100,3 +100,16 @@ export interface MonthStat {
   closed: number;
   computed_at: number;
 }
+
+/**
+ * Lezárt / folyó hónap a Terv vs. tény nézetben: a TERV a pillanatképből jön (befagyasztva, hogy az utólagos átütemezés
+ * ne tüntesse el az eltérést), a TÉNY mindig élő – a hónap lezárása után beérkező / jóváhagyott banki tétel is látszik.
+ */
+export function closedMonth(s: MonthStat, live: Pick<PvaMonth, 'actIn' | 'actOut'>, offers = false) {
+  return {
+    planIn: s.plan_in + (offers ? s.offer_in : 0),
+    planOut: s.plan_out + (offers ? s.offer_out : 0),
+    actIn: live.actIn,
+    actOut: live.actOut,
+  };
+}

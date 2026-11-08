@@ -1,6 +1,7 @@
 // Cashflow számítások: havi/éves mátrix, egyenleg (tény + előrejelzés), becslés.
 import { budgetMonth, isBudgetPlan } from './budget';
-import type { DataBundle, Entry, Group, Leaf, Section } from './types';
+import { baseName } from './monthname';
+import type { DataBundle, Entry, Group, Leaf, Rep, Section } from './types';
 
 export const MS = ['Jan.', 'Feb.', 'Márc.', 'Ápr.', 'Máj.', 'Jún.', 'Júl.', 'Aug.', 'Szept.', 'Okt.', 'Nov.', 'Dec.'];
 export const MSL = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
@@ -53,6 +54,7 @@ export interface Index {
   firstActual: string | null;
   lastActual: string | null;
   lastPlanMonth: Record<string, string>; // leaf → utolsó tervezett hónap
+  seriesRep: Record<string, Rep>; // sorozat → ütemezés (havi, éves…)
   sumActualToToday: number;
   opening: number;
   bankBalance: number | null;
@@ -88,7 +90,9 @@ function add(map: LeafMonth, leaf: string, ym: string, v: number) {
   m.set(ym, (m.get(ym) || 0) + v);
 }
 
-export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' | 'accounts' | 'settings' | 'today'>): Index {
+export function buildIndex(
+  d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' | 'accounts' | 'settings' | 'today'> & Partial<Pick<DataBundle, 'series'>>,
+): Index {
   const groupById: Record<string, Group> = {};
   d.groups.forEach((g) => (groupById[g.id] = g));
   const leafById: Record<string, Leaf> = {};
@@ -156,6 +160,7 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
     firstActual,
     lastActual,
     lastPlanMonth,
+    seriesRep: Object.fromEntries((d.series || []).map((s) => [s.id, s.rep])),
     sumActualToToday,
     opening,
     bankBalance,
@@ -195,17 +200,42 @@ export function buildEstimates(ix: Index, horizon: string): LeafMonth {
   }
   // terv-korrekció: ahol a terv nem pontos (a számla / tény 200 Ft-nál jobban eltér tőle), a jövőbeli tervezett hónapokra
   // a becslés a múlt alapján jön – a terv maga nem változik, csak a „várható” érték
+  // A korrekció havi átlag, ezért csak a havonta ismétlődő tervek helyére kerülhet: az éves / negyedéves / egyszeri tétel
+  // (pl. februári éves domain-díj) várható értéke a terv marad.
   for (const [leaf, monthly] of planCorrections(ix)) {
     const months = ix.plan.get(leaf);
     if (!months) continue;
+    const plans = ix.entries.filter((e) => e.kind === 'plan' && !e.tentative && e.leaf_id === leaf);
     for (const ym of monthRange(addMonths(ix.cur, 1), horizon)) {
       const pv = months.get(ym);
       if (pv == null || pv === 0) continue;
-      const d = monthly - pv;
+      const inM = plans.filter((e) => ymOf(e.date) === ym);
+      const mon = inM.filter((e) => isMonthlyPlan(ix, e, plans));
+      if (!mon.length) continue;
+      // vegyes hónapban csak a havi rész helyére jön az átlag
+      const base = mon.length === inM.length ? pv : mon.reduce((a, e) => a + e.amount, 0);
+      const d = monthly - base;
       if (Math.abs(d) >= PLAN_TOL_FT) add(est, leaf, ym, d);
     }
   }
   return est;
+}
+
+/**
+ * Havonta ismétlődő terv-e: havi sorozat tétele; más ütemezésű (éves, negyedéves, egyszeri) sorozaté nem. Sorozat nélkül
+ * (pl. importált terv) akkor havi, ha az alkategóriában ugyanilyen nevű (a hónap nélkül) terv 1–2 hónapon belül is van –
+ * az éves díj így nem számít havinak, a havidíj egy kihagyott hónap mellett is.
+ */
+export function isMonthlyPlan(ix: Index, e: Entry, leafPlans: Entry[] = ix.entries.filter((x) => x.kind === 'plan' && x.leaf_id === e.leaf_id)): boolean {
+  const rep = e.series_id ? ix.seriesRep[e.series_id] : undefined;
+  if (rep) return rep === 'monthly';
+  const name = baseName(e.name).toLowerCase();
+  const ym = ymOf(e.date);
+  return leafPlans.some((x) => {
+    if (x.id === e.id || x.tentative || baseName(x.name).toLowerCase() !== name) return false;
+    const gap = Math.abs(monthDiff(ymOf(x.date), ym));
+    return gap >= 1 && gap <= 2;
+  });
 }
 
 /** A terv akkor pontos, ha a számla (vagy a tény) legfeljebb ennyivel tér el tőle. */
@@ -393,10 +423,52 @@ function leafValue(
   return { v, est: e, offer: o };
 }
 
+// ---------- lejárt tételek ----------
+/** A „lejárt” tétel ablaka: ennyi hónapra visszamenőleg (a folyó hónap elejétől) várjuk még a lejárt, nyitott tervet. */
+export const OVERDUE_MONTHS = 6;
+/** A lejárt-ablak első napja (YYYY-MM-DD). */
+export const overdueFrom = (today: string, months = OVERDUE_MONTHS) => addMonths(ymOf(today), -months) + '-01';
+
+/**
+ * Lejárt tétel – egy definíció a záró egyenleghez, az áttekintő kártyához, a Bevételek / kiadások nézethez és a riasztáshoz:
+ * nyitott, biztos (nem ajánlat) terv, amelynek dátuma a mai nap előtt van, és az ablakon belül esik; a kiállított
+ * (Billingo-)számla terve a korától függetlenül lejárt, amíg nincs kifizetve. A keret-terv (pl. „Előre nem látható költség”,
+ * ehhez kell a `leafLabel`) nem lejárt: a lezárt hónapban kész (a maradék megtakarítás), a folyó hónapban még elkölthető.
+ */
+export function isOverdue(e: Entry, today: string, months = OVERDUE_MONTHS, leafLabel?: string): boolean {
+  if (e.kind !== 'plan' || e.done || e.tentative || !e.amount || e.date >= today) return false;
+  if (leafLabel != null && isBudgetPlan(e, leafLabel)) return false;
+  return e.date >= overdueFrom(today, months) || e.source === 'billingo';
+}
+
+/**
+ * A korábbi hónapok lejárt, még nyitott tételei: összeg (az indexből, keret-logikával, mint a záró egyenlegben) és darabszám.
+ * A záró egyenleg része, a folyó hónap „Havi cashflow”-jáé nem.
+ */
+export function overdueBefore(ix: Index, months = OVERDUE_MONTHS): { amount: number; n: number } {
+  const from = overdueFrom(ix.today, months);
+  const prev = monthRange(ymOf(from), addMonths(ix.cur, -1));
+  let amount = 0;
+  for (const [, m] of ix.openPlan) amount += sumMonths(m, prev);
+  let n = 0;
+  for (const e of ix.entries) {
+    if (!isOverdue(e, ix.today, months, ix.leafById[e.leaf_id]?.label || '') || e.date >= ix.cur + '-01') continue;
+    n++;
+    // az ablaknál régebbi kiállított számla nincs a fenti hónapokban
+    if (e.date < from) amount += e.amount;
+  }
+  return { amount, n };
+}
+
 /** Előrejelzett záró egyenleg hónaponként (cur..to). */
-export function projection(ix: Index, f: Pick<Filters, 'includeOffers' | 'estimate'>, to: string, est: LeafMonth): Map<string, number> {
+export function projection(
+  ix: Index,
+  f: Pick<Filters, 'includeOffers' | 'estimate'>,
+  to: string,
+  est: LeafMonth,
+  overdueMonths = OVERDUE_MONTHS,
+): Map<string, number> {
   const out = new Map<string, number>();
-  const minOverdue = addMonths(ix.cur, -4);
   let bal = ix.anchor;
   // aktuális hónap: minden nyitott terv a hónap végéig (a lejárt, még nyitott tételekkel együtt)
   // a mai napnál későbbi dátumú tények (pl. előre rögzített kézi tétel) a saját hónapjukban számítanak
@@ -405,9 +477,11 @@ export function projection(ix: Index, f: Pick<Filters, 'includeOffers' | 'estima
     if (e.kind === 'actual' && e.date > ix.today) futureActual.set(ymOf(e.date), (futureActual.get(ymOf(e.date)) || 0) + e.amount);
   // a nyitott tervek az indexből (openPlan): keret-tervnél (pl. „Előre nem látható költség”) csak a keretből még hátralévő rész
   // és a besorolt nyitott tételek – a keret és a belőle fogyó tétel / tény nem vonódik le kétszer
-  const overdue = monthRange(minOverdue, ix.cur);
-  for (const [, m] of ix.openPlan) bal += sumMonths(m, overdue);
-  if (f.includeOffers) for (const [, m] of ix.offer) bal += sumMonths(m, overdue);
+  // + a korábbi hónapok lejárt, nyitott tételei (közös lejárt-ablak, isOverdue)
+  bal += overdueBefore(ix, overdueMonths).amount;
+  for (const [, m] of ix.openPlan) bal += m.get(ix.cur) || 0;
+  const window = monthRange(ymOf(overdueFrom(ix.today, overdueMonths)), ix.cur);
+  if (f.includeOffers) for (const [, m] of ix.offer) bal += sumMonths(m, window);
   bal += futureActual.get(ix.cur) || 0;
   out.set(ix.cur, bal);
   for (const ym of monthRange(addMonths(ix.cur, 1), to)) {
@@ -546,7 +620,10 @@ export interface Outlook {
   months: { ym: string; bal: number; net: number; inc: number; exp: number }[];
   next12: { inc: number; exp: number; net: number; endBal: number; minBal: number; minYm: string };
   last12: { inc: number; exp: number; net: number };
+  /** lejárt, még nyitott tervek (isOverdue: közös lejárt-ablak) */
   overdueOpen: Entry[];
+  /** a korábbi hónapok lejárt, nyitott tételei: hó vége = ma + a hónap hátralévő cashflow-ja + ez */
+  overdue: { amount: number; n: number };
 }
 
 /** 12 hónapos előretekintés + az elmúlt 12 hónap tényei. */
@@ -591,7 +668,7 @@ export function outlook(ix: Index, f: Pick<Filters, 'includeOffers' | 'estimate'
       if (v >= 0) li += v;
       else le -= v;
     }
-  const overdueOpen = ix.entries.filter((e) => e.kind === 'plan' && !e.done && !e.tentative && e.date < ix.today).sort((a, b) => a.date.localeCompare(b.date));
+  const overdueOpen = ix.entries.filter((e) => isOverdue(e, ix.today, OVERDUE_MONTHS, ix.leafById[e.leaf_id]?.label || '')).sort((a, b) => a.date.localeCompare(b.date));
   return {
     months,
     next12: {
@@ -604,5 +681,6 @@ export function outlook(ix: Index, f: Pick<Filters, 'includeOffers' | 'estimate'
     },
     last12: { inc: li, exp: le, net: li - le },
     overdueOpen,
+    overdue: overdueBefore(ix),
   };
 }
