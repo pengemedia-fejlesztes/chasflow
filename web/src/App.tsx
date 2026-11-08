@@ -46,11 +46,19 @@ export function App() {
         history.replaceState(null, '', location.pathname);
         return setPhase({ k: 'reset', token: resetToken });
       }
-      const s = await api<{ hasUsers: boolean; setupAvailable: boolean; mailEnabled: boolean; require2fa?: boolean; me: Me | null }>('/api/auth/status');
+      const s = await api<{
+        hasUsers: boolean;
+        setupAvailable: boolean;
+        mailEnabled: boolean;
+        require2fa?: boolean;
+        twofaMode?: 'off' | 'admin' | 'all';
+        me: Me | null;
+      }>('/api/auth/status');
       mailOn = s.mailEnabled;
       if (!s.me) return setPhase({ k: 'login', setup: !s.hasUsers && s.setupAvailable });
       if (s.me.must_change_pw) return setPhase({ k: 'changePw', me: s.me });
-      if (s.require2fa && s.me.role === 'admin' && !s.me.totp_enabled) return setPhase({ k: 'setup2fa', me: s.me });
+      if (!s.me.totp_enabled && (s.twofaMode === 'all' || ((s.twofaMode === 'admin' || (!s.twofaMode && s.require2fa)) && s.me.role === 'admin')))
+        return setPhase({ k: 'setup2fa', me: s.me });
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
     } catch (e: any) {
       setPhase({ k: 'error', msg: e.message });
@@ -496,12 +504,14 @@ function ChangePw({ me, onDone, onLogout }: { me: Me; onDone: () => void; onLogo
 }
 
 function ResetPw({ token, onDone }: { token: string; onDone: () => void }) {
-  const [state, setState] = useState<{ valid: boolean; needTotp?: boolean; email?: string } | null>(null);
+  const [state, setState] = useState<{ valid: boolean; needTotp?: boolean; email?: string; invite?: boolean } | null>(null);
   const [f, setF] = useState({ next: '', next2: '', totp: '' });
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
   useEffect(() => {
-    api<{ valid: boolean; needTotp?: boolean; email?: string }>('/api/auth/reset-info', { body: { token } }).then(setState, () => setState({ valid: false }));
+    api<{ valid: boolean; needTotp?: boolean; email?: string; invite?: boolean }>('/api/auth/reset-info', { body: { token } }).then(setState, () =>
+      setState({ valid: false }),
+    );
   }, [token]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -531,7 +541,14 @@ function ResetPw({ token, onDone }: { token: string; onDone: () => void }) {
       </Shell>
     );
   return (
-    <Shell title="Új jelszó beállítása" sub="Legalább 12 karakter. Használj jelszókezelőt (pl. iCloud Kulcskarika).">
+    <Shell
+      title={state?.invite ? 'Fiók aktiválása' : 'Új jelszó beállítása'}
+      sub={
+        state?.invite
+          ? `Meghívtak a Cashflow tervezőbe${state.email ? ` (${state.email})` : ''}. Állíts be egy jelszót (legalább 12 karakter), utána ezzel lépsz be.`
+          : 'Legalább 12 karakter. Használj jelszókezelőt (pl. iCloud Kulcskarika).'
+      }
+    >
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input
           aria-describedby={err ? 'auth-error' : undefined}

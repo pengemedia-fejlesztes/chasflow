@@ -208,6 +208,10 @@ export interface DataBundle {
   stockLevels?: import('./stock').StockLevel[];
   stockMoves?: import('./stock').StockMove[];
   stockError?: string;
+  /** a bejelentkezett felhasználó hozzáférése; adminnak mindenkié és a 2FA-szabály */
+  myAccess?: import('./access').Access;
+  userAccess?: Record<string, import('./access').Access>;
+  twofaMode?: import('./access').TwoFaMode;
 }
 
 export interface LostOffer {

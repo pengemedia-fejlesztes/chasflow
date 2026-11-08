@@ -140,6 +140,12 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     setView('cat');
   };
   const myTasks = useMyTaskCount();
+  const canCat = !data.myAccess || data.myAccess.menus.includes('cat');
+  // nem engedélyezett nézetre (pl. régi könyvjelző) az első engedélyezett menüpontra lépünk
+  useEffect(() => {
+    const ok = !data.myAccess || data.myAccess.menus.includes(view);
+    if (!ok && data.myAccess?.menus.length) setView(data.myAccess.menus.find((m) => m !== 'cat') as View);
+  }, [view, data.myAccess]);
   const nav: [View, string, number][] = [
     ['overview', 'Áttekintés', 0],
     ['tasks', 'Feladatok', myTasks],
@@ -151,7 +157,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
     ['stock', 'Raktárkészlet', 0],
     ['breakeven', 'Fedezeti pont', 0],
     ['settings', 'Beállítások', 0],
-  ];
+  ].filter((n) => !data.myAccess || data.myAccess.menus.includes(n[0] as string)) as [View, string, number][];
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '256px minmax(0,1fr)', minHeight: '100vh', alignItems: 'start' }}>
@@ -256,58 +262,62 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
             </button>
           ))}
         </nav>
-        <div
-          style={{
-            padding: '22px 22px 8px',
-            font: `600 11px ${FONT}`,
-            letterSpacing: '.16em',
-            textTransform: 'uppercase',
-            color: C.muted2,
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 8,
-          }}
-        >
-          <span>Kategóriák</span>
-          <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{monthLong(ix.cur)}</span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
-          <SideSection
-            title="Ajánlatok"
-            total={offerNow}
-            closed={!!closedSec.offers}
-            onToggle={() => toggleSec('offers')}
-            onAll={offerGroup ? () => goGroup(offerGroup.id) : undefined}
-            allActive={view === 'cat' && filters.groupId === offerGroup?.id}
-          >
-            {offerRows.map((r) => (
-              <SideRow key={r.id} label={r.label} value={curOf(ix.offer, r.id)} onClick={() => st.openPartner(r.id)} />
-            ))}
-          </SideSection>
-          <SideSection
-            title="Bevétel"
-            total={inNow}
-            closed={!!closedSec.in}
-            onToggle={() => toggleSec('in')}
-            onAll={incomeGroup ? () => goGroup(incomeGroup.id) : undefined}
-            allActive={view === 'cat' && filters.groupId === incomeGroup?.id}
-          >
-            {incomeRows.map((r) => (
-              <SideRow key={r.id} label={r.label} value={leafNow(r.id)} onClick={() => st.openPartner(r.id)} />
-            ))}
-          </SideSection>
-          <SideSection title="Kiadás" total={outNow} closed={!!closedSec.out} onToggle={() => toggleSec('out')}>
-            {groupRows.map((g) => (
-              <SideRow
-                key={g.id}
-                label={displayGroup(g.label)}
-                value={-sumNow((l) => l.group_id === g.id)}
-                active={view === 'cat' && filters.groupId === g.id}
-                onClick={() => goGroup(g.id)}
-              />
-            ))}
-          </SideSection>
-        </div>
+        {canCat && (
+          <>
+            <div
+              style={{
+                padding: '22px 22px 8px',
+                font: `600 11px ${FONT}`,
+                letterSpacing: '.16em',
+                textTransform: 'uppercase',
+                color: C.muted2,
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+            >
+              <span>Kategóriák</span>
+              <span style={{ letterSpacing: '.04em', textTransform: 'none', textAlign: 'right' }}>{monthLong(ix.cur)}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', padding: '0 10px 20px', gap: 1 }}>
+              <SideSection
+                title="Ajánlatok"
+                total={offerNow}
+                closed={!!closedSec.offers}
+                onToggle={() => toggleSec('offers')}
+                onAll={offerGroup ? () => goGroup(offerGroup.id) : undefined}
+                allActive={view === 'cat' && filters.groupId === offerGroup?.id}
+              >
+                {offerRows.map((r) => (
+                  <SideRow key={r.id} label={r.label} value={curOf(ix.offer, r.id)} onClick={() => st.openPartner(r.id)} />
+                ))}
+              </SideSection>
+              <SideSection
+                title="Bevétel"
+                total={inNow}
+                closed={!!closedSec.in}
+                onToggle={() => toggleSec('in')}
+                onAll={incomeGroup ? () => goGroup(incomeGroup.id) : undefined}
+                allActive={view === 'cat' && filters.groupId === incomeGroup?.id}
+              >
+                {incomeRows.map((r) => (
+                  <SideRow key={r.id} label={r.label} value={leafNow(r.id)} onClick={() => st.openPartner(r.id)} />
+                ))}
+              </SideSection>
+              <SideSection title="Kiadás" total={outNow} closed={!!closedSec.out} onToggle={() => toggleSec('out')}>
+                {groupRows.map((g) => (
+                  <SideRow
+                    key={g.id}
+                    label={displayGroup(g.label)}
+                    value={-sumNow((l) => l.group_id === g.id)}
+                    active={view === 'cat' && filters.groupId === g.id}
+                    onClick={() => goGroup(g.id)}
+                  />
+                ))}
+              </SideSection>
+            </div>
+          </>
+        )}
         <div
           style={{ marginTop: 'auto', padding: '16px 22px', borderTop: '1px solid rgba(255,255,255,.08)', display: 'flex', flexDirection: 'column', gap: 6 }}
         >

@@ -9,6 +9,8 @@ import { handleIngest, handleIngestToken } from './ingest';
 import { handlePartners } from './partners';
 import { handleCatalog } from './catalog';
 import { handleTasks } from './tasks';
+import { handleAccess, loadAccessMap, twofaMode } from './access';
+import { accessOf, allowed, needs2fa } from '../shared/access';
 import { handleStock } from './stock';
 import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
@@ -86,10 +88,13 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
   // adminfiókhoz kötelező a kétlépcsős azonosítás (a beállításához szükséges /api/account végpontok fent már lefutottak)
-  if ((env as any).REQUIRE_ADMIN_2FA === '1' && u.role === 'admin' && !u.totp_enabled)
-    throw new HttpError(403, 'Adminfiókhoz kötelező a kétlépcsős azonosítás (2FA) bekapcsolása.');
+  if (!u.totp_enabled && needs2fa(await twofaMode(env), u.role))
+    throw new HttpError(403, 'A kétlépcsős azonosítás (2FA) bekapcsolása kötelező. Állítsd be a hitelesítő alkalmazással.');
+  // menüpont- és adatkör-jogosultság (admin mindenhez hozzáfér)
+  const access = accessOf(u, await loadAccessMap(env));
+  if (!allowed(path, access)) throw new HttpError(403, 'Ehhez nincs jogosultságod. Kérd az adminisztrátort.');
 
-  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleCatalog, handleTasks, handleStock, handleChangelog]) {
+  for (const h of [handleUsers, handleData, handleIngestToken, handlePartners, handleAccess, handleCatalog, handleTasks, handleStock, handleChangelog]) {
     const r = await h(env, req, path, u);
     if (r) return r;
   }

@@ -5,6 +5,8 @@ import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
 import { loadCatalog, syncCatalog } from './catalog';
 import { loadTasks } from './tasks';
+import { loadAccessMap, twofaMode } from './access';
+import { accessOf } from '../shared/access';
 import { loadStock } from './stock';
 import { sheetIdOf } from '../shared/worktime';
 import type { DataBundle, Entry, EntryBatch, Section, Series } from '../shared/types';
@@ -367,7 +369,22 @@ async function importRows(env: Env, kind: 'actual' | 'plan', rows: ImportRow[], 
 }
 
 export async function handleData(env: Env, req: Request, path: string, u: User): Promise<Response | null> {
-  if (path === '/api/data' && req.method === 'GET') return json(await loadBundle(env, u));
+  if (path === '/api/data' && req.method === 'GET') {
+    // a nem engedélyezett adatkörök és menüpontok adatai ki sem mennek a böngészőbe
+    const access = accessOf(u, await loadAccessMap(env));
+    const b: any = await loadBundle(env, u);
+    if (!access.data.bank) Object.assign(b, { accounts: [], bankTx: [] });
+    if (!access.data.payroll) Object.assign(b, { employees: [], worktime: [] });
+    if (!access.data.invoices) Object.assign(b, { billingo: [], navInvoices: [] });
+    if (!access.menus.includes('tasks')) Object.assign(b, { tasks: [] });
+    if (!access.menus.includes('stock')) Object.assign(b, { warehouses: [], stockLevels: [], stockMoves: [] });
+    b.myAccess = access;
+    if (u.role === 'admin') {
+      b.userAccess = await loadAccessMap(env);
+      b.twofaMode = await twofaMode(env);
+    }
+    return json(b);
+  }
 
   if (path === '/api/entries/batch' && req.method === 'POST') {
     requireRole(u, 'admin', 'member');

@@ -1,3 +1,4 @@
+import { createInvite, setUserAccess, twofaMode } from './access';
 // Hitelesítés: jelszó (PBKDF2), munkamenet süti, opcionális TOTP 2FA, brute-force védelem.
 import type { Me, Role } from '../shared/types';
 import { changedMail, mailEnabled, resetMail, sendMail } from './mail';
@@ -164,7 +165,8 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
       hasUsers: (c?.n || 0) > 0,
       setupAvailable: !c?.n && !!env.SETUP_TOKEN,
       mailEnabled: mailEnabled(env),
-      require2fa: (env as any).REQUIRE_ADMIN_2FA === '1',
+      require2fa: (await twofaMode(env)) !== 'off',
+      twofaMode: await twofaMode(env),
       me: u ? publicUser(u) : null,
     });
   }
@@ -292,7 +294,7 @@ export async function handleAuth(env: Env, req: Request, path: string): Promise<
     const body = await readJson(req);
     const r = await validResetToken(env, String(body.token || ''));
     if (!r) return json({ valid: false });
-    return json({ valid: true, needTotp: !!r.user.totp_enabled, email: r.user.email });
+    return json({ valid: true, needTotp: !!r.user.totp_enabled, email: r.user.email, invite: !(r.user as any).last_login });
   }
 
   if (path === '/api/auth/reset' && req.method === 'POST') {
@@ -407,6 +409,13 @@ export async function handleUsers(env: Env, req: Request, path: string, u: User)
       throw new HttpError(409, 'Ezzel az e-mail címmel már van felhasználó.');
     }
     await audit(env, u.id, 'user_created', { email, role });
+    if (body.invite) {
+      // meghívás: jelszó nélkül, egyszer használható linkkel; a hozzáférés a megadott menüpontokra / adatkörökre
+      const nu = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: number }>();
+      if (body.access && role !== 'admin') await setUserAccess(env, nu!.id, body.access);
+      await env.DB.prepare('UPDATE users SET must_change_pw = 0 WHERE id = ?').bind(nu!.id).run();
+      return json({ ok: true, id: nu!.id, inviteToken: await createInvite(env, nu!.id) });
+    }
     return json({ ok: true, tempPassword: temp });
   }
   const m = path.match(/^\/api\/users\/(\d+)(\/reset)?$/);

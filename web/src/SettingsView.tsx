@@ -1,5 +1,5 @@
 // Beállítások: saját fiók (jelszó, 2FA), felhasználók, integrációk (Billingo, bankok), adatok (import, nyitó egyenleg), kategóriák.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { displayGroup, groupPath } from '../../shared/categories';
 import { parseBankRows } from '../../shared/bankfile';
 import { addMonths, fmt } from '../../shared/model';
@@ -17,6 +17,7 @@ import { guessBank, maskAccount, parseAggreg8Xml, type Aggreg8Account } from './
 import { SYNC_HOURS } from '../../shared/aggreg8';
 import { payDefaults } from './logic';
 import { useStore } from './store';
+import { DATA_SCOPES, FULL_ACCESS, INVITE_ACCESS, MENUS, type Access } from '../../shared/access';
 import { C, FONT, FONT_H, Field, LeafSelect, Pill, Seg, card, eyebrow, inputStyle, relTime, SyncPill, dateTime, stamp, R } from './ui';
 
 type Tab = 'stats' | 'account' | 'users' | 'integrations' | 'data' | 'partners' | 'categories' | 'rules' | 'trash' | 'log';
@@ -214,7 +215,11 @@ function Users() {
   const { data, showToast } = useStore();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [nu, setNu] = useState({ email: '', name: '', role: 'member' });
+  const [nuAccess, setNuAccess] = useState<Access>(INVITE_ACCESS);
   const [temp, setTemp] = useState<{ email: string; pw: string } | null>(null);
+  const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
+  const [accessFor, setAccessFor] = useState<number | null>(null);
+  const linkOf = (token: string) => `${location.origin}${location.pathname}?reset=${encodeURIComponent(token)}`;
   const load = () => api<UserRow[]>('/api/users').then(setUsers, (e) => showToast({ msg: e.message, error: true }));
   useEffect(() => {
     load();
@@ -230,9 +235,10 @@ function Users() {
   };
   return (
     <>
+      <TwoFaPolicy />
       <Section
-        title="Új felhasználó"
-        sub="Ideiglenes jelszót kap, amit első belépéskor meg kell változtatnia. Az adatokhoz csak a meghívott felhasználók férnek hozzá."
+        title="Új felhasználó meghívása"
+        sub="A meghívott egy egyszer használható, 7 napig érvényes linket kap tőled: azon maga állítja be a jelszavát (más nem látja). Belépni e-mail címmel és jelszóval lehet; ha a kétlépcsős azonosítás kötelező, első belépéskor be kell állítania."
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 10 }}>
           <input placeholder="E-mail" type="email" value={nu.email} onChange={(e) => setNu({ ...nu, email: e.target.value })} style={inputStyle} />
@@ -245,16 +251,19 @@ function Users() {
           <Pill
             kind="dark"
             onClick={async () => {
-              const r = await act(() => api('/api/users', { body: nu }));
-              if (r?.tempPassword) {
-                setTemp({ email: nu.email, pw: r.tempPassword });
+              const r = await act(() => api('/api/users', { body: { ...nu, invite: true, access: nuAccess } }));
+              if (r?.inviteToken) {
+                setInvite({ email: nu.email, link: linkOf(r.inviteToken) });
                 setNu({ email: '', name: '', role: 'member' });
+                setNuAccess(INVITE_ACCESS);
               }
             }}
           >
-            Hozzáadás
+            Meghívás
           </Pill>
         </div>
+        {nu.role !== 'admin' && <AccessEditor value={nuAccess} onChange={setNuAccess} />}
+        {invite && <InviteBox email={invite.email} link={invite.link} />}
         {temp && (
           <div style={{ background: C.bg2, borderRadius: R.lg, padding: 14, font: `500 14px/1.5 ${FONT}`, color: C.navy }}>
             Ideiglenes jelszó ({temp.email}): <b style={{ fontFamily: 'ui-monospace,monospace', userSelect: 'all' }}>{temp.pw}</b>
@@ -305,6 +314,22 @@ function Users() {
             </select>
             {u.id !== data.me.id && (
               <>
+                {u.role !== 'admin' && (
+                  <Pill small kind={accessFor === u.id ? 'primary' : 'light'} onClick={() => setAccessFor(accessFor === u.id ? null : u.id)}>
+                    Hozzáférés
+                  </Pill>
+                )}
+                {!u.last_login && (
+                  <Pill
+                    small
+                    onClick={async () => {
+                      const r = await act(() => api(`/api/users/${u.id}/invite`, { body: {} }));
+                      if (r?.inviteToken) setInvite({ email: u.email, link: linkOf(r.inviteToken) });
+                    }}
+                  >
+                    Új meghívó link
+                  </Pill>
+                )}
                 <Pill
                   small
                   onClick={async () => {
@@ -322,6 +347,11 @@ function Users() {
                   Törlés
                 </Pill>
               </>
+            )}
+            {accessFor === u.id && (
+              <div style={{ flexBasis: '100%' }}>
+                <UserAccess id={u.id} name={u.name} onDone={() => setAccessFor(null)} />
+              </div>
             )}
           </div>
         ))}
@@ -1246,6 +1276,144 @@ function PayDefaultsSection() {
             </Pill>
           </div>
         )}
+      </div>
+    </Section>
+  );
+}
+
+/** menüpontok és adatkörök kijelölése (meghíváskor és felhasználónként) */
+function AccessEditor({ value, onChange }: { value: Access; onChange: (a: Access) => void }) {
+  const box: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, font: `400 14px ${FONT}`, color: C.ink, cursor: 'pointer' };
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, background: C.bg, borderRadius: R.lg, padding: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted }}>Látható menüpontok</span>
+        {MENUS.map(([k, l]) => (
+          <label key={k} style={box}>
+            <input
+              type="checkbox"
+              checked={value.menus.includes(k)}
+              onChange={(e) => onChange({ ...value, menus: e.target.checked ? [...value.menus, k] : value.menus.filter((m) => m !== k) })}
+            />
+            {l}
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted }}>Érzékeny adatok</span>
+        {DATA_SCOPES.map(([k, l, sub]) => (
+          <label key={k} style={{ ...box, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={value.data[k]}
+              onChange={(e) => onChange({ ...value, data: { ...value.data, [k]: e.target.checked } })}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              {l}
+              <span style={{ display: 'block', font: `400 12.5px ${FONT}`, color: C.muted }}>{sub}</span>
+            </span>
+          </label>
+        ))}
+        <span style={{ font: `400 12.5px/1.5 ${FONT}`, color: C.muted, marginTop: 6 }}>
+          A ki nem jelölt adatok el sem jutnak a böngészőjébe, és a hozzájuk tartozó műveleteket a szerver is tiltja. A szerepkör (szerkesztő / csak olvasó)
+          ezen felül érvényes.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function UserAccess({ id, name, onDone }: { id: number; name: string; onDone: () => void }) {
+  const { data, run } = useStore();
+  const [v, setV] = useState<Access>(data.userAccess?.[String(id)] || FULL_ACCESS);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
+      <AccessEditor value={v} onChange={setV} />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Pill
+          kind="primary"
+          small
+          onClick={async () => (await run(() => api(`/api/users/${id}/access`, { method: 'PUT', body: v }), `${name}: hozzáférés mentve`)) && onDone()}
+        >
+          Mentés
+        </Pill>
+        <Pill small onClick={onDone}>
+          Mégse
+        </Pill>
+      </div>
+    </div>
+  );
+}
+
+function InviteBox({ email, link }: { email: string; link: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div
+      style={{
+        background: C.bg2,
+        borderRadius: R.lg,
+        padding: 14,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        font: `500 14px/1.5 ${FONT}`,
+        color: C.navy,
+      }}
+    >
+      <span>Meghívó link ({email}) – 7 napig érvényes, egyszer használható:</span>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <code
+          style={{
+            flex: '1 1 320px',
+            font: `500 12.5px ui-monospace,monospace`,
+            wordBreak: 'break-all',
+            background: '#fff',
+            padding: '8px 10px',
+            borderRadius: 6,
+            userSelect: 'all',
+          }}
+        >
+          {link}
+        </code>
+        <Pill
+          small
+          kind="primary"
+          onClick={() => {
+            navigator.clipboard?.writeText(link).then(() => setCopied(true));
+          }}
+        >
+          {copied ? 'Másolva ✓' : 'Link másolása'}
+        </Pill>
+      </div>
+      <span style={{ color: C.muted, fontSize: 12.5 }}>
+        Küldd el neki e-mailben vagy üzenetben. A linken beállítja a jelszavát, utána e-mail címmel és jelszóval lép be.
+      </span>
+    </div>
+  );
+}
+
+/** admin: kinek kötelező a kétlépcsős azonosítás */
+function TwoFaPolicy() {
+  const { data, run } = useStore();
+  const mode = data.twofaMode || 'off';
+  return (
+    <Section
+      title="Kétlépcsős azonosítás"
+      sub="Belépéskor a jelszó mellett a hitelesítő alkalmazás (Google Authenticator, Microsoft Authenticator, 1Password, iCloud Jelszavak) 6 jegyű kódja is kell. Ha kötelező, akinek még nincs beállítva, belépés után előbb beállítja, csak utána használhatja a programot."
+    >
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ font: `500 14px ${FONT}`, color: C.ink }}>Kötelező:</span>
+        <select
+          value={mode}
+          onChange={(e) => run(() => api('/api/security', { method: 'PUT', body: { require_2fa: e.target.value } }), 'Kétlépcsős azonosítás beállítva')}
+          style={{ ...inputStyle, height: 38, width: 240 }}
+        >
+          <option value="off">Senkinek (önkéntes)</option>
+          <option value="admin">Adminisztrátoroknak</option>
+          <option value="all">Mindenkinek</option>
+        </select>
+        {!data.me.totp_enabled && <span style={{ font: `500 13px ${FONT}`, color: C.neg }}>Előbb a saját fiókodnál kapcsold be (Fiók fül).</span>}
       </div>
     </Section>
   );
