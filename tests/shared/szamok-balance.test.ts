@@ -233,10 +233,27 @@ describe('előre kifizetett (kész) jövőbeli terv nem számít kétszer', () =
 describe('kiállított számla a tervhez: az előrejelzés a számla összegével számol', () => {
   // a terv 1 500 000, de csak 1 000 000-ről állítottak ki számlát (bill_amount): a várható bevétel a számla, a terv nem változik
   const entries = [
-    E({ id: 'p_szamlas', date: '2026-11-25', name: 'Marketing tanácsadás – 2026. november', amount: 1_500_000, bill_amount: 1_000_000, plan_amount: 1_500_000, source: 'billingo', ext_ref: 'billingo:1' }),
+    E({
+      id: 'p_szamlas',
+      date: '2026-11-25',
+      name: 'Marketing tanácsadás – 2026. november',
+      amount: 1_500_000,
+      bill_amount: 1_000_000,
+      plan_amount: 1_500_000,
+      source: 'billingo',
+      ext_ref: 'billingo:1',
+    }),
     E({ id: 'p_dec', date: '2026-12-15', leaf_id: 'ugyfel2', name: 'Havi díj – 2026. december', amount: 300_000 }),
     // decemberben a számla több lett, mint a terv
-    E({ id: 'p_tobb', date: '2026-12-20', name: 'Fejlesztés – 2026. december', amount: 200_000, bill_amount: 254_000, source: 'billingo', ext_ref: 'billingo:2' }),
+    E({
+      id: 'p_tobb',
+      date: '2026-12-20',
+      name: 'Fejlesztés – 2026. december',
+      amount: 200_000,
+      bill_amount: 254_000,
+      source: 'billingo',
+      ext_ref: 'billingo:2',
+    }),
     // lezárt, kiszámlázott terv: a terv vs. tény összevetés továbbra is a terv összegével
     E({ id: 'a_okt', kind: 'actual', date: '2026-10-08', amount: 380_000, link_id: 'p_okt' }),
     E({ id: 'p_okt', date: '2026-10-05', amount: 400_000, bill_amount: 380_000, done: 1, link_id: 'a_okt', source: 'billingo', ext_ref: 'billingo:3' }),
@@ -270,6 +287,21 @@ describe('kiállított számla a tervhez: az előrejelzés a számla összegéve
     expect(aging.buckets.find((b) => b.key === 'notdue')!.items.find((x) => x.id === 'p_szamlas')!.amount).toBe(1_000_000);
     const st = partnerStats(entries, leaves, groups, [], ix.today).find((p) => p.leaves.some((l) => l.id === 'ugyfel'))!;
     expect(st.sides.in!.openPlan).toBe(1_000_000 + 254_000);
+  });
+});
+
+describe('az ablaknál régebbi, még nyitott Billingo-számla: a még várható részével számít', () => {
+  // ma 2026-11-07, az ablak 2026-05-01-jén kezdődik; a márciusi terv 500 000, a számla 400 000, ebből 150 000 már befolyt
+  const entries = [
+    E({ id: 'r_bil', date: '2026-03-10', amount: 500_000, bill_amount: 400_000, source: 'billingo', ext_ref: 'billingo:9' }),
+    E({ id: 'r_bil_a', kind: 'actual', date: '2026-03-20', amount: 150_000, link_id: 'r_bil' }),
+  ];
+  const ix = ixOf(entries, { accounts: [bank(1_000_000)] });
+
+  it('a lejárt összeg, a záró egyenleg és az áttekintés is 250 000-et vár, nem a terv teljes összegét', () => {
+    expect(isOverdue(entries[0], ix.today)).toBe(true);
+    expect(outlook(ix, noExtras).overdue).toEqual({ amount: 250_000, n: 1 });
+    expect(projection(ix, noExtras, '2026-11', new Map()).get('2026-11')).toBe(1_000_000 + 250_000);
   });
 });
 

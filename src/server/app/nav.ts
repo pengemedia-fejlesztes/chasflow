@@ -530,7 +530,7 @@ async function existingMonthlyPlan(env: Env, r: NavRow, leaf: string, date: stri
     env.DB.prepare("SELECT * FROM entries WHERE kind = 'plan' AND done = 0 AND date >= ?").bind(from),
     env.DB.prepare('SELECT id, rep FROM series'),
     env.DB.prepare(
-      "SELECT n.partner_tax, n.partner_name, n.plan_id, e.series_id FROM nav_invoices n LEFT JOIN entries e ON e.id = n.plan_id WHERE n.plan_id IS NOT NULL AND n.id <> ?",
+      'SELECT n.partner_tax, n.partner_name, n.plan_id, e.series_id FROM nav_invoices n LEFT JOIN entries e ON e.id = n.plan_id WHERE n.plan_id IS NOT NULL AND n.id <> ?',
     ).bind(r.id),
     env.DB.prepare('SELECT id, label FROM leaves'),
   ]);

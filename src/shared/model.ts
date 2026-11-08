@@ -451,11 +451,12 @@ export function overdueBefore(ix: Index, months = OVERDUE_MONTHS): { amount: num
   let amount = 0;
   for (const [, m] of ix.openPlan) amount += sumMonths(m, prev);
   let n = 0;
+  let paid: Map<string, number> | undefined;
   for (const e of ix.entries) {
     if (!isOverdue(e, ix.today, months, ix.leafById[e.leaf_id]?.label || '') || e.date >= ix.cur + '-01') continue;
     n++;
-    // az ablaknál régebbi kiállított számla nincs a fenti hónapokban
-    if (e.date < from) amount += e.amount;
+    // az ablaknál régebbi kiállított számla nincs a fenti hónapokban: a még várható része (számla összege − részfizetés), mint az openPlan-ben
+    if (e.date < from) amount += openAmount(e, (paid ??= partialPaid(ix.entries)));
   }
   return { amount, n };
 }
@@ -473,8 +474,7 @@ export function projection(
   // aktuális hónap: minden nyitott terv a hónap végéig (a lejárt, még nyitott tételekkel együtt)
   // a mai napnál későbbi dátumú tények (pl. előre rögzített kézi tétel) a saját hónapjukban számítanak
   const futureActual = new Map<string, number>();
-  for (const e of ix.entries)
-    if (e.kind === 'actual' && e.date > ix.today) futureActual.set(ymOf(e.date), (futureActual.get(ymOf(e.date)) || 0) + e.amount);
+  for (const e of ix.entries) if (e.kind === 'actual' && e.date > ix.today) futureActual.set(ymOf(e.date), (futureActual.get(ymOf(e.date)) || 0) + e.amount);
   // a nyitott tervek az indexből (openPlan): keret-tervnél (pl. „Előre nem látható költség”) csak a keretből még hátralévő rész
   // és a besorolt nyitott tételek – a keret és a belőle fogyó tétel / tény nem vonódik le kétszer
   // + a korábbi hónapok lejárt, nyitott tételei (közös lejárt-ablak, isOverdue)
@@ -668,7 +668,9 @@ export function outlook(ix: Index, f: Pick<Filters, 'includeOffers' | 'estimate'
       if (v >= 0) li += v;
       else le -= v;
     }
-  const overdueOpen = ix.entries.filter((e) => isOverdue(e, ix.today, OVERDUE_MONTHS, ix.leafById[e.leaf_id]?.label || '')).sort((a, b) => a.date.localeCompare(b.date));
+  const overdueOpen = ix.entries
+    .filter((e) => isOverdue(e, ix.today, OVERDUE_MONTHS, ix.leafById[e.leaf_id]?.label || ''))
+    .sort((a, b) => a.date.localeCompare(b.date));
   return {
     months,
     next12: {
