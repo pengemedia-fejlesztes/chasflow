@@ -1,16 +1,16 @@
 import { parseWholeForint } from '../../shared/amount';
 // Mobil nézet (iPhone): egy hónap, egy kéz – áttekintés, kategória, tervezett bevétel, bank, beállítások.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup, groupPath } from '../../shared/categories';
 import { actualBalanceAt, addMonths, buildEstimates, fmt, fmtK, fmtM, monthLabel, monthLong, monthRange, projection, ymOf, MSL } from '../../shared/model';
 import type { Entry, Rep, Section } from '../../shared/types';
 import { AlertsView, useFlags } from './AlertsView';
 import { useBack } from './back';
-import { StatsHub } from './StatsHub';
+const StatsHub = lazy(() => import('./StatsHub').then((m) => ({ default: m.StatsHub })));
 import { FilterChips, MonthList, rowVisible, useRowFilter } from './MonthList';
 import { avgDelay, billingoDocFor, daysBetween, isDeviation, monthRows, type MonthRow } from '../../shared/monthrows';
 import { api } from './api';
-import { BankView } from './BankView';
+const BankView = lazy(() => import('./BankView').then((m) => ({ default: m.BankView })));
 import { FilterBar } from './Filters';
 import { REP, repStep, ruleDateFor, ruleOf, deleteEntries, genSeries, markDone, shiftEntries } from './logic';
 import { addDays, addMonthsDate, dayDiff, mondayAfter, mondayOnOrAfter, payRuleLabel } from '../../shared/workdays';
@@ -20,7 +20,7 @@ import { DueList, PlanQuick, TodoCard, useTodos } from './MobileFlows';
 import { MONTHLY_RX, withMonth } from '../../shared/monthname';
 import { MonthSchedule } from './MonthSchedule';
 import { APP_VERSION } from './version';
-import { SettingsView } from './SettingsView';
+const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
 import { useStore } from './store';
 import { C, DateField, FONT, FONT_H, NetBox, ShowDeletedToggle, ToastView, relTime, useShowDeleted, R } from './ui';
 
@@ -760,7 +760,9 @@ export function Mobile({ onLogout }: { onLogout: () => void }) {
           <>
             <MobileHeader title="Statisztika" sub="Partner" onBack={() => (setPartnerKey(null), setTab('home'))} />
             <div style={{ padding: '12px 16px 24px' }}>
-              <StatsHub key={partnerKey || ''} mobile partnerKey={partnerKey} onPartnerBack={() => (setPartnerKey(null), setTab('home'))} />
+              <Suspense fallback={<div role="status">Kimutatás betöltése…</div>}>
+                <StatsHub key={partnerKey || ''} mobile partnerKey={partnerKey} onPartnerBack={() => (setPartnerKey(null), setTab('home'))} />
+              </Suspense>
             </div>
           </>
         )}

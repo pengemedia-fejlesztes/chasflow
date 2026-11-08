@@ -1,14 +1,27 @@
 // Belépési folyamat (első admin, bejelentkezés, 2FA, kötelező jelszócsere) és a reszponzív elrendezés választása.
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { installBackHandling } from './back';
 import type { DataBundle, Me } from '../../shared/types';
 import { api } from './api';
-import { Desktop, logout } from './Desktop';
-import { Mobile } from './Mobile';
-import { StoreProvider } from './store';
-import { PartnerCardHost } from './PartnerCard';
+import { logout } from './logout';
+import { StoreProvider, useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, inputStyle, R } from './ui';
+
+const loadDesktop = () => import('./Desktop').then((m) => ({ default: m.Desktop }));
+const loadMobile = () => import('./Mobile').then((m) => ({ default: m.Mobile }));
+const Desktop = lazy(loadDesktop);
+const Mobile = lazy(loadMobile);
+const PartnerCardHost = lazy(() => import('./PartnerCard').then((m) => ({ default: m.PartnerCardHost })));
+
+function OpenPartnerCard({ mobile }: { mobile: boolean }) {
+  const { partnerCard } = useStore();
+  return partnerCard ? (
+    <Suspense fallback={<div role="status">Partner betöltése…</div>}>
+      <PartnerCardHost mobile={mobile} />
+    </Suspense>
+  ) : null;
+}
 
 function useIsMobile() {
   const q = '(max-width: 900px)';
@@ -84,6 +97,8 @@ export function App() {
           alert('Az aggreg8-kapcsolat beállítása nem sikerült: ' + e.message);
         }
       }
+      // Authorized shell code and data travel in parallel; anonymous visitors only load the login bundle.
+      void (window.matchMedia('(max-width: 900px)').matches ? loadMobile() : loadDesktop()).catch(() => {});
       setPhase({ k: 'app', data: await api<DataBundle>('/api/data') });
     } catch (e: any) {
       setPhase({ k: 'error', msg: e.message });
@@ -139,12 +154,19 @@ export function App() {
   if (phase.k === 'setup2fa') return <Setup2fa me={phase.me} onDone={boot} onLogout={doLogout} />;
   if (phase.k === 'changePw') return <ChangePw me={phase.me} onDone={boot} onLogout={doLogout} />;
   if (phase.data.myAccess && phase.data.myAccess.menus.length === 0)
-    return <Splash><p>A fiókodhoz még nincs használható hozzáférés beállítva. Kérd az adminisztrátort.</p><button onClick={doLogout} style={btn}>Kilépés</button></Splash>;
+    return (
+      <Splash>
+        <p>A fiókodhoz még nincs használható hozzáférés beállítva. Kérd az adminisztrátort.</p>
+        <button onClick={doLogout} style={btn}>
+          Kilépés
+        </button>
+      </Splash>
+    );
   return (
     <StoreProvider initial={phase.data}>
       <BackHandling />
-      {mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}
-      <PartnerCardHost mobile={mobile} />
+      <Suspense fallback={<Splash>Betöltés…</Splash>}>{mobile ? <Mobile onLogout={doLogout} /> : <Desktop onLogout={doLogout} />}</Suspense>
+      <OpenPartnerCard mobile={mobile} />
     </StoreProvider>
   );
 }

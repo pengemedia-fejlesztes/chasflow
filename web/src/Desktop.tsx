@@ -1,25 +1,25 @@
 // Asztali nézet: oldalsáv + Áttekintés / Kategória / Tervezett bevételek, kiadások / Bank / Beállítások.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { displayGroup } from '../../shared/categories';
 import { addMonths, buildMatrix, fmt, monthLabel, monthLong, outlook, ymOf, type Matrix } from '../../shared/model';
 import { useMergeCounts } from './MergeTabs';
 import { AlertsView, useFlags } from './AlertsView';
-import { api, ApiError } from './api';
-import { BankView } from './BankView';
-import { BreakevenView } from './BreakevenView';
-import { CategoryView } from './CategoryView';
+const BankView = lazy(() => import('./BankView').then((m) => ({ default: m.BankView })));
+const BreakevenView = lazy(() => import('./BreakevenView').then((m) => ({ default: m.BreakevenView })));
+const CategoryView = lazy(() => import('./CategoryView').then((m) => ({ default: m.CategoryView })));
 import type { EditTarget } from './EntryModal';
 import { diffText, planLinks } from './LinkChain';
 import { PartnerModal } from './PartnerModal';
 import { PartnerRegistry } from './PartnerCard';
-import { CatalogView } from './CatalogView';
-import { StockView } from './StockView';
-import { TasksView, useMyTaskCount } from './TasksView';
+const CatalogView = lazy(() => import('./CatalogView').then((m) => ({ default: m.CatalogView })));
+const StockView = lazy(() => import('./StockView').then((m) => ({ default: m.StockView })));
+import { useMyTaskCount } from './useMyTaskCount';
+const TasksView = lazy(() => import('./TasksView').then((m) => ({ default: m.TasksView })));
 import { FilterBar, periodLabel } from './Filters';
 import { PeriodPicker } from './PeriodPicker';
-import { IncomeView } from './IncomeView';
+const IncomeView = lazy(() => import('./IncomeView').then((m) => ({ default: m.IncomeView })));
 import { setCellValue } from './logic';
-import { SettingsView } from './SettingsView';
+const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })));
 import { useStore } from './store';
 import { APP_VERSION, VERSION_LABEL } from './version';
 import { C, FONT, FONT_H, Pill, ToastView, card, eyebrow, relTime, R } from './ui';
@@ -358,29 +358,37 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
         </div>
       </aside>
 
-      <main style={{ position: 'relative', minWidth: 0 }}>
-        {view === 'overview' && (
-          <Overview
-            matrix={matrix}
-            netAll={netMatrix.net}
-            goBank={() => setView('bank')}
-            goAlerts={() => setView('alerts')}
-            goGroup={goGroup}
-            openNew={(leaf) => setModal(leaf ? { leaf } : {})}
-          />
-        )}
-        {view === 'tasks' && <TasksView />}
-        {view === 'alerts' && <AlertsView />}
-        {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
-        {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
-        {view === 'income' && <IncomeView />}
-        {view === 'bank' && <BankView />}
-        {view === 'partners' && <PartnerRegistry page />}
-        {view === 'products' && <CatalogView />}
-        {view === 'stock' && <StockView />}
-        {view === 'breakeven' && <BreakevenView />}
-        {view === 'settings' && <SettingsView onLogout={onLogout} />}
-      </main>
+      <Suspense
+        fallback={
+          <main role="status" style={{ padding: 32 }}>
+            Betöltés…
+          </main>
+        }
+      >
+        <main style={{ position: 'relative', minWidth: 0 }}>
+          {view === 'overview' && (
+            <Overview
+              matrix={matrix}
+              netAll={netMatrix.net}
+              goBank={() => setView('bank')}
+              goAlerts={() => setView('alerts')}
+              goGroup={goGroup}
+              openNew={(leaf) => setModal(leaf ? { leaf } : {})}
+            />
+          )}
+          {view === 'tasks' && <TasksView />}
+          {view === 'alerts' && <AlertsView />}
+          {view === 'cat' && filters.groupId && <CategoryView groupId={filters.groupId} openModal={(leaf, edit) => setModal({ leaf, edit })} />}
+          {view === 'cat' && !filters.groupId && <div style={{ padding: 32 }}>Válassz kategóriát a bal oldalon.</div>}
+          {view === 'income' && <IncomeView />}
+          {view === 'bank' && <BankView />}
+          {view === 'partners' && <PartnerRegistry page />}
+          {view === 'products' && <CatalogView />}
+          {view === 'stock' && <StockView />}
+          {view === 'breakeven' && <BreakevenView />}
+          {view === 'settings' && <SettingsView onLogout={onLogout} />}
+        </main>
+      </Suspense>
       {modal && <PartnerModal leaf={modal.leaf} edit={modal.edit} onClose={() => setModal(null)} />}
       {toast && <ToastView {...toast} />}
     </div>
@@ -1358,14 +1366,4 @@ function SideRow({ label, value, active, onClick }: { label: string; value: numb
       <span style={{ font: `500 12px ${FONT}`, color: C.muted2, fontVariantNumeric: 'tabular-nums' }}>{value ? fmt(value) : '–'}</span>
     </button>
   );
-}
-
-/** Kijelentkezés: csak akkor sikeres, ha a szerver törölte a munkamenetet (401 = már nincs érvényes munkamenet). */
-export async function logout(): Promise<void> {
-  try {
-    await api('/api/auth/logout', { body: {} });
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 401) return;
-    throw e;
-  }
 }

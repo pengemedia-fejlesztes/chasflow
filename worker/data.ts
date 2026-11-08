@@ -1,4 +1,5 @@
 // Adat végpontok: teljes adatcsomag, tétel-módosítások, kategóriák, beállítások, xls import.
+import { bundlePatch, DATA_SECTIONS, parseSections, type DataSection } from '../shared/data-sections';
 import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
@@ -6,7 +7,7 @@ import { partnerIdOf } from '../shared/partners';
 import { loadCatalog, syncCatalog } from './catalog';
 import { loadTasks } from './tasks';
 import { loadAccessMap, twofaMode } from './access';
-import { a8KeepAlive, a8Status } from './aggreg8srv';
+import { a8Status } from './aggreg8srv';
 import { accessOf } from '../shared/access';
 import { visibleBundle } from './visibility';
 import { loadStock } from './stock';
@@ -34,74 +35,111 @@ async function hasPeriod(env: Env) {
   return periodCol;
 }
 
-export async function loadBundle(env: Env, u: User): Promise<DataBundle> {
-  const P = (await hasPeriod(env)) ? 'period, ' : '';
-  const [
-    groups,
-    leaves,
-    series,
-    entries,
-    accounts,
-    bankTx,
-    billingo,
-    settings,
-    deleted,
-    monthStats,
-    partnerNames,
-    lostOffers,
-    navInvoices,
-    partners,
-    employees,
-    worktime,
-  ] = await env.DB.batch([
-    env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label'),
-    env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label'),
-    env.DB.prepare('SELECT * FROM series'),
-    env.DB.prepare(
-      `SELECT id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
-    ),
-    env.DB.prepare(
-      'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
-    ),
-    env.DB.prepare(
-      "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
-    ),
-    env.DB.prepare(
-      "SELECT id, number, partner, partner_tax, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
-    ),
-    env.DB.prepare('SELECT key, value FROM settings'),
-    env.DB.prepare(
-      `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
+export async function loadBundle(env: Env, u: User, sections: DataSection[] = DATA_SECTIONS): Promise<DataBundle> {
+  const wanted = new Set(sections);
+  const P = wanted.has('ledger') && (await hasPeriod(env)) ? 'period, ' : '';
+  const queries: [string, D1PreparedStatement][] = [];
+  if (wanted.has('ledger')) queries.push(['groups', env.DB.prepare('SELECT * FROM groups ORDER BY section, sort, label')]);
+  if (wanted.has('ledger')) queries.push(['leaves', env.DB.prepare('SELECT * FROM leaves ORDER BY sort, label')]);
+  if (wanted.has('ledger')) queries.push(['series', env.DB.prepare('SELECT * FROM series')]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'entries',
+      env.DB.prepare(
+        `SELECT id, kind, date, leaf_id, name, amount, plan_amount, bill_amount, series_id, done, tentative, was_offer, offer_at, accepted_at, ${P}source, ext_ref, link_id, note, updated_at FROM entries ORDER BY date`,
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'accounts',
+      env.DB.prepare(
+        'SELECT id, provider, bank_name, label, iban, currency, balance, balance_at, valid_until, last_sync, last_error, active FROM bank_accounts ORDER BY bank_name',
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'bankTx',
+      env.DB.prepare(
+        "SELECT id, account_id, date, amount, currency, partner, memo, status, leaf_id, plan_id, actual_id FROM bank_tx WHERE status = 'new' OR date >= date('now', '-60 days') ORDER BY date DESC",
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'billingo',
+      env.DB.prepare(
+        "SELECT id, number, partner, partner_tax, gross, currency, invoice_date, due_date, payment_status, paid_date, cancelled, plan_id FROM billingo_docs WHERE invoice_date >= date('now', '-400 days') ORDER BY invoice_date DESC",
+      ),
+    ]);
+  if (wanted.has('ledger')) queries.push(['settings', env.DB.prepare('SELECT key, value FROM settings')]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'deleted',
+      env.DB.prepare(
+        `SELECT d.rowid AS rid, d.id, d.kind, d.date, d.leaf_id, d.name, d.amount, d.series_id, d.done, d.tentative, d.source, d.ext_ref, d.link_id, d.note, d.deleted_at
        FROM deleted_entries d
        WHERE d.kind = 'plan' AND d.date >= date('now', '-62 days') AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.date LIMIT 2000`,
-    ),
-    env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
-    // partnerek banki (számlázási) nevei kategóriánként
-    env.DB.prepare(
-      `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'monthStats',
+      env.DB.prepare('SELECT ym, plan_in, plan_out, offer_in, offer_out, act_in, act_out, closed, computed_at FROM month_stats ORDER BY ym'),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'partnerNames',
+      env.DB.prepare(
+        `SELECT leaf_id, partner, count(*) AS n, max(date) AS last FROM bank_tx
        WHERE leaf_id IS NOT NULL AND partner <> '' AND status = 'approved' GROUP BY leaf_id, partner`,
-    ),
-    // elvesztett (törölt) ajánlatok – a megvalósulási arányhoz
-    env.DB.prepare(
-      `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.series_id, d.deleted_at, d.offer_at FROM deleted_entries d
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'lostOffers',
+      env.DB.prepare(
+        `SELECT d.id, d.name, d.leaf_id, d.amount, d.date, d.series_id, d.deleted_at, d.offer_at FROM deleted_entries d
        WHERE d.rejected = 1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.id = d.id)
          AND d.rowid = (SELECT max(x.rowid) FROM deleted_entries x WHERE x.id = d.id)
        ORDER BY d.deleted_at DESC LIMIT 300`,
-    ),
-    // NAV bejövő számlák (terv nélküliek mind, a többi az elmúlt fél évből)
-    env.DB.prepare(
-      `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
+      ),
+    ]);
+  if (wanted.has('ledger'))
+    queries.push([
+      'navInvoices',
+      env.DB.prepare(
+        `SELECT id, invoice_number, operation, partner_tax, partner_name, issue_date, payment_date, payment_method, gross, leaf_id, plan_id, actual_id, status, created_at
        FROM nav_invoices WHERE status = 'new' OR issue_date >= date('now', '-200 days') ORDER BY issue_date DESC LIMIT 1000`,
-    ),
-    env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners'),
-    env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name'),
-    env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym'),
-  ]);
-  const catalog = await loadCatalog(env);
-  const tasks = await loadTasks(env, u);
-  const stock = await loadStock(env);
+      ),
+    ]);
+  if (wanted.has('ledger')) queries.push(['partners', env.DB.prepare('SELECT key, name, kind, aliases, tax_number, note, updated_at FROM partners')]);
+  if (wanted.has('payroll')) queries.push(['employees', env.DB.prepare('SELECT key, name, cost_leaf_id, sheet_url FROM employees ORDER BY name')]);
+  if (wanted.has('payroll')) queries.push(['worktime', env.DB.prepare('SELECT employee, ym, project, tag, minutes, eur FROM worktime ORDER BY ym')]);
+  const results = queries.length ? await env.DB.batch(queries.map(([, query]) => query)) : [];
+  const rows = Object.fromEntries(queries.map(([key], i) => [key, results[i]]));
+  const empty = { results: [] };
+  const {
+    groups = empty,
+    leaves = empty,
+    series = empty,
+    entries = empty,
+    accounts = empty,
+    bankTx = empty,
+    billingo = empty,
+    settings = empty,
+    deleted = empty,
+    monthStats = empty,
+    partnerNames = empty,
+    lostOffers = empty,
+    navInvoices = empty,
+    partners = empty,
+    employees = empty,
+    worktime = empty,
+  } = rows;
+  const catalog = wanted.has('catalog') ? await loadCatalog(env) : {};
+  const tasks = wanted.has('tasks') ? await loadTasks(env, u) : {};
+  const stock = wanted.has('stock') ? await loadStock(env) : {};
   const st: Record<string, string> = {};
   (settings.results as { key: string; value: string }[]).forEach((r) => (st[r.key] = r.value));
   return {
@@ -374,15 +412,20 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
   if (path === '/api/data' && req.method === 'GET') {
     // a nem engedélyezett adatkörök és menüpontok adatai ki sem mennek a böngészőbe
     const access = accessOf(u, await loadAccessMap(env));
-    // a Cashflow megnyitásakor is megújítjuk az aggreg8-belépést, ha 6 óránál régebbi (háttérben, nem várunk rá)
-    a8KeepAlive(env).catch(() => null);
-    const b = visibleBundle(await loadBundle(env, u), access);
-    if (u.role === 'admin') {
+    const started = performance.now();
+    let sections: DataSection[] | null;
+    try {
+      sections = parseSections(new URL(req.url).searchParams.get('sections'));
+    } catch {
+      throw new HttpError(400, 'Hibás adatkör.');
+    }
+    const b = visibleBundle(await loadBundle(env, u, sections ?? DATA_SECTIONS), access);
+    if (u.role === 'admin' && (!sections || sections.includes('ledger'))) {
       b.userAccess = await loadAccessMap(env);
       b.twofaMode = await twofaMode(env);
       b.aggreg8Server = await a8Status(env).catch(() => null);
     }
-    return json(b);
+    return json(sections ? bundlePatch(b, sections) : b, 200, { 'Server-Timing': `data;dur=${(performance.now() - started).toFixed(1)}` });
   }
 
   if (path === '/api/entries/batch' && req.method === 'POST') {
@@ -547,15 +590,16 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     if (!row || !id) throw new HttpError(400, 'Ehhez a partnerhez nincs megadva elszámoló tábla link.');
     // Privát táblázatokhoz hitelesített Drive-kapcsolat kell; névtelen exportot nem támogatunk.
     if (!env.GOOGLE_DRIVE_ACCESS_TOKEN) throw new HttpError(503, 'A privát Drive-kapcsolat nincs beállítva. Töltsd fel az XLS-fájlt a saját fiókodból.');
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application%2Fvnd.openxmlformats-officedocument.spreadsheetml.sheet`, {
-      headers: { Authorization: `Bearer ${env.GOOGLE_DRIVE_ACCESS_TOKEN}` }, redirect: 'error',
-    });
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application%2Fvnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+      {
+        headers: { Authorization: `Bearer ${env.GOOGLE_DRIVE_ACCESS_TOKEN}` },
+        redirect: 'error',
+      },
+    );
     const type = res.headers.get('content-type') || '';
     if (!res.ok || !type.includes('spreadsheetml'))
-      throw new HttpError(
-        400,
-        `${row.name}: nem érem el a privát táblát. Ellenőrizd a Drive-kapcsolat jogosultságát, vagy töltsd fel az XLS-fájlt.`,
-      );
+      throw new HttpError(400, `${row.name}: nem érem el a privát táblát. Ellenőrizd a Drive-kapcsolat jogosultságát, vagy töltsd fel az XLS-fájlt.`);
     const bytes = new Uint8Array(await res.arrayBuffer());
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
