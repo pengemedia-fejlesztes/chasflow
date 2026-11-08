@@ -2,6 +2,7 @@
 // valamint a készpénz-„bankszámla” (kézi készpénzes tételek). Egyenleg CSAK banki adatból: a bank által szinkronkor jelentett
 // könyvelt egyenleg (dátummal mentve) vagy a bankszámlakivonat szerinti záró egyenleg (kézzel rögzítve). Nem számolunk vissza.
 import { requireRole, type User } from './auth';
+import { filesFor } from './txfiles';
 import { logChange } from './changelog';
 import { Env, HttpError, getSetting, json, now, randomId, readJson, setSetting, todayHu } from './util';
 
@@ -166,7 +167,8 @@ export interface LedgerTx {
   leaf_id: string | null;
   plan_id: string | null;
   actual_id: string | null;
-  invoices: { kind: 'billingo' | 'nav'; number: string }[];
+  invoices: { kind: 'billingo' | 'nav'; number: string; id?: string | number }[];
+  files: import('./txfiles').TxFile[];
 }
 
 /** a hónap tranzakciói (egy vagy minden számlán), a kapcsolt Billingo- és NAV-számlákkal */
@@ -191,10 +193,10 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
   const ph = (n: number) => Array(n).fill('?').join(',');
   const bill = (
     await env.DB.prepare(
-      `SELECT number, plan_id, paid_by_tx FROM billingo_docs WHERE cancelled = 0 AND (paid_by_tx IN (${ph(ids.length)})${plans.length ? ` OR plan_id IN (${ph(plans.length)})` : ''})`,
+      `SELECT id, number, plan_id, paid_by_tx FROM billingo_docs WHERE cancelled = 0 AND (paid_by_tx IN (${ph(ids.length)})${plans.length ? ` OR plan_id IN (${ph(plans.length)})` : ''})`,
     )
       .bind(...ids, ...plans)
-      .all<{ number: string; plan_id: string | null; paid_by_tx: string | null }>()
+      .all<{ id: number; number: string; plan_id: string | null; paid_by_tx: string | null }>()
   ).results;
   const nav =
     plans.length || actuals.length
@@ -206,9 +208,10 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
             .all<{ invoice_number: string; plan_id: string | null; actual_id: string | null }>()
         ).results
       : [];
+  const files = await filesFor(env, ids);
   return tx.map((t) => {
     const inv: LedgerTx['invoices'] = [];
-    for (const b of bill) if (b.number && (b.paid_by_tx === t.id || (t.plan_id && b.plan_id === t.plan_id))) inv.push({ kind: 'billingo', number: b.number });
+    for (const b of bill) if (b.number && (b.paid_by_tx === t.id || (t.plan_id && b.plan_id === t.plan_id))) inv.push({ kind: 'billingo', number: b.number, id: b.id });
     for (const n of nav)
       if (n.invoice_number && ((t.plan_id && n.plan_id === t.plan_id) || (t.actual_id && n.actual_id === t.actual_id)))
         inv.push({ kind: 'nav', number: n.invoice_number });
@@ -217,6 +220,7 @@ export async function ledgerMonth(env: Env, ym: string, account?: string): Promi
       ...t,
       amount: Number(t.amount),
       invoices: inv.filter((x) => (seen.has(x.number) ? false : (seen.add(x.number), true))),
+      files: files.get(t.id) || [],
     };
   });
 }

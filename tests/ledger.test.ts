@@ -50,7 +50,7 @@ describe('számlatörténet', () => {
     expect(m[prev].close).toMatchObject({ amount: 1200, source: 'kivonat' });
     expect(m[cur].open).toMatchObject({ amount: 1200, source: 'kivonat' });
     const tx = await ledgerMonth(env, prev);
-    expect(tx[0].invoices).toEqual([{ kind: 'billingo', number: 'PENGE-1' }]);
+    expect(tx[0].invoices).toEqual([{ kind: 'billingo', number: 'PENGE-1', id: 1 }]);
     expect((await ledgerMonth(env, cur))[0].invoices).toEqual([{ kind: 'nav', number: 'NAV-9' }]);
     // készpénz: nyitó + tételek
     const u = { id: 1, role: 'admin' } as any;

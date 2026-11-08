@@ -5,7 +5,13 @@ import { fmt, monthLong } from '../../shared/model';
 import { api } from './api';
 import { MoneyInput } from './PartnerModal';
 import { useStore } from './store';
-import { C, FONT, FONT_H, Field, Pill, card, inputStyle, R } from './ui';
+import { C, FONT, FONT_H, Field, Modal, Pill, card, inputStyle, R } from './ui';
+import { displayGroup } from '../../shared/categories';
+import { NavInvoiceModal } from './AlertsView';
+import { TxCard } from './TxCard';
+import { useFrequentLeaves } from './BankView';
+import { normalizeText } from '../../shared/categories';
+import type { BankTx } from '../../shared/types';
 
 export interface LedgerAcc {
   id: string;
@@ -36,7 +42,8 @@ interface LedgerTx {
   leaf_id: string | null;
   plan_id: string | null;
   actual_id: string | null;
-  invoices: { kind: 'billingo' | 'nav'; number: string }[];
+  invoices: { kind: 'billingo' | 'nav'; number: string; id?: string | number }[];
+  files: { id: string; name: string; mime: string; size: number; drive_link: string | null; created_at: number }[];
 }
 interface LedgerResp {
   ym: string;
@@ -68,10 +75,11 @@ export function useLedger(ym: string, account: string) {
 }
 
 export function LedgerView() {
-  const { data, ix, canEdit, isAdmin } = useStore();
+  const { data, canEdit, isAdmin } = useStore();
   const [ym, setYm] = useState(data.today.slice(0, 7));
   const [account, setAccount] = useState('');
   const [cashOpen, setCashOpen] = useState(false);
+  const [openTx, setOpenTx] = useState<LedgerTx | null>(null);
   const { r, err } = useLedger(ym, account);
   const month = r?.months.find((m) => m.ym === ym);
   const accs = r?.accounts || [];
@@ -90,7 +98,7 @@ export function LedgerView() {
     return a ? a.bank_name : id;
   };
   const th: CSSProperties = { font: `600 11px ${FONT}`, letterSpacing: '.1em', textTransform: 'uppercase', color: C.muted };
-  const COLS = '92px 110px minmax(160px,1.3fr) minmax(140px,1fr) 130px minmax(120px,0.8fr) minmax(130px,0.9fr)';
+  const COLS = '76px 84px minmax(170px,1.3fr) minmax(120px,1fr) 120px minmax(150px,1fr) minmax(170px,1.1fr) 120px';
   return (
     <div style={{ padding: '20px 28px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -171,9 +179,9 @@ export function LedgerView() {
       </div>
 
       <div style={{ ...card, overflowX: 'auto' }}>
-        <div style={{ minWidth: 980 }}>
+        <div style={{ minWidth: 1180 }}>
           <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 10, padding: '12px 16px', borderBottom: `1px solid ${C.line}` }}>
-            {['Dátum', 'Számla', 'Partner', 'Közlemény', 'Összeg', 'Kategória', 'Kapcsolt számla'].map((h, i) => (
+            {['Dátum', 'Számla', 'Partner', 'Közlemény', 'Összeg', 'Kategória', 'Kapcsolt számla', 'Feltöltött'].map((h, i) => (
               <span key={h} style={{ ...th, textAlign: i === 4 ? 'right' : 'left' }}>
                 {h}
               </span>
@@ -181,45 +189,12 @@ export function LedgerView() {
           </div>
           {r && !r.tx.length && <div style={{ padding: 24, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Ebben a hónapban nincs tétel.</div>}
           {!r && !err && <div style={{ padding: 24, textAlign: 'center', color: C.muted, font: `500 14px ${FONT}` }}>Betöltés…</div>}
-          {r?.tx.map((t) => {
-            const [sl, sc] = STATUS[t.status] || [t.status, C.muted];
-            return (
-              <div
-                key={t.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: COLS,
-                  gap: 10,
-                  padding: '10px 16px',
-                  borderTop: `1px solid ${C.line3}`,
-                  alignItems: 'center',
-                  font: `400 13.5px ${FONT}`,
-                  color: C.ink,
-                }}
-              >
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{t.date.slice(5).replace('-', '.')}.</span>
-                <span style={{ color: C.muted }}>{accName(t.account_id)}</span>
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600, color: C.navy }}>
-                  {t.partner || '–'}
-                </span>
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted }} title={t.memo}>
-                  {t.memo || '–'}
-                </span>
-                <b style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: t.amount < 0 ? C.neg : C.inc }}>{sign(t.amount)}</b>
-                <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {t.leaf_id ? ix.leafById[t.leaf_id]?.label || '–' : '–'}
-                  </span>
-                  <span style={{ font: `500 11.5px ${FONT}`, color: sc }}>{sl}</span>
-                </span>
-                <span style={{ font: `500 12.5px ${FONT}`, color: t.invoices.length ? C.blueDark : C.faint }}>
-                  {t.invoices.length ? t.invoices.map((i) => `${i.kind === 'nav' ? 'NAV' : 'Billingo'}: ${i.number}`).join(', ') : 'nincs számla kapcsolva'}
-                </span>
-              </div>
-            );
-          })}
+          {r?.tx.map((t) => (
+            <LedgerRow key={t.id} t={t} accName={accName} cols={COLS} onOpen={() => setOpenTx(t)} />
+          ))}
         </div>
       </div>
+      {openTx && <TxModal t={r?.tx.find((x) => x.id === openTx.id) || openTx} onClose={() => setOpenTx(null)} />}
       {cashOpen && <CashDialog onClose={() => setCashOpen(false)} opening={r?.cashOpening || 0} />}
     </div>
   );
@@ -386,5 +361,200 @@ function CashDialog({ onClose, opening }: { onClose: () => void; opening: number
         )}
       </form>
     </div>
+  );
+}
+
+/** a hónap egy tétele: partner (adatlap), kategória, kapcsolt számla (megnyitható), feltöltött számla, kattintásra kezelés */
+function LedgerRow({ t, accName, cols, onOpen }: { t: LedgerTx; accName: (id: string) => string; cols: string; onOpen: () => void }) {
+  const { ix, openPartner, canEdit, run } = useStore();
+  const [nav, setNav] = useState<string | null>(null);
+  const [st, sc] = STATUS[t.status] || [t.status, C.muted];
+  const leaf = t.leaf_id ? ix.leafById[t.leaf_id] : null;
+  const grp = leaf ? displayGroup(ix.groupById[leaf.group_id]?.label || '') : '';
+  const openBillingo = async (id: string | number) => {
+    try {
+      const r = await api<{ url: string }>(`/api/billingo/doc/${id}/url`);
+      window.open(r.url, '_blank', 'noopener');
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+  const upload = (f: File | undefined) => {
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) return alert('Legfeljebb 10 MB-os fájl tölthető fel.');
+    const rd = new FileReader();
+    rd.onload = () => {
+      const b64 = String(rd.result).split(',')[1] || '';
+      run(
+        () => api(`/api/bank/tx/${encodeURIComponent(t.id)}/file`, { body: { name: f.name, mime: f.type || 'application/pdf', data: b64 } }),
+        `Számla feltöltve: ${f.name}`,
+      );
+    };
+    rd.readAsDataURL(f);
+  };
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onOpen())}
+      className="hov-row"
+      title="Kattints a tétel kezeléséhez (kategória, párosítás, ütemezés, jóváhagyás)"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: cols,
+        gap: 10,
+        padding: '10px 16px',
+        borderTop: `1px solid ${C.line3}`,
+        alignItems: 'center',
+        font: `400 13.5px ${FONT}`,
+        color: C.ink,
+        cursor: 'pointer',
+      }}
+    >
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{t.date.slice(5).replace('-', '.')}.</span>
+      <span style={{ color: C.muted }}>{accName(t.account_id)}</span>
+      <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {leaf ? (
+          <button
+            type="button"
+            className="partner-link"
+            onClick={(e) => (stop(e), openPartner(leaf.id))}
+            style={{
+              border: 0,
+              background: 'transparent',
+              padding: 0,
+              textAlign: 'left',
+              font: `600 13.5px ${FONT}`,
+              color: C.blueDark,
+              cursor: 'pointer',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {leaf.label}
+          </button>
+        ) : (
+          <b style={{ color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.partner || '–'}</b>
+        )}
+        {leaf && t.partner && (
+          <span style={{ font: `400 11.5px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.partner}</span>
+        )}
+      </span>
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.muted }} title={t.memo}>
+        {t.memo || '–'}
+      </span>
+      <b style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: t.amount < 0 ? C.neg : C.inc }}>{sign(t.amount)}</b>
+      <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leaf ? `${grp} › ${leaf.label}` : 'nincs kategória'}</span>
+        <span style={{ font: `500 11.5px ${FONT}`, color: sc }}>{st}</span>
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {t.invoices.length ? (
+          t.invoices.map((iv) => (
+            <button
+              key={iv.number}
+              type="button"
+              onClick={(e) => (stop(e), iv.kind === 'nav' ? setNav(iv.number) : iv.id !== undefined && openBillingo(iv.id))}
+              style={{ border: 0, background: 'transparent', padding: 0, textAlign: 'left', font: `600 12.5px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}
+              title={iv.kind === 'nav' ? 'Bejövő számla (NAV) megnyitása' : 'Kimenő számla (Billingo) megnyitása'}
+            >
+              {iv.kind === 'nav' ? 'NAV' : 'Billingo'}: {iv.number} ↗
+            </button>
+          ))
+        ) : (
+          <span style={{ font: `500 12.5px ${FONT}`, color: C.faint }}>nincs számla kapcsolva</span>
+        )}
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }} onClick={stop}>
+        {t.files.map((f) => (
+          <a
+            key={f.id}
+            href={`api/bank/file/${encodeURIComponent(f.id)}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ font: `600 12px ${FONT}`, color: C.inc }}
+            title={f.name}
+          >
+            ✓ számla{f.drive_link ? ' · Drive' : ''}
+          </a>
+        ))}
+        {canEdit && (
+          <label style={{ font: `600 12px ${FONT}`, color: C.blueDark, cursor: 'pointer' }}>
+            + feltöltés
+            <input type="file" accept="application/pdf,image/*,.xml" hidden onChange={(e) => upload(e.target.files?.[0])} />
+          </label>
+        )}
+      </span>
+      {nav && (
+        <span onClick={stop}>
+          <NavInvoiceModal number={nav} onClose={() => setNav(null)} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** a tétel kezelése felugró ablakban: várakozónál a teljes kezelő (kategória, párosítás, ütemezés, jóváhagyás), lezártnál visszavonás */
+function TxModal({ t, onClose }: { t: LedgerTx; onClose: () => void }) {
+  const { ix, run, canEdit } = useStore();
+  const [freqIn, freqOut] = useFrequentLeaves();
+  const unforeseen = ix.leaves.find((l) => !l.archived && ix.sectionOf(l.id) === 'out' && normalizeText(l.label).startsWith('elore nem lathato'))?.id ?? null;
+  const bt: BankTx = {
+    id: t.id,
+    account_id: t.account_id,
+    date: t.date,
+    amount: t.amount,
+    currency: 'HUF',
+    partner: t.partner,
+    memo: t.memo,
+    status: t.status as BankTx['status'],
+    leaf_id: t.leaf_id,
+    plan_id: t.plan_id,
+    actual_id: t.actual_id,
+  };
+  const leaf = t.leaf_id ? ix.leafById[t.leaf_id] : null;
+  return (
+    <Modal onClose={onClose} width={980} title={`${t.partner || 'Tétel'} · ${sign(t.amount)} Ft · ${t.date.replace(/-/g, '.')}.`} label="Banki tétel kezelése">
+      <div style={{ padding: '4px 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {t.status === 'new' ? (
+          <TxCard t={bt} frequent={t.amount >= 0 ? freqIn : freqOut} unforeseen={unforeseen} open />
+        ) : (
+          <>
+            <span style={{ font: `400 14px/1.6 ${FONT}`, color: C.ink }}>
+              Állapot: <b>{t.status === 'approved' ? 'jóváhagyva' : 'kihagyva'}</b>
+              {leaf ? (
+                <>
+                  {' '}
+                  · kategória: <b>{leaf.label}</b>
+                </>
+              ) : null}
+              {t.memo ? <> · {t.memo}</> : null}
+            </span>
+            {canEdit && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Pill
+                  kind="primary"
+                  onClick={() =>
+                    run(
+                      () =>
+                        t.status === 'approved'
+                          ? api('/api/bank/unapprove', { body: { ids: [t.id] } })
+                          : api('/api/bank/ignore', { body: { ids: [t.id], undo: true } }),
+                      t.status === 'approved' ? 'Jóváhagyás visszavonva – most módosíthatod' : 'Visszavéve a várakozó tételek közé',
+                    )
+                  }
+                >
+                  {t.status === 'approved' ? 'Jóváhagyás visszavonása és módosítás' : 'Visszavétel a jóváhagyandók közé'}
+                </Pill>
+                <Pill onClick={onClose}>Bezár</Pill>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
