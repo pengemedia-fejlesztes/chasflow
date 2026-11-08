@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestApp, type TestApp } from '../helpers/app';
 import { installMocks, mockBillingo, mockNav, type BillingoMock, type NavMock } from '../helpers/mocks';
 import { syncBillingo } from '../../src/server/app/billingo';
+import { rematchNav } from '../../src/server/app/nav';
 
 let t: TestApp | undefined;
 afterEach(() => {
@@ -398,9 +399,80 @@ describe('NAV-számla besorolása a végponton át (POST /api/nav/resolve)', () 
     expect(n('deleted_entries')).toBe(3);
   });
 
-  it.todo(
-    'KÉRDÉS: a besorolás visszavonása („reopen”, a toast „Visszavon” gombja) a tanult partner-szabályt (és a sorozat sort) meghagyja – a következő számla így is ebbe a kategóriába kerül. Vissza kellene vonni a tanulást is?',
-  );
+  it('visszavonás („reopen”): az ezzel a besorolással tanult partner-szabály is visszavonódik – a következő számla nem kerül automatikusan ugyanoda', async () => {
+    t = await createTestApp();
+    seed();
+    const id = navInvoice();
+    expect((await t.post('/api/nav/resolve', { id, action: 'assign', leaf_id: 'l_konyv' })).status).toBe(200);
+    const learned = row('SELECT pattern, leaf_id, hits FROM partner_rules');
+    expect(learned).toMatchObject({ leaf_id: 'l_konyv', hits: 1 });
+    // amíg a besorolás él, a partner következő számlája is a Könyvelésre kap javaslatot
+    const next = navInvoice('nav:12345678:TSZ-2026/0920', { issue_date: day(-1), payment_date: day(9), gross: -13_100 });
+    await rematchNav(t.env);
+    expect(nav(next).leaf_id).toBe('l_konyv');
+
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(n('partner_rules')).toBe(0);
+    expect(nav(id)).toMatchObject({ status: 'new', plan_id: null });
+    await rematchNav(t.env);
+    expect(nav(next).leaf_id).not.toBe('l_konyv');
+
+    // „havonta tervbe” ugyanígy: a sorozattal tanult szabály is visszavonódik
+    expect((await t.post('/api/nav/resolve', { id, action: 'recurring', leaf_id: 'l_konyv', months: 2 })).status).toBe(200);
+    expect(row('SELECT leaf_id FROM partner_rules WHERE pattern = ?', learned.pattern).leaf_id).toBe('l_konyv');
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(n('partner_rules')).toBe(0);
+  });
+
+  it('visszavonás: a korábban is meglévő tanult szabály marad, a besorolás által módosított a korábbi állapotára áll vissza', async () => {
+    t = await createTestApp();
+    seed();
+    const id = navInvoice();
+    expect((await t.post('/api/nav/resolve', { id, action: 'assign', leaf_id: 'l_tarhely' })).status).toBe(200);
+    const pattern = row('SELECT pattern FROM partner_rules').pattern;
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(n('partner_rules')).toBe(0);
+
+    // a szabály már korábban is ugyanerre a kategóriára mutatott → marad, csak a találatszám áll vissza
+    t.sql.prepare('INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at, auto) VALUES (?, ?, 4, 1000, 1)').run(pattern, 'l_tarhely');
+    expect((await t.post('/api/nav/resolve', { id, action: 'assign', leaf_id: 'l_tarhely' })).status).toBe(200);
+    expect(row('SELECT leaf_id, hits FROM partner_rules')).toEqual({ leaf_id: 'l_tarhely', hits: 5 });
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(row('SELECT pattern, leaf_id, hits, updated_at, auto FROM partner_rules')).toEqual({
+      pattern,
+      leaf_id: 'l_tarhely',
+      hits: 4,
+      updated_at: 1000,
+      auto: 1,
+    });
+
+    // a besorolás másik kategóriára írta át → a visszavonás a korábbi kategóriát állítja vissza
+    expect((await t.post('/api/nav/resolve', { id, action: 'assign', leaf_id: 'l_konyv' })).status).toBe(200);
+    expect(row('SELECT leaf_id, hits FROM partner_rules')).toEqual({ leaf_id: 'l_konyv', hits: 5 });
+    // az áthelyezés („move”) is ennek a besorolásnak a része: a visszavonás a besorolás előtti állapotot hozza vissza
+    expect((await t.post('/api/nav/resolve', { id, action: 'move', leaf_id: 'l_unf' })).status).toBe(200);
+    expect(row('SELECT leaf_id FROM partner_rules').leaf_id).toBe('l_unf');
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(row('SELECT pattern, leaf_id, hits, updated_at, auto FROM partner_rules')).toEqual({
+      pattern,
+      leaf_id: 'l_tarhely',
+      hits: 4,
+      updated_at: 1000,
+      auto: 1,
+    });
+  });
+
+  it('visszavonás: a szabály azóta kézzel módosított változata megmarad', async () => {
+    t = await createTestApp();
+    seed();
+    const id = navInvoice();
+    expect((await t.post('/api/nav/resolve', { id, action: 'assign', leaf_id: 'l_konyv' })).status).toBe(200);
+    const pattern = row('SELECT pattern FROM partner_rules').pattern;
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await t.patch('/api/partner-rules', { pattern, leaf_id: 'l_tarhely' })).status).toBe(200);
+    expect((await t.post('/api/nav/resolve', { id, action: 'reopen' })).status).toBe(200);
+    expect(row('SELECT leaf_id FROM partner_rules WHERE pattern = ?', pattern).leaf_id).toBe('l_tarhely');
+  });
 
   it('már besorolt számla újabb besorolása 409 (a terv és a számla kategóriája nem válik el); áthelyezés („move”) mindkettőt viszi', async () => {
     t = await createTestApp();

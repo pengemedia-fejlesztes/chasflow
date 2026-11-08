@@ -346,17 +346,64 @@ export interface NavResolve {
   name?: string;
 }
 
-const learnPartner = (env: Env, partner: string | null, leaf: string, t: number) => {
-  const key = partnerKey(partner || '');
-  return key
-    ? env.DB.prepare(
-        'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, hits = partner_rules.hits + 1, updated_at = excluded.updated_at',
-      ).bind(key, leaf, t)
-    : null;
+/** A besorolással tanult partner-szabály korábbi állapota (nav_invoices.learned_rule), a visszavonáshoz. prev = null: a szabály ezzel jött létre. */
+interface LearnedRule {
+  pattern: string;
+  leaf: string;
+  at: number;
+  prev: { leaf_id: string; hits: number; updated_at: number } | null;
+}
+const parseLearned = (raw: string | null | undefined): LearnedRule | null => {
+  try {
+    return raw ? (JSON.parse(raw) as LearnedRule) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Kézzel választott kategória: a partner következő számlája is ide kerüljön. A szabály korábbi állapota a számlán marad (visszavonáshoz). */
+const learnPartner = async (env: Env, r: { id: string; partner_name: string | null; learned_rule?: string | null }, leaf: string, t: number) => {
+  const key = partnerKey(r.partner_name || '');
+  if (!key) return [];
+  const cur = await env.DB.prepare('SELECT leaf_id, hits, updated_at FROM partner_rules WHERE pattern = ?')
+    .bind(key)
+    .first<{ leaf_id: string; hits: number; updated_at: number }>();
+  // ugyanennek a számlának egy korábbi tanulása (besorolás, majd áthelyezés), amit azóta senki nem írt át:
+  // a visszaállítási pont a besorolás előtti állapot marad
+  const earlier = parseLearned(r.learned_rule);
+  const prev = earlier && earlier.pattern === key && cur && cur.leaf_id === earlier.leaf && cur.updated_at === earlier.at ? earlier.prev : cur || null;
+  const snap: LearnedRule = { pattern: key, leaf, at: t, prev: prev && { leaf_id: prev.leaf_id, hits: prev.hits, updated_at: prev.updated_at } };
+  return [
+    env.DB.prepare(
+      'INSERT INTO partner_rules (pattern, leaf_id, hits, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(pattern) DO UPDATE SET leaf_id = excluded.leaf_id, hits = partner_rules.hits + 1, updated_at = excluded.updated_at',
+    ).bind(key, leaf, t),
+    env.DB.prepare('UPDATE nav_invoices SET learned_rule = ? WHERE id = ?').bind(JSON.stringify(snap), r.id),
+  ];
+};
+
+/** A besorolás visszavonása a tanulást is visszavonja: az új szabály törlődik, a módosított visszaáll. Ha azóta
+ *  valaki (kézzel vagy egy újabb tanulással) módosította a szabályt, a későbbi döntés marad. */
+const unlearnPartner = (env: Env, raw: string | null | undefined): DbStatement[] => {
+  const s = parseLearned(raw);
+  if (!s) return [];
+  return [
+    s.prev
+      ? env.DB.prepare('UPDATE partner_rules SET leaf_id = ?, hits = ?, updated_at = ? WHERE pattern = ? AND leaf_id = ? AND updated_at = ?').bind(
+          s.prev.leaf_id,
+          s.prev.hits,
+          s.prev.updated_at,
+          s.pattern,
+          s.leaf,
+          s.at,
+        )
+      : env.DB.prepare('DELETE FROM partner_rules WHERE pattern = ? AND leaf_id = ? AND updated_at = ?').bind(s.pattern, s.leaf, s.at),
+  ];
 };
 
 export async function resolveNav(env: Env, userId: number, it: NavResolve) {
-  const r = await env.DB.prepare('SELECT * FROM nav_invoices WHERE id = ?').bind(String(it.id)).first<NavRow & { plan_id: string | null }>();
+  const r = await env.DB.prepare('SELECT * FROM nav_invoices WHERE id = ?')
+    .bind(String(it.id))
+    .first<NavRow & { plan_id: string | null; learned_rule?: string | null }>();
   if (!r) throw new HttpError(404, 'Nincs ilyen számla.');
   const t = now();
   const base = 'n' + r.id.replace(/[^\w]/g, '').slice(-40);
@@ -383,6 +430,9 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
         r.id,
       ),
     );
+    // a besorolással tanult partner-szabály is visszavonódik (a következő számla ne kerüljön automatikusan ugyanoda)
+    if (it.action === 'reopen' && r.learned_rule)
+      stmts.push(...unlearnPartner(env, r.learned_rule), env.DB.prepare('UPDATE nav_invoices SET learned_rule = NULL WHERE id = ?').bind(r.id));
     await env.DB.batch(stmts);
     return;
   }
@@ -399,8 +449,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
       env.DB.prepare('UPDATE series SET leaf_id = ? WHERE id = ?').bind(leaf, 's' + base),
       env.DB.prepare('UPDATE nav_invoices SET leaf_id = ?, updated_at = ? WHERE id = ?').bind(leaf, t, r.id),
     ];
-    const rule = learnPartner(env, r.partner_name, leaf, t);
-    if (rule) stmts.push(rule);
+    stmts.push(...(await learnPartner(env, r, leaf, t)));
     await env.DB.batch(stmts);
     await audit(env, userId, 'nav_resolve', { id: r.id, action: it.action, leaf });
     return;
@@ -444,8 +493,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
            VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         ).bind(`${base}_${i}`, addMonthsDate(date, i), leaf, name, r.gross, sid, i ? 'manual' : 'nav', i ? null : r.id, t, userId),
       );
-    const rule = learnPartner(env, r.partner_name, leaf, t);
-    if (rule) stmts.push(rule);
+    stmts.push(...(await learnPartner(env, r, leaf, t)));
   } else {
     stmts.push(
       env.DB.prepare(
@@ -454,8 +502,7 @@ export async function resolveNav(env: Env, userId: number, it: NavResolve) {
       ).bind(planId, date, leaf, name, r.gross, r.id, `NAV számla: ${r.invoice_number}`, t, userId),
     );
     // kézzel választott kategória: a partner következő számlája is ide kerüljön
-    const rule = it.action === 'assign' ? learnPartner(env, r.partner_name, leaf, t) : null;
-    if (rule) stmts.push(rule);
+    if (it.action === 'assign') stmts.push(...(await learnPartner(env, r, leaf, t)));
   }
   stmts.push(env.DB.prepare("UPDATE nav_invoices SET status = 'planned', plan_id = ?, leaf_id = ?, updated_at = ? WHERE id = ?").bind(planId, leaf, t, r.id));
   await env.DB.batch(stmts);
