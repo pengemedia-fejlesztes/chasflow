@@ -17,7 +17,13 @@ export interface LedgerAcc {
 }
 export interface LedgerMonthRow {
   ym: string;
-  accounts: Record<string, { open: number; inc: number; out: number; close: number; n: number }>;
+  accounts: Record<string, { open: BankBal | null; inc: number; out: number; close: BankBal | null; n: number }>;
+}
+/** banki egyenleg-adat: összeg, nap, forrás (aggreg8: a bank jelentette szinkronkor; kivonat: bankszámlakivonat; pénztár: házipénztár) */
+export interface BankBal {
+  amount: number;
+  date: string;
+  source: string;
 }
 interface LedgerTx {
   id: string;
@@ -62,7 +68,7 @@ export function useLedger(ym: string, account: string) {
 }
 
 export function LedgerView() {
-  const { data, ix, canEdit } = useStore();
+  const { data, ix, canEdit, isAdmin } = useStore();
   const [ym, setYm] = useState(data.today.slice(0, 7));
   const [account, setAccount] = useState('');
   const [cashOpen, setCashOpen] = useState(false);
@@ -70,13 +76,15 @@ export function LedgerView() {
   const month = r?.months.find((m) => m.ym === ym);
   const accs = r?.accounts || [];
   const shown = account ? accs.filter((a) => a.id === account) : accs;
-  const tot = shown.reduce(
-    (s, a) => {
-      const x = month?.accounts[a.id];
-      return x ? { open: s.open + x.open, inc: s.inc + x.inc, out: s.out + x.out, close: s.close + x.close } : s;
-    },
-    { open: 0, inc: 0, out: 0, close: 0 },
-  );
+  // összesen: csak ha minden számlához van banki adat (hiányos adatból nem számolunk)
+  const sumBal = (k: 'open' | 'close') =>
+    shown.every((a) => month?.accounts[a.id]?.[k]) ? shown.reduce((s, a) => s + month!.accounts[a.id][k]!.amount, 0) : null;
+  const tot = {
+    open: sumBal('open'),
+    close: sumBal('close'),
+    inc: shown.reduce((s, a) => s + (month?.accounts[a.id]?.inc || 0), 0),
+    out: shown.reduce((s, a) => s + (month?.accounts[a.id]?.out || 0), 0),
+  };
   const accName = (id: string) => {
     const a = accs.find((x) => x.id === id);
     return a ? a.bank_name : id;
@@ -137,10 +145,11 @@ export function LedgerView() {
               </b>
               {x ? (
                 <>
-                  <Line l="Nyitó egyenleg" v={fmt(x.open)} />
+                  <BalLine l="Nyitó egyenleg" b={x.open} />
                   <Line l="Bejövő" v={'+' + fmt(x.inc)} c={C.inc} />
                   <Line l="Kimenő" v={'−' + fmt(Math.abs(x.out))} c={C.neg} />
-                  <Line l="Záró egyenleg" v={fmt(x.close)} bold />
+                  <BalLine l="Záró egyenleg" b={x.close} bold />
+                  {isAdmin && a.provider !== 'cash' && <StatementEntry accountId={a.id} ym={ym} cur={x.close} />}
                   <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{x.n} tétel</span>
                 </>
               ) : (
@@ -152,11 +161,11 @@ export function LedgerView() {
         {shown.length > 1 && (
           <div style={{ ...card, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6, background: C.bg2 }}>
             <b style={{ font: `700 15px ${FONT}`, color: C.navy }}>Összesen</b>
-            <Line l="Nyitó egyenleg" v={fmt(tot.open)} />
+            <Line l="Nyitó egyenleg" v={tot.open === null ? 'nincs teljes banki adat' : fmt(tot.open)} />
             <Line l="Bejövő" v={'+' + fmt(tot.inc)} c={C.inc} />
             <Line l="Kimenő" v={'−' + fmt(Math.abs(tot.out))} c={C.neg} />
-            <Line l="Záró egyenleg" v={fmt(tot.close)} bold />
-            <Line l="Változás" v={sign(tot.close - tot.open)} c={tot.close - tot.open < 0 ? C.neg : C.inc} />
+            <Line l="Záró egyenleg" v={tot.close === null ? 'nincs teljes banki adat' : fmt(tot.close)} bold />
+            {tot.open !== null && tot.close !== null && <Line l="Változás" v={sign(tot.close - tot.open)} c={tot.close - tot.open < 0 ? C.neg : C.inc} />}
           </div>
         )}
       </div>
@@ -212,6 +221,73 @@ export function LedgerView() {
         </div>
       </div>
       {cashOpen && <CashDialog onClose={() => setCashOpen(false)} opening={r?.cashOpening || 0} />}
+    </div>
+  );
+}
+
+const SRC: Record<string, string> = { aggreg8: 'bank jelentette', kivonat: 'kivonat szerint', pénztár: 'pénztár' };
+export const balNote = (b: BankBal) => `${SRC[b.source] || b.source}, ${b.date.replace(/-/g, '.')}.`;
+
+function BalLine({ l, b, bold }: { l: string; b: BankBal | null; bold?: boolean }) {
+  return (
+    <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, font: `${bold ? 700 : 400} 14px ${FONT}`, color: C.ink }}>
+      <span style={{ color: C.muted, fontWeight: 400 }}>{l}</span>
+      {b ? (
+        <span style={{ textAlign: 'right' }}>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(b.amount)}</span>
+          <span style={{ display: 'block', font: `400 11.5px ${FONT}`, color: C.muted }}>{balNote(b)}</span>
+        </span>
+      ) : (
+        <span style={{ font: `500 12.5px ${FONT}`, color: C.faint }}>nincs banki adat</span>
+      )}
+    </span>
+  );
+}
+
+/** a bankszámlakivonat szerinti záró egyenleg rögzítése a hónapra (admin) */
+function StatementEntry({ accountId, ym, cur }: { accountId: string; ym: string; cur: BankBal | null }) {
+  const { run } = useStore();
+  const [open, setOpen] = useState(false);
+  const last = new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const [date, setDate] = useState(last);
+  const [amount, setAmount] = useState(cur?.source === 'kivonat' ? String(Math.round(cur.amount)) : '');
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{ alignSelf: 'flex-start', border: 0, background: 'transparent', padding: 0, color: C.blueDark, font: `600 12.5px ${FONT}`, cursor: 'pointer' }}
+      >
+        {cur?.source === 'kivonat' ? 'Kivonat szerinti egyenleg módosítása' : '+ Kivonat szerinti záró egyenleg'}
+      </button>
+    );
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap', borderTop: `1px solid ${C.line3}`, paddingTop: 8 }}>
+      <Field label="Kivonat napja">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...inputStyle, height: 34, width: 140 }} />
+      </Field>
+      <Field label="Záró egyenleg (Ft)">
+        <MoneyInput value={amount} onChange={setAmount} style={{ ...inputStyle, height: 34, width: 140 }} />
+      </Field>
+      <Pill
+        small
+        kind="primary"
+        onClick={async () => {
+          if (
+            amount !== '' &&
+            (await run(
+              () => api('/api/bank/statement', { method: 'PUT', body: { account_id: accountId, date, amount: Number(amount) } }),
+              'Kivonat szerinti egyenleg rögzítve',
+            ))
+          )
+            setOpen(false);
+        }}
+      >
+        Mentés
+      </Pill>
+      <Pill small onClick={() => setOpen(false)}>
+        Mégse
+      </Pill>
     </div>
   );
 }
