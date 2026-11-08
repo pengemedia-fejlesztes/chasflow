@@ -17,7 +17,7 @@ import { notifyUnplanned } from './notify';
 import { refreshMonthStats } from './stats';
 import { handleData } from './data';
 import { handleChangelog } from './changelog';
-import { Env, HttpError, enforceHttps, getSetting, json, safeEqual, setSetting, withSecurityHeaders } from './util';
+import { Env, HttpError, audit, enforceHttps, getSetting, json, readJson, safeEqual, setSetting, withSecurityHeaders } from './util';
 import { SYNC_HOURS } from '../shared/aggreg8';
 import { isWorkday } from '../shared/workdays';
 
@@ -87,6 +87,17 @@ async function route(req: Request, env: Env): Promise<Response> {
   // olcsó változásfigyelés: az oldal csak ezt az egy sort kérdezi percenként, és csak változáskor tölti újra az adatokat
   if (path === '/api/version' && req.method === 'GET') return json({ rev: (await getSetting(env, 'data_rev')) || '0' });
 
+  // böngészőben történt kirajzolási hiba naplózása (a hibakereséshez)
+  if (path === '/api/client-error' && req.method === 'POST') {
+    const b = await readJson(req).catch(() => ({}));
+    console.error('client-error', u.email, JSON.stringify(b).slice(0, 2500));
+    await audit(env, u.id, 'client_error', {
+      message: String((b as any).message || '').slice(0, 300),
+      url: String((b as any).url || '').slice(0, 100),
+      component: String((b as any).component || '').slice(0, 600),
+    }).catch(() => null);
+    return json({ ok: true });
+  }
   const acc = await handleAccount(env, req, path, u);
   if (acc) return acc;
   if (u.must_change_pw) throw new HttpError(403, 'Először változtasd meg az ideiglenes jelszavadat.');
