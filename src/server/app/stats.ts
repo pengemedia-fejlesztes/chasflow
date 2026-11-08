@@ -1,4 +1,4 @@
-// Havi terv–tény pillanatképek: a lezárt hónap egyszer számolódik, a folyó hónap reggel és kézi frissítéskor.
+// Havi terv–tény pillanatképek: a lezárt hónap terve egyszer számolódik (a ténye élő), a folyó hónap reggel és kézi frissítéskor.
 import { addMonths, monthRange, ymOf } from '../../shared/model';
 import { planStart, planVsActual } from '../../shared/planactual';
 import type { Entry, Section } from '../../shared/types';
@@ -23,7 +23,8 @@ async function load(env: Env) {
 
 /**
  * Pillanatkép frissítése: a tervezés kezdetétől minden még nem lezárt múltbeli hónapot lezár (egyszer),
- * a folyó hónapot mindig újraszámolja. `recloseAll`: a lezárt hónapokat is újraszámolja (admin).
+ * a folyó hónapot mindig újraszámolja; a lezárt hónapok tényét is frissíti (a tervük marad).
+ * `recloseAll`: a lezárt hónapok tervét is újraszámolja (admin).
  */
 export async function refreshMonthStats(env: Env, userId: number | null, recloseAll = false): Promise<{ closed: number; current: string }> {
   const today = todayHu();
@@ -56,6 +57,13 @@ export async function refreshMonthStats(env: Env, userId: number | null, reclose
       userId,
     ),
   );
+  // a már lezárt hónapoknál csak a terv marad befagyasztva, a tény élő: a lezárás után beérkező / jóváhagyott banki tétel is
+  // bekerül (a lezárás időpontja – computed_at – nem változik)
+  const frozen = past.filter((ym) => !todo.includes(ym));
+  for (const r of planVsActual(entries, sectionOf, frozen))
+    stmts.push(
+      env.DB.prepare('UPDATE month_stats SET act_in = ?, act_out = ? WHERE ym = ? AND closed = 1').bind(Math.round(r.actIn), Math.round(r.actOut), r.ym),
+    );
   // a tervezés kezdete előtti (hiányos tervű) hónapok nem kapnak pillanatképet
   stmts.push(env.DB.prepare('DELETE FROM month_stats WHERE ym < ?').bind(start));
   await env.DB.batch(stmts);

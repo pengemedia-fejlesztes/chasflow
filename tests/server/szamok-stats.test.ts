@@ -2,7 +2,7 @@
 // mint amit az Áttekintés (buildIndex) és a kliens Terv vs. tény nézete (planVsActual) ugyanarra a hónapra mutat.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildIndex, sumMonths } from '../../src/shared/model';
-import { planVsActual } from '../../src/shared/planactual';
+import { closedMonth, planVsActual } from '../../src/shared/planactual';
 import { createTestApp, type TestApp } from '../helpers/app';
 
 let t: TestApp | undefined;
@@ -72,5 +72,39 @@ describe('Terv vs. tény pillanatkép (month_stats)', () => {
     // a folyó hónapban még nyitott: a bérlet + a keretből még hátralévő 38 000
     expect(live[1].openOut).toBe(250000 + 38000);
     expect(d.monthStats.map((s: any) => s.ym)).toEqual(['2026-10', '2026-11']);
+  });
+});
+
+describe('lezárt hónap: a terv befagy, a tény élő', () => {
+  it('a lezárás után jóváhagyott októberi banki tétel megjelenik az október tényében, az utólag módosított terv nem írja felül a pillanatképet', async () => {
+    t = await createTestApp();
+    seed(t);
+    await t.post('/api/stats/refresh', {});
+    const before = t.sql.prepare("SELECT * FROM month_stats WHERE ym = '2026-10'").get() as any;
+    expect(before).toMatchObject({ plan_out: 300000, act_out: 250000, closed: 1 });
+
+    // az október 20-i javítási díj banki tétele csak november elején érkezik meg, és csak a hónap lezárása után hagyják jóvá
+    const imp = await t.post('/api/bank/import', {
+      bank_name: 'Minta Bank',
+      label: 'Üzleti számla',
+      rows: [{ date: '2026-10-20', amount: -120000, partner: 'Gépjavító Bt.', memo: 'Klíma javítás' }],
+    });
+    expect(imp.status).toBe(200);
+    const tx = t.sql.prepare('SELECT id FROM bank_tx WHERE amount = -120000').get() as any;
+    expect((await t.post('/api/bank/approve', { items: [{ id: tx.id, leaf_id: 'tl_berlet' }] })).status).toBe(200);
+    // közben az októberi bérleti díj tervét utólag átírják – a lezárt hónap terve ettől nem változhat
+    t.sql.prepare("UPDATE entries SET amount = -260000 WHERE id = 'p_okt_berlet'").run();
+
+    // a felület (a frissítés előtt is) a pillanatkép tervét és az élő tényt mutatja
+    const d = (await t.get('/api/data')).data;
+    const ix = buildIndex(d);
+    const [liveOkt] = planVsActual(d.entries, ix.sectionOf, ['2026-10'], (l) => ix.leafById[l]?.label || '');
+    const shown = closedMonth(d.monthStats.find((s: any) => s.ym === '2026-10'), liveOkt);
+    expect(shown).toEqual({ planIn: 800000, planOut: 300000, actIn: 800000, actOut: 250000 + 120000 });
+
+    // a reggeli frissítés a lezárt hónap tényét is frissíti, a tervét és a lezárás idejét nem
+    await t.post('/api/stats/refresh', {});
+    const after = t.sql.prepare("SELECT * FROM month_stats WHERE ym = '2026-10'").get() as any;
+    expect(after).toMatchObject({ plan_in: 800000, plan_out: 300000, act_in: 800000, act_out: 370000, closed: 1, computed_at: before.computed_at });
   });
 });

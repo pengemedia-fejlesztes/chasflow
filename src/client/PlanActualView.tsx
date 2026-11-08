@@ -1,9 +1,9 @@
 // Havi terv–tény összesítő: tervezett / tényleges bevétel, kiadás, profit és eltérés.
-// Lezárt hónap: a hónap végén egyszer rögzített pillanatkép; folyó hónap: reggel 5-kor (vagy kézzel) frissül;
-// jövőbeli hónap: az aktuális tervekből.
+// Lezárt hónap: a terv a hónap végén egyszer rögzített pillanatkép, a tény mindig élő; folyó hónap: a terv reggel 5-kor
+// (vagy kézzel) frissül; jövőbeli hónap: az aktuális tervekből.
 import { useMemo, useState } from 'react';
 import { addMonths, fmt, monthLong, monthRange } from '../shared/model';
-import { planStart, planVsActual, type PvaMonth } from '../shared/planactual';
+import { closedMonth, planStart, planVsActual, type PvaMonth } from '../shared/planactual';
 import { api } from './api';
 import { DivergingBars } from './Bars';
 import { useStore } from './store';
@@ -62,10 +62,7 @@ export function PlanActualView({ mobile }: { mobile?: boolean }) {
     if (s && ym <= ix.cur)
       return {
         ym,
-        planIn: s.plan_in + (offers ? s.offer_in : 0),
-        planOut: s.plan_out + (offers ? s.offer_out : 0),
-        actIn: s.act_in,
-        actOut: s.act_out,
+        ...closedMonth(s, l, offers),
         openIn: l.openIn,
         openOut: l.openOut,
         hasPlan: true,
@@ -121,7 +118,8 @@ export function PlanActualView({ mobile }: { mobile?: boolean }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <span style={{ font: `400 13px/1.5 ${FONT}`, color: C.muted }}>
         <b>Terv</b>: a hónap tervei (teljesült és nyitott). <b>Tény</b>: befolyt / kifizetett összeg. <b>Profit</b> = bevétel − kiadás. Zöld: kedvező, piros:
-        kedvezőtlen eltérés. A lezárt hónap a hónap végén egyszer rögzül, a folyó hónap minden reggel 5-kor frissül.
+        kedvezőtlen eltérés. A lezárt hónap terve a hónap végén egyszer rögzül (a tény mindig a mostani), a folyó hónap terve
+        minden reggel 5-kor frissül.
       </span>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Seg

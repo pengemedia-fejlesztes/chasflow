@@ -13,7 +13,7 @@ import {
   planCorrections,
   type Filters,
 } from '../../src/shared/model';
-import { planVsActual } from '../../src/shared/planactual';
+import { closedMonth, planVsActual, type MonthStat } from '../../src/shared/planactual';
 import type { Entry } from '../../src/shared/types';
 
 let n = 0;
@@ -229,9 +229,30 @@ describe('terv–tény és eredmény-cél ugyanazokból a számokból', () => {
     expect(nov.net).toBe(outlook(ix, { includeOffers: false, estimate: false }).months[0].net);
     expect(nov.offer).toBe(500_000);
   });
-  it.todo(
-    'KÉRDÉS (Laci): a lezárt hónap pillanatképe a TÉNYT is befagyasztja – a hónap lezárása után beérkező / jóváhagyott banki tétel ' +
-      '(pl. későn szinkronizált bank, utólag jóváhagyott tétel) a Terv vs. tény nézetben sosem jelenik meg, az Áttekintésben igen. ' +
-      'Csak a tervet kellene rögzíteni, a tényt mindig élőben mutatni?',
-  );
+  it('lezárt hónap: a terv a pillanatképből, a tény élő – az utólag jóváhagyott banki tétel is látszik, mint az Áttekintésben', () => {
+    // október lezárásakor (november 1-jén) készült pillanatkép
+    const [snap] = planVsActual(entries, ix.sectionOf, ['2026-10'], (l) => ix.leafById[l]?.label || '');
+    const stat: MonthStat = {
+      ym: '2026-10',
+      plan_in: snap.planIn,
+      plan_out: snap.planOut,
+      offer_in: snap.offerIn,
+      offer_out: snap.offerOut,
+      act_in: snap.actIn,
+      act_out: snap.actOut,
+      closed: 1,
+      computed_at: 0,
+    };
+    // utána: a bank későn hozza az október 20-i javítási díjat, és az októberi bevétel tervét átütemezik novemberre
+    const later = [
+      ...entries.map((e) => (e.date === '2026-10-10' ? { ...e, date: '2026-11-10' } : e)),
+      E({ kind: 'actual', date: '2026-10-20', leaf_id: 'konyv', amount: -120_000, source: 'bank' }),
+    ];
+    const ix2 = ixOf(later);
+    const [live] = planVsActual(later, ix2.sectionOf, ['2026-10'], (l) => ix2.leafById[l]?.label || '');
+    const shown = closedMonth(stat, live);
+    expect(shown).toEqual({ planIn: 800_000, planOut: 450_000, actIn: 780_000, actOut: 570_000 });
+    const act = buildMatrix(ix2, { ...defaultFilters(ix2.today), from: '2026-10', to: '2026-10', mode: 'actual', estimate: false });
+    expect(act.rows.find((r) => r.type === 'section' && r.id === 'out')!.cells[0].v).toBe(shown.actOut);
+  });
 });
