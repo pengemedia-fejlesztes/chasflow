@@ -2,6 +2,8 @@
 // minden nézetben (táblázat, áttekintő kártyák, mobil) ugyanannyi legyen.
 import { describe, expect, it } from 'vitest';
 import { actualBalanceAt, buildIndex, buildMatrix, defaultFilters, outlook, projection } from '../../src/shared/model';
+import { receivablesAging } from '../../src/shared/insights';
+import { partnerStats } from '../../src/shared/partners';
 import type { BankAccount, Entry } from '../../src/shared/types';
 
 let n = 0;
@@ -224,5 +226,48 @@ describe('előre kifizetett (kész) jövőbeli terv nem számít kétszer', () =
     const i = m.columns.findIndex((c) => c.key === '2026-12p');
     expect(m.net[i]).toBe(900_000);
     expect(m.balance[i] - m.balance[i - 1]).toBe(m.net[i]);
+  });
+});
+
+describe('kiállított számla a tervhez: az előrejelzés a számla összegével számol', () => {
+  // a terv 1 500 000, de csak 1 000 000-ről állítottak ki számlát (bill_amount): a várható bevétel a számla, a terv nem változik
+  const entries = [
+    E({ id: 'p_szamlas', date: '2026-11-25', name: 'Marketing tanácsadás – 2026. november', amount: 1_500_000, bill_amount: 1_000_000, plan_amount: 1_500_000, source: 'billingo', ext_ref: 'billingo:1' }),
+    E({ id: 'p_dec', date: '2026-12-15', leaf_id: 'ugyfel2', name: 'Havi díj – 2026. december', amount: 300_000 }),
+    // decemberben a számla több lett, mint a terv
+    E({ id: 'p_tobb', date: '2026-12-20', name: 'Fejlesztés – 2026. december', amount: 200_000, bill_amount: 254_000, source: 'billingo', ext_ref: 'billingo:2' }),
+    // lezárt, kiszámlázott terv: a terv vs. tény összevetés továbbra is a terv összegével
+    E({ id: 'a_okt', kind: 'actual', date: '2026-10-08', amount: 380_000, link_id: 'p_okt' }),
+    E({ id: 'p_okt', date: '2026-10-05', amount: 400_000, bill_amount: 380_000, done: 1, link_id: 'a_okt', source: 'billingo', ext_ref: 'billingo:3' }),
+  ];
+  const ix = ixOf(entries, { accounts: [bank(2_000_000)] });
+
+  it('nyitott terv: a várható (openPlan) a számla összege, a terv (plan) marad', () => {
+    expect(ix.openPlan.get('ugyfel')?.get('2026-11')).toBe(1_000_000);
+    expect(ix.openPlan.get('ugyfel')?.get('2026-12')).toBe(254_000);
+    expect(ix.plan.get('ugyfel')?.get('2026-11')).toBe(1_500_000);
+    expect(ix.plan.get('ugyfel')?.get('2026-10')).toBe(400_000);
+  });
+
+  it('záró egyenleg előrejelzés és áttekintés: a számla összegével', () => {
+    const proj = projection(ix, noExtras, '2026-12', new Map());
+    expect(proj.get('2026-11')).toBe(2_000_000 + 1_000_000);
+    expect(proj.get('2026-12')).toBe(2_000_000 + 1_000_000 + 300_000 + 254_000);
+    const ol = outlook(ix, noExtras);
+    expect(ol.months.find((m) => m.ym === '2026-12')!.inc).toBe(554_000);
+  });
+
+  it('táblázat: a jövőbeli hónap várható bevétele a számla összege, a záró egyenleg egyezik az áttekintéssel', () => {
+    const m = buildMatrix(ix, { ...defaultFilters(ix.today), to: '2026-12', estimate: false });
+    const i = m.columns.findIndex((c) => c.key === '2026-12p');
+    expect(m.rows.find((r) => r.type === 'leaf' && r.id === 'ugyfel')!.cells[i].v).toBe(254_000);
+    expect(m.balance[i]).toBe(outlook(ix, noExtras).months.find((x) => x.ym === '2026-12')!.bal);
+  });
+
+  it('kintlévőség és partner adatlap „nyitott terv”: a számla összege', () => {
+    const aging = receivablesAging(entries, ix.sectionOf, ix.today);
+    expect(aging.buckets.find((b) => b.key === 'notdue')!.items.find((x) => x.id === 'p_szamlas')!.amount).toBe(1_000_000);
+    const st = partnerStats(entries, leaves, groups, [], ix.today).find((p) => p.leaves.some((l) => l.id === 'ugyfel'))!;
+    expect(st.sides.in!.openPlan).toBe(1_000_000 + 254_000);
   });
 });

@@ -61,6 +61,27 @@ export interface Index {
   anchorSource: 'bank' | 'computed';
 }
 
+/**
+ * Részfizetések: a még nyitott (nem teljesült) tervhez kötött tények (tény.link_id = terv) összege tervenként – pl. a részben
+ * fizetett Billingo-számla befolyt része. A lezárt tervhez kötött tény nem ide tartozik (az a terv teljesítése).
+ */
+export function partialPaid(entries: Pick<Entry, 'id' | 'kind' | 'done' | 'link_id' | 'amount'>[]): Map<string, number> {
+  const open = new Set(entries.filter((e) => e.kind === 'plan' && !e.done).map((e) => e.id));
+  const out = new Map<string, number>();
+  for (const e of entries) if (e.kind === 'actual' && e.link_id && open.has(e.link_id)) out.set(e.link_id, (out.get(e.link_id) || 0) + e.amount);
+  return out;
+}
+
+/**
+ * Nyitott terv még várható összege: ha már van hozzá kiállított számla, a számla összege (bill_amount – a valós követelés),
+ * különben a terv; a részfizetés(ek) nélkül (az előjel nem fordulhat át). A terv saját összege (amount) nem változik.
+ */
+export function openAmount(e: Pick<Entry, 'id' | 'amount' | 'bill_amount'>, paid?: Map<string, number>): number {
+  const base = e.bill_amount ?? e.amount;
+  const rest = base - (paid?.get(e.id) || 0);
+  return Math.sign(rest) === Math.sign(base) ? rest : 0;
+}
+
 function add(map: LeafMonth, leaf: string, ym: string, v: number) {
   let m = map.get(leaf);
   if (!m) map.set(leaf, (m = new Map()));
@@ -81,6 +102,7 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
   let firstActual: string | null = null,
     lastActual: string | null = null,
     sumActualToToday = 0;
+  const paid = partialPaid(d.entries);
   for (const e of d.entries) {
     const ym = ymOf(e.date);
     if (e.kind === 'actual') {
@@ -92,7 +114,8 @@ export function buildIndex(d: Pick<DataBundle, 'groups' | 'leaves' | 'entries' |
       if (!e.done) add(offer, e.leaf_id, ym, e.amount);
     } else {
       add(plan, e.leaf_id, ym, e.amount);
-      if (!e.done) add(openPlan, e.leaf_id, ym, e.amount);
+      // nyitott tervből csak a még várható rész (részfizetésnél a befolyt összeg már tény)
+      if (!e.done) add(openPlan, e.leaf_id, ym, openAmount(e, paid));
       if (!lastPlanMonth[e.leaf_id] || ym > lastPlanMonth[e.leaf_id]) lastPlanMonth[e.leaf_id] = ym;
     }
   }

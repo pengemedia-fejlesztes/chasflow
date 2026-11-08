@@ -24,6 +24,9 @@ interface BillingoDocument {
   due_date?: string;
   paid_date?: string;
   partner?: { name?: string; taxcode?: string };
+  /** helyesbítő (módosító) számlánál az eredeti számla */
+  original_document_id?: number;
+  related_documents?: { id: number; invoice_number?: string }[];
 }
 
 const INCOME_TYPES = new Set(['invoice', 'advance']);
@@ -42,6 +45,19 @@ async function fetchDocs(base: string, key: string, startDate: string): Promise<
     if (!body.last_page || page >= body.last_page) break;
   }
   return out;
+}
+
+interface BillingoPayment {
+  date: string;
+  price: number;
+}
+
+/** A számla fizetései (GET /documents/{id}/payments) – a részben fizetett számla befolyt összegéhez. */
+async function fetchPayments(base: string, key: string, id: number): Promise<BillingoPayment[]> {
+  const res = await fetch(`${base}/documents/${id}/payments`, { headers: { 'X-API-KEY': key, Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Billingo fizetések hiba: HTTP ${res.status}`);
+  const body = (await res.json()) as BillingoPayment[] | { data?: BillingoPayment[] };
+  return Array.isArray(body) ? body : body.data || [];
 }
 
 /** Partner név → bevételi kategória (meglévő szabály / név egyezés / új "Projektek" alkategória). */
@@ -247,43 +263,120 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
   const today = todayHu();
   // a már meglévő bevételi tények (pl. xls import, banki tétel) – a Billingo „fizetve” ne duplázza meg őket
   const actualsR = await env.DB.prepare(
-    "SELECT id, leaf_id, date, amount, name FROM entries WHERE kind = 'actual' AND amount > 0 AND date >= date('now', '-200 days')",
-  ).all<{ id: string; leaf_id: string; date: string; amount: number; name: string }>();
+    "SELECT id, leaf_id, date, amount, name, link_id FROM entries WHERE kind = 'actual' AND amount > 0 AND date >= date('now', '-200 days')",
+  ).all<{ id: string; leaf_id: string; date: string; amount: number; name: string; link_id: string | null }>();
   const linkedR = await env.DB.prepare("SELECT link_id FROM entries WHERE kind = 'plan' AND link_id IS NOT NULL").all<{ link_id: string }>();
   const linked = new Set(linkedR.results.map((r) => r.link_id));
-  /** Billingo szerint kifizetett számla → tény (vagy a meglévő, azonos tényhez kötés) + a terv lezárása. */
-  const paidStmts = (planId: string, leaf: string, d: BillingoDocument, gross: number, partner: string): DbStatement[] => {
-    const paidOn = d.paid_date && d.paid_date <= today ? d.paid_date : today;
-    const same = actualsR.results.find(
+  // a tervhez kötött tények (tény.link_id = terv) – a részben fizetett számla eddig rögzített részfizetései
+  const partsR = await env.DB.prepare("SELECT id, link_id, amount FROM entries WHERE kind = 'actual' AND link_id IS NOT NULL ORDER BY date, id").all<{
+    id: string;
+    link_id: string;
+    amount: number;
+  }>();
+  const parts = new Map<string, { id: string; amount: number }[]>();
+  for (const p of partsR.results) (parts.get(p.link_id) || parts.set(p.link_id, []).get(p.link_id)!).push(p);
+  /** a meglévő, még sehova nem kötött azonos tény (pl. xls import, banki tétel) – a Billingo-fizetés ne duplázza meg */
+  const sameActual = (leaf: string, amount: number, on: string, partner: string) =>
+    actualsR.results.find(
       (a) =>
         !linked.has(a.id) &&
+        !a.link_id &&
         a.leaf_id === leaf &&
-        Math.abs(a.amount - gross) <= Math.max(500, gross * 0.01) &&
-        Math.abs(Date.parse(a.date) - Date.parse(paidOn)) <= 12 * 86400_000 &&
+        Math.abs(a.amount - amount) <= Math.max(500, amount * 0.01) &&
+        Math.abs(Date.parse(a.date) - Date.parse(on)) <= 12 * 86400_000 &&
         // több ügyfeles alkategóriában a másik ügyfél befizetése (tény) nem ez
-        ownerOf(a.name, a.leaf_id, d.partner?.name || partner) !== 'other',
+        ownerOf(a.name, a.leaf_id, partner) !== 'other',
     );
+  /**
+   * Billingo szerint kifizetett számla → tény (vagy a meglévő, azonos tényhez kötés) + a terv lezárása.
+   * Ha a számla előbb részben volt fizetve, a részfizetések már tények: az új tény csak a maradék.
+   */
+  const paidStmts = (planId: string, leaf: string, d: BillingoDocument, gross: number, partner: string): DbStatement[] => {
+    const paidOn = d.paid_date && d.paid_date <= today ? d.paid_date : today;
+    const prior = parts.get(planId) || [];
+    const rest = gross - prior.reduce((s, p) => s + p.amount, 0);
+    const out: DbStatement[] = [];
+    if (prior.length && rest < 1) {
+      // a részfizetések már kiadják a számla összegét: a terv az utolsóhoz kötve lezárul
+      out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(prior[prior.length - 1].id, t, planId));
+      return out;
+    }
+    const same = sameActual(leaf, rest, paidOn, d.partner?.name || partner);
     const aid = same?.id || 'bp' + d.id;
     linked.add(aid);
-    const out: DbStatement[] = [];
     if (!same)
       out.push(
         env.DB.prepare(
-          `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, note, updated_at)
-           VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'billingo', ?, 'Billingo: fizetve', ?) ON CONFLICT DO NOTHING`,
-        ).bind(aid, paidOn, leaf, `${partner} · ${d.invoice_number || ''}`.trim(), gross, 'bpaid:' + d.id, t),
+          `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, link_id, note, updated_at)
+           VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'billingo', ?, ?, 'Billingo: fizetve', ?) ON CONFLICT DO NOTHING`,
+        ).bind(aid, paidOn, leaf, `${partner} · ${d.invoice_number || ''}`.trim(), rest, 'bpaid:' + d.id, prior.length ? planId : null, t),
       );
+    // részfizetés után a tervhez tartozó tények együtt: a maradék ténye is a tervhez kötődik
+    else if (prior.length) out.push(env.DB.prepare('UPDATE entries SET link_id = ?, updated_at = ? WHERE id = ? AND link_id IS NULL').bind(planId, t, aid));
     out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(aid, t, planId));
+    return out;
+  };
+  /**
+   * Részben fizetett számla: a befolyt összeg (fizetésenként) részleges tény, a tervhez kötve (tény.link_id); a terv nyitva
+   * marad, a még várható része a számla összege a részfizetések nélkül. A már rögzített részfizetések nem duplázódnak.
+   */
+  const partialStmts = async (planId: string, leaf: string, d: BillingoDocument, rate: number, gross: number, partner: string): Promise<DbStatement[]> => {
+    let pays: BillingoPayment[];
+    try {
+      pays = await fetchPayments(env.BILLINGO_API_URL || BASE, env.BILLINGO_API_KEY!, d.id);
+    } catch (e) {
+      // a fizetések lekérése nem állíthatja meg a szinkront: a terv a teljes összeggel nyitva marad, a következő kör pótolja
+      console.error('billingo payments', d.id, e);
+      return [];
+    }
+    const prior = parts.get(planId) || [];
+    parts.set(planId, prior);
+    const out: DbStatement[] = [];
+    pays
+      .filter((p) => Math.round(Number(p.price) * rate) > 0)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .forEach((p, i) => {
+        if (i < prior.length) return;
+        const amount = Math.round(Number(p.price) * rate);
+        const on = p.date && p.date <= today ? p.date : today;
+        const same = sameActual(leaf, amount, on, d.partner?.name || partner);
+        const aid = same?.id || `bp${d.id}_${i + 1}`;
+        linked.add(aid);
+        prior.push({ id: aid, amount });
+        if (same) out.push(env.DB.prepare('UPDATE entries SET link_id = ?, updated_at = ? WHERE id = ? AND link_id IS NULL').bind(planId, t, aid));
+        else
+          out.push(
+            env.DB.prepare(
+              `INSERT INTO entries (id, kind, date, leaf_id, name, amount, done, tentative, source, ext_ref, link_id, note, updated_at)
+               VALUES (?, 'actual', ?, ?, ?, ?, 0, 0, 'billingo', ?, ?, 'Billingo: részben fizetve', ?) ON CONFLICT DO NOTHING`,
+            ).bind(aid, on, leaf, `${partner} · ${d.invoice_number || ''} · részfizetés`.trim(), amount, `bpaid:${d.id}_${i + 1}`, planId, t),
+          );
+      });
+    // a részletek már kiadják a (helyesbített) számla összegét – pl. a helyesbítés utáni összeget fizették ki, de az eredeti
+    // számla a Billingóban „részben fizetett” maradt: a terv lezárul, az utolsó részlethez kötve
+    if (prior.length && prior.reduce((s, p) => s + p.amount, 0) >= gross - 0.5)
+      out.push(env.DB.prepare('UPDATE entries SET done = 1, link_id = ?, updated_at = ? WHERE id = ? AND done = 0').bind(prior[prior.length - 1].id, t, planId));
     return out;
   };
   const stmts: DbStatement[] = [];
   let plans = 0;
   // a sztornózott számlák előbb: a saját tervről leváló számla helyére még ebben a körben beköthető a helyesbítő (új) számla
   const isCancelled = (d: BillingoDocument) => !!d.cancelled || d.payment_status === 'cancelled';
+  const rateOf = (d: BillingoDocument) => (d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1);
+  // helyesbítő (módosító) számla: nem külön bevétel, a különbözete az eredeti számla összegét igazítja (a sztornózott nem számít)
+  const modDiff = new Map<number, number>();
+  for (const m of docs) {
+    if (m.type !== 'modification' || isCancelled(m)) continue;
+    const orig = m.original_document_id ?? m.related_documents?.find((r) => docs.some((x) => x.id === r.id && INCOME_TYPES.has(String(x.type))))?.id;
+    if (!orig) continue;
+    modDiff.set(orig, (modDiff.get(orig) || 0) + Math.round((Number(m.gross_total) || 0) * rateOf(m)));
+  }
   for (const d of [...docs].sort((a, b) => Number(isCancelled(b)) - Number(isCancelled(a)))) {
     if (!d.id || !INCOME_TYPES.has(String(d.type))) continue;
-    const rate = d.currency && d.currency !== 'HUF' ? Number(d.conversion_rate) || 1 : 1;
-    const gross = Math.round((Number(d.gross_total) || 0) * rate);
+    const rate = rateOf(d);
+    // a számla bizonylat szerinti összege (billingo_docs), és a helyesbítésekkel igazított összeg (terv / bill_amount / tény)
+    const docGross = Math.round((Number(d.gross_total) || 0) * rate);
+    const gross = docGross + (modDiff.get(d.id) || 0);
     const partnerRaw = d.partner?.name || 'Ismeretlen partner';
     const partner = alias[partnerKey(partnerRaw)] || partnerRaw;
     const ext = `billingo:${d.id}`;
@@ -327,6 +420,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
       );
       plans++;
       if (!ex.done && d.payment_status === 'paid') stmts.push(...paidStmts(ex.id, ex.leaf_id, d, gross, partner));
+      else if (!ex.done && d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(ex.id, ex.leaf_id, d, rate, gross, partner)));
     } else if (gross > 0) {
       // adószám (partnertörzs) alapján a partner bevételi alkategóriája, különben név/szabály alapján
       const lid0 = byTax.get(taxBase(d.partner?.taxcode))?.in || (await leafForPartner(env, partner, leaves, sectionOf, rules, cache, stmts, contains));
@@ -350,6 +444,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
           ).bind(lid, ext, coveredSum, coveredSum, gross, due, t, t, matched.id),
         );
         if (d.payment_status === 'paid') stmts.push(...paidStmts(matched.id, lid, d, gross, partner));
+        else if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(matched.id, lid, d, rate, gross, partner)));
         plans++;
       } else if (OPEN_STATUSES.has(String(d.payment_status))) {
         planId = 'b' + d.id;
@@ -359,6 +454,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
            VALUES (?, 'plan', ?, ?, ?, ?, ?, 0, 0, 'billingo', ?, ?) ON CONFLICT DO NOTHING`,
           ).bind(planId, due, lid, `${partner} · ${d.invoice_number || ''}`.trim(), gross, gross, ext, t),
         );
+        if (d.payment_status === 'partially_paid') stmts.push(...(await partialStmts(planId, lid, d, rate, gross, partner)));
         plans++;
       }
     }
@@ -373,7 +469,7 @@ export async function syncBillingo(env: Env): Promise<{ docs: number; plans: num
         d.id,
         d.invoice_number || null,
         partnerRaw, // a számlázási (cég)név változatlanul; az álnév csak a terv nevében
-        gross,
+        docGross,
         d.currency || 'HUF',
         d.invoice_date || null,
         due,

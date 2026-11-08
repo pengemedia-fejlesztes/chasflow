@@ -63,6 +63,9 @@ export function computeFlags(
   const acked = new Set(ack);
   const byId = new Map(entries.map((e) => [e.id, e]));
   const txByActual = new Map(bankTx.filter((t) => t.actual_id).map((t) => [t.actual_id as string, t]));
+  // tervenként a hozzá kötött tények (részfizetésnél több is lehet)
+  const partsOf = new Map<string, Entry[]>();
+  for (const e of entries) if (e.kind === 'actual' && e.link_id) (partsOf.get(e.link_id) || partsOf.set(e.link_id, []).get(e.link_id)!).push(e);
   const out: Flag[] = [];
   const curYm = ymOf(today);
 
@@ -77,19 +80,25 @@ export function computeFlags(
       if (plan && plan.kind === 'plan') {
         // az összevont havi tétel (pl. bankköltség) csak a hónap lezárulta után hasonlítható
         if (merged && ymOf(e.date) >= curYm) continue;
+        // részfizetés (pl. részben fizetett számla): a még nyitott terv befolyt része nem eltérés, a maradék a terven marad;
+        // a lezárt tervnél a hozzá kötött tények összege számít, egyszer (a terv saját ténye mellett)
+        if (!plan.done) continue;
+        const parts = partsOf.get(plan.id) || [];
+        if (parts.length > 1 && plan.link_id !== e.id) continue;
+        const got = parts.length > 1 ? parts.reduce((s, x) => s + x.amount, 0) : e.amount;
         // kiszámlázott tételnél a fizetést a számlához mérjük (kevesebbet / többet utalt), forintra; különben a tervhez
         const bill = plan.bill_amount ?? invoiceOf?.(plan.id);
         const base = bill ?? plan.amount;
-        const diff = e.amount - base;
+        const diff = got - base;
         if (bill != null ? Math.abs(diff) < 1 : Math.abs(diff) < DEV_MIN_FT || Math.abs(diff) < Math.abs(plan.amount) * DEV_MIN_REL) continue;
         out.push({
-          id: `dev:${e.id}:${Math.round(e.amount)}`,
+          id: `dev:${e.id}:${Math.round(got)}`,
           kind: 'deviation',
           section: sectionOf(e.leaf_id),
           date: e.date,
           name: (plan.name || e.name) + (bill != null ? (diff < 0 ? ' – kevesebbet utalt, mint a számla' : ' – többet utalt, mint a számla') : ''),
           leaf_id: e.leaf_id,
-          amount: e.amount,
+          amount: got,
           plan: base,
           diff,
           vsInvoice: bill != null,
