@@ -44,7 +44,14 @@ export function PartnerServices({ p, compact }: { p: PartnerStat; compact?: bool
   const byId = useMemo(() => new Map(products.map((x) => [x.id, x])), [products]);
   const rows = (data.partnerProducts || []).filter((a) => a.partner_key === p.key);
   const ym = data.today.slice(0, 7);
-  const [edit, setEdit] = useState<string | 'new' | null>(null);
+  // az adatlap „+ → Új szolgáltatás / termék” menüpontja (a=new a címsorban) rögtön az új sor űrlapját nyitja
+  const [edit, setEdit] = useState<string | 'new' | null>(() => {
+    const q = new URLSearchParams(location.hash.split('?')[1] || '');
+    if (q.get('a') !== 'new' || !canEdit) return null;
+    q.delete('a');
+    history.replaceState(null, '', location.hash.split('?')[0] + '?' + q.toString());
+    return 'new';
+  });
   const active = rows.filter((a) => !a.end_ym || a.end_ym >= ym);
   const ended = rows.filter((a) => a.end_ym && a.end_ym < ym);
   const now = billablesFor(ym, rows, products);

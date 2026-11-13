@@ -79,7 +79,21 @@ export function PartnerView({
   onRenamed: (key: string) => void;
 }) {
   const { data, ix, canEdit, run, showToast } = useStore();
-  const [tab, setTab] = useState<Tab>('det');
+  // a címsor „t” paramétere (pl. a partnertörzs „Kezelés ›” gombja: t=srv) az Értékesítések fülre nyit
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
+    return t === 'srv' || t === 'inv' ? 'sales' : 'det';
+  });
+  const [salesKey, setSalesKey] = useState(0);
+  const openServices = () => {
+    const [path, qs] = location.hash.split('?');
+    const q = new URLSearchParams(qs || '');
+    q.set('t', 'srv');
+    q.set('a', 'new');
+    history.replaceState(null, '', (path || '#/') + '?' + q.toString());
+    setSalesKey((k) => k + 1);
+    setTab('sales');
+  };
   const [edit, setEdit] = useState<EditReq | null>(null);
   const [newTask, setNewTask] = useState(false);
   const [plusMenu, setPlusMenu] = useState(false);
@@ -242,7 +256,7 @@ export function PartnerView({
           (mobile ? (
             <MobileSales p={p} onNewItem={onNewItem} onEditItem={onEditItem} />
           ) : (
-            <PartnerSheet p={p} embedded onClose={onClose} onNewItem={onNewItem} onEditItem={onEditItem} onRenamed={onRenamed} />
+            <PartnerSheet key={salesKey} p={p} embedded onClose={onClose} onNewItem={onNewItem} onEditItem={onEditItem} onRenamed={onRenamed} />
           ))}
       </div>
 
@@ -274,6 +288,7 @@ export function PartnerView({
               }}
             >
               {leaf && canEdit && <MenuItem onClick={() => (setPlusMenu(false), onNewItem(leaf))}>Új tétel (bevétel / kiadás)</MenuItem>}
+              {canEdit && <MenuItem onClick={() => (setPlusMenu(false), openServices())}>Új szolgáltatás / termék</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setNewTask(true))}>Új feladat</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setTab('det'), setEdit({ kind: 'contact', index: -1 }))}>Új kapcsolattartó</MenuItem>}
             </div>
