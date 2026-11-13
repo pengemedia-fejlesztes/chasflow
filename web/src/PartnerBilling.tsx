@@ -86,7 +86,7 @@ export function PartnerServices({ p, compact }: { p: PartnerStat; compact?: bool
       {canEdit && edit !== 'new' && (
         <div>
           <Pill small onClick={() => setEdit('new')}>
-            + Szolgáltatás / termék hozzárendelése
+            + Szolgáltatás / termék hozzárendelése az ügyfélhez
           </Pill>
         </div>
       )}

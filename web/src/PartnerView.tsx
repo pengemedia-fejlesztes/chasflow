@@ -10,7 +10,7 @@ import { TASK_TYPES } from '../../shared/tasks';
 import { api } from './api';
 import { MobilePartnerScreen } from './MobileFlows';
 import { kindOf, PartnerEditor, PaymentTerms, PlannedTasks, SecHead } from './PartnerCard';
-import { PartnerBillingTab } from './PartnerBilling';
+import { PartnerBillingTab, PartnerServices } from './PartnerBilling';
 import { PartnerSheet } from './PartnerSheet';
 import { PartnerTasks, TaskEditor } from './TasksView';
 import { rowKey } from './logic';
@@ -233,6 +233,11 @@ export function PartnerView({
 
       <div style={{ padding: `14px ${mobile ? 0 : pad}px 120px` }}>
         {tab === 'det' && (
+          <div style={{ padding: mobile ? '0 16px' : 0 }}>
+            <PartnerServices p={p} compact={mobile} />
+          </div>
+        )}
+        {tab === 'det' && (
           <Details
             p={p}
             prof={prof}
@@ -249,6 +254,8 @@ export function PartnerView({
         )}
         {tab === 'time' && (
           <div style={{ padding: mobile ? '0 16px' : 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
+            {/* a partnernek értékesített / értékesítendő szolgáltatások, termékek: itt is felvehető, nem csak az Értékesítések fül mélyén */}
+            <PartnerServices p={p} compact={mobile} />
             <PartnerTasks partnerKey={p.key} />
             <Timeline p={p} onEdit={canEdit ? onEditItem : undefined} />
           </div>
