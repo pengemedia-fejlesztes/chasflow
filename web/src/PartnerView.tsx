@@ -13,6 +13,7 @@ import { kindOf, PartnerEditor, PaymentTerms, PlannedTasks, SecHead } from './Pa
 import { PartnerBillingTab } from './PartnerBilling';
 import { PartnerSheet } from './PartnerSheet';
 import { PartnerTasks, TaskEditor } from './TasksView';
+import { rowKey } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, inputStyle, R } from './ui';
 
@@ -249,7 +250,7 @@ export function PartnerView({
         {tab === 'time' && (
           <div style={{ padding: mobile ? '0 16px' : 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
             <PartnerTasks partnerKey={p.key} />
-            <Timeline p={p} />
+            <Timeline p={p} onEdit={canEdit ? onEditItem : undefined} />
           </div>
         )}
         {tab === 'sales' &&
@@ -927,7 +928,7 @@ const dlgBtn: CSSProperties = { height: 44, border: 0, borderRadius: 999, paddin
 
 type Ev = { date: string; kind: 'inv' | 'pay' | 'task' | 'plan'; title: string; sub?: string; amount?: number; tone?: 'neg' | 'ok' | 'muted' };
 
-function Timeline({ p }: { p: PartnerStat }) {
+function Timeline({ p, onEdit }: { p: PartnerStat; onEdit?: (leaf: string, key?: string) => void }) {
   const { data, ix } = useStore();
   const [n, setN] = useState(40);
   const evs = useMemo(() => {
@@ -977,7 +978,7 @@ function Timeline({ p }: { p: PartnerStat }) {
   const upcoming = p.future
     .filter((e) => e.kind === 'plan' && !e.done)
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 3);
+    .slice(0, 8);
 
   let lastYm = '';
   return (
@@ -989,11 +990,12 @@ function Timeline({ p }: { p: PartnerStat }) {
           {upcoming.map((e) => (
             <EvRow
               key={e.id}
+              onClick={onEdit ? () => onEdit(e.leaf_id, rowKey(e)) : undefined}
               ev={{
                 date: e.date,
                 kind: 'plan',
                 title: e.name || 'Tervezett tétel',
-                sub: e.date < data.today ? 'lejárt' : e.tentative ? 'ajánlat' : 'tervezett',
+                sub: (e.date < data.today ? 'lejárt' : e.tentative ? 'ajánlat' : 'éles, tervezett') + (onEdit ? ' · kattints a szerkesztéshez (dátum, összeg, ajánlat / éles)' : ''),
                 amount: Math.abs(e.amount),
                 tone: e.date < data.today ? 'neg' : 'muted',
               }}
@@ -1033,10 +1035,17 @@ const EV_ICON: Record<Ev['kind'], [string, string]> = {
   plan: ['M12 7v5l3 2M12 21a9 9 0 100-18 9 9 0 000 18z', '#EB6834'],
 };
 
-function EvRow({ ev }: { ev: Ev }) {
+function EvRow({ ev, onClick }: { ev: Ev; onClick?: () => void }) {
   const [d, col] = EV_ICON[ev.kind];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '34px minmax(0,1fr) auto', gap: 12, alignItems: 'start', position: 'relative', paddingBottom: 14 }}>
+    <div
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `${ev.title} szerkesztése` : undefined}
+      className={onClick ? 'hov-row' : undefined}
+      onClick={onClick}
+      onKeyDown={(k) => onClick && (k.key === 'Enter' || k.key === ' ') && (k.preventDefault(), onClick())}
+      style={{ cursor: onClick ? 'pointer' : 'default', borderRadius: R.md, display: 'grid', gridTemplateColumns: '34px minmax(0,1fr) auto', gap: 12, alignItems: 'start', position: 'relative', paddingBottom: 14 }}>
       <span style={{ position: 'absolute', left: 16, top: 34, bottom: 0, width: 2, background: C.line3 }} />
       <span
         style={{ width: 34, height: 34, borderRadius: 999, background: col + '1f', color: col, display: 'grid', placeItems: 'center', position: 'relative' }}
