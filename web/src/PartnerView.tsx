@@ -17,7 +17,7 @@ import { rowKey } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, inputStyle, R } from './ui';
 
-type Tab = 'det' | 'time' | 'sales';
+type Tab = 'time' | 'sales';
 const KIND_TAG: Record<string, [string, string, string]> = {
   vevo: ['ÜGYFÉL', '#D3F0E3', '#0B6B45'],
   szallito: ['SZÁLLÍTÓ', '#FBE7CF', '#8A4B05'],
@@ -83,7 +83,7 @@ export function PartnerView({
   // a címsor „t” paramétere (pl. a partnertörzs „Kezelés ›” gombja: t=srv) az Értékesítések fülre nyit
   const [tab, setTab] = useState<Tab>(() => {
     const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
-    return t === 'srv' || t === 'inv' ? 'sales' : 'det';
+    return t === 'srv' || t === 'inv' ? 'sales' : 'time';
   });
   const [salesKey, setSalesKey] = useState(0);
   const openServices = () => {
@@ -179,7 +179,7 @@ export function PartnerView({
         {(company || p.info?.tax_number) && (
           <button
             type="button"
-            onClick={() => setTab('det')}
+            onClick={() => setTab('sales')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -200,10 +200,9 @@ export function PartnerView({
             {p.info?.tax_number && <span style={{ font: `400 13px ${FONT}`, color: C.muted }}>{p.info.tax_number}</span>}
           </button>
         )}
-        <div role="tablist" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2, background: C.bg, borderRadius: 999, padding: 3 }}>
+        <div role="tablist" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2, background: C.bg, borderRadius: 999, padding: 3 }}>
           {(
             [
-              ['det', 'Részletek'],
               ['time', 'Idővonal'],
               ['sales', 'Értékesítések'],
             ] as [Tab, string][]
@@ -232,26 +231,6 @@ export function PartnerView({
       </div>
 
       <div style={{ padding: `14px ${mobile ? 0 : pad}px 120px` }}>
-        {tab === 'det' && (
-          <div style={{ padding: mobile ? '0 16px' : 0 }}>
-            <PartnerServices p={p} compact={mobile} />
-          </div>
-        )}
-        {tab === 'det' && (
-          <Details
-            p={p}
-            prof={prof}
-            tag={tag}
-            group={group}
-            users={users}
-            mobile={mobile}
-            canEdit={canEdit}
-            onEdit={setEdit}
-            onSave={saveProfile}
-            onEditItem={onEditItem}
-            onRenamed={onRenamed}
-          />
-        )}
         {tab === 'time' && (
           <div style={{ padding: mobile ? '0 16px' : 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
             {/* a partnernek értékesített / értékesítendő szolgáltatások, termékek: itt is felvehető, nem csak az Értékesítések fül mélyén */}
@@ -266,6 +245,24 @@ export function PartnerView({
           ) : (
             <PartnerSheet key={salesKey} p={p} embedded onClose={onClose} onNewItem={onNewItem} onEditItem={onEditItem} onRenamed={onRenamed} />
           ))}
+        {/* a régi Részletek fül azon adatai, amelyek a Számlázási adatok között nincsenek: címke, kapcsolattartók, felelősök, egyéni mezők, további beállítások */}
+        {tab === 'sales' && (
+          <div style={{ marginTop: 22 }}>
+            <Details
+              p={p}
+              prof={prof}
+              tag={tag}
+              group={group}
+              users={users}
+              mobile={mobile}
+              canEdit={canEdit}
+              onEdit={setEdit}
+              onSave={saveProfile}
+              onEditItem={onEditItem}
+              onRenamed={onRenamed}
+            />
+          </div>
+        )}
       </div>
 
       {/* lebegő gombsor: új (tétel / feladat), hívás, e-mail – szerkesztő ablak alatt rejtve */}
@@ -298,7 +295,7 @@ export function PartnerView({
               {leaf && canEdit && <MenuItem onClick={() => (setPlusMenu(false), onNewItem(leaf))}>Új tétel (bevétel / kiadás)</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), openServices())}>Új szolgáltatás / termék</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setNewTask(true))}>Új feladat</MenuItem>}
-              {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setTab('det'), setEdit({ kind: 'contact', index: -1 }))}>Új kapcsolattartó</MenuItem>}
+              {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setTab('sales'), setEdit({ kind: 'contact', index: -1 }))}>Új kapcsolattartó</MenuItem>}
             </div>
           )}
           <div
@@ -371,43 +368,11 @@ function Details({
 }) {
   const [more, setMore] = useState(false);
   const ed = (r: EditReq) => (canEdit ? () => onEdit(r) : undefined);
-  const address = [prof.zip, prof.city, prof.address].filter(Boolean).join(' ') + (prof.country && prof.country !== 'Magyarország' ? `, ${prof.country}` : '');
   const followers = prof.followers.map((id) => users.find((u) => u.id === id)?.name || `#${id}`);
   const sec = p.sides.in ? 'in' : 'out';
 
   const contactCol = (
     <>
-      <Group title="Névjegyadatok">
-        <Row label="E-mail" value={prof.email} empty="E-mail cím hozzáadása" onClick={ed({ kind: 'field', field: 'email', label: 'E-mail' })}>
-          {prof.email && <ActionIcon href={'mailto:' + prof.email} label="E-mail írása" d={IC.mail} />}
-        </Row>
-        {(prof.billing_email || canEdit) && (
-          <Row
-            label="Számlázási e-mail"
-            value={prof.billing_email}
-            empty="Számlázási e-mail hozzáadása"
-            onClick={ed({ kind: 'field', field: 'billing_email', label: 'Számlázási e-mail' })}
-          >
-            {prof.billing_email && <ActionIcon href={'mailto:' + prof.billing_email} label="E-mail írása" d={IC.mail} />}
-          </Row>
-        )}
-        <Row label="Telefon" value={prof.phone} empty="Telefonszám hozzáadása" onClick={ed({ kind: 'field', field: 'phone', label: 'Telefon' })}>
-          {prof.phone && (
-            <>
-              <ActionIcon href={'sms:' + prof.phone.replace(/[^\d+]/g, '')} label="SMS" d={IC.sms} />
-              <ActionIcon href={telHref(prof.phone)} label="Hívás" d={IC.phone} />
-            </>
-          )}
-        </Row>
-        {(prof.website || canEdit) && (
-          <Row label="Weboldal" value={prof.website} empty="Weboldal hozzáadása" onClick={ed({ kind: 'field', field: 'website', label: 'Weboldal' })}>
-            {prof.website && (
-              <ActionIcon href={/^https?:/.test(prof.website) ? prof.website : 'https://' + prof.website} label="Megnyitás" d={IC.web} external />
-            )}
-          </Row>
-        )}
-      </Group>
-
       <Group title="Kapcsolattartók" right={canEdit ? <LinkBtn onClick={() => onEdit({ kind: 'contact', index: -1 })}>+ Új</LinkBtn> : undefined}>
         {prof.contact && <Row label="Fő kapcsolattartó" value={prof.contact} onClick={ed({ kind: 'field', field: 'contact', label: 'Fő kapcsolattartó' })} />}
         {prof.contacts.map((c, i) => (
@@ -435,31 +400,6 @@ function Details({
 
   const infoCol = (
     <>
-      <Group title="Cím és számlázás">
-        <Row label="Cím" value={address.trim()} empty="Cím megadása" onClick={ed({ kind: 'address' })}>
-          {address.trim() && (
-            <ActionIcon href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address)} label="Térkép" d={IC.map} external />
-          )}
-        </Row>
-        <Row
-          label="Hivatalos cégnév"
-          value={prof.company}
-          empty="Cégnév megadása"
-          onClick={ed({ kind: 'field', field: 'company', label: 'Hivatalos cégnév' })}
-        />
-        <Row label="Adószám" value={p.info?.tax_number || ''} empty="a További beállításokban adható meg" />
-        {(prof.eu_tax || canEdit) && (
-          <Row label="Közösségi adószám" value={prof.eu_tax} empty="Megadás" onClick={ed({ kind: 'field', field: 'eu_tax', label: 'Közösségi adószám' })} />
-        )}
-        <Row label="Bankszámlaszám" value={prof.bank_account} empty="Megadás" onClick={ed({ kind: 'field', field: 'bank_account', label: 'Bankszámlaszám' })} />
-        <Row
-          label="Fizetési határidő"
-          value={prof.pay_days == null ? '' : `számla kelte + ${prof.pay_days} nap`}
-          empty="Megadás"
-          onClick={ed({ kind: 'pay_days' })}
-        />
-      </Group>
-
       <Group title="Egyéni mezők" right={canEdit ? <LinkBtn onClick={() => onEdit({ kind: 'custom', index: -1 })}>+ Új mező</LinkBtn> : undefined}>
         {prof.custom.map((c, i) => (
           <Row key={i} label={c.label} value={c.value} empty="–" onClick={ed({ kind: 'custom', index: i })} chevron={canEdit} />
