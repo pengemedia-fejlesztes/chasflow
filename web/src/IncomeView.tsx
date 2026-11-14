@@ -28,6 +28,25 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
   const [pickFor, setPickFor] = useState<Entry | null>(null);
   const [bankFor, setBankFor] = useState<Entry | null>(null);
   const [allIn, setAllIn] = useState(false);
+  // összecsukott hónapok (böngészőnként megjegyezve)
+  const [shut, setShut0] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('cf-income-shut') || '[]'));
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleShut = (k: string) => {
+    const n = new Set(shut);
+    if (n.has(k)) n.delete(k);
+    else n.add(k);
+    setShut0(n);
+    try {
+      localStorage.setItem('cf-income-shut', JSON.stringify([...n]));
+    } catch {
+      /* privát mód */
+    }
+  };
   const planOfActual = usePlanOfActual();
 
   const inSide = (e: Entry) => side === 'all' || ix.sectionOf(e.leaf_id) === side;
@@ -208,52 +227,71 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
             {order.map((k) => {
               const es = groups.get(k)!;
               const late = k === 'overdue';
-              const firmEs = es.filter((e) => !e.tentative);
-              const offerSum = sumAbs(es.filter((e) => e.tentative));
               return (
                 <div key={k}>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: COLS,
-                      gap: 12,
-                      alignItems: 'center',
-                      padding: '11px 16px',
-                      background: late ? C.negBg : C.bg3,
-                      borderBottom: `1px solid ${C.line}`,
-                      borderTop: `1px solid ${C.line}`,
-                    }}
-                  >
-                    <span
-                      style={{
-                        gridColumn: '1 / span 2',
-                        font: `700 13px ${FONT_H}`,
-                        color: late ? C.neg : C.navy,
-                        letterSpacing: '.04em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      {late ? 'Lejárt' : monthLong(k)}
-                      <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, letterSpacing: 0, textTransform: 'none', marginLeft: 10 }}>
-                        {es.length} tétel
+                  {(() => {
+                    // a hónap összesítője (a Mind / Bevételek / Kiadások szűrőtől függetlenül, a nyitott tervekből)
+                    const inMonth = data.entries.filter(
+                      (e) => e.kind === 'plan' && !e.done && matchQ(e) && (late ? isLate(e) && (e.date >= addMonths(ix.cur, -6) + '-01' || e.source === 'billingo') : !isLate(e) && ymOf(e.date) === k),
+                    );
+                    const offerT = sumAbs(inMonth.filter((e) => e.tentative && !isOut(e)));
+                    const inc = sumAbs(inMonth.filter((e) => !e.tentative && !isOut(e)));
+                    const outT = sumAbs(inMonth.filter((e) => !e.tentative && isOut(e)));
+                    const cf = inc - outT;
+                    const closed = shut.has(k);
+                    const stat = (l: string, v: number, col: string, sign = '') => (
+                      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 92 }}>
+                        <span style={{ font: `500 10.5px ${FONT}`, letterSpacing: '.08em', textTransform: 'uppercase', color: C.muted }}>{l}</span>
+                        <b style={{ font: `700 14px ${FONT}`, color: col, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          {sign}
+                          {fmt(Math.abs(v))} Ft
+                        </b>
                       </span>
-                    </span>
-                    <span style={{ font: `500 12px ${FONT}`, color: C.muted }}>{offerSum ? `+ ajánlat ${fmt(offerSum)}` : ''}</span>
-                    <b
-                      style={{
-                        textAlign: 'right',
-                        font: `700 14px ${FONT}`,
-                        color: late ? C.neg : C.navy,
-                        fontVariantNumeric: 'tabular-nums',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {side === 'all'
-                        ? `be ${fmt(sumAbs(firmEs.filter((e) => !isOut(e))))} · ki ${fmt(sumAbs(firmEs.filter(isOut)))}`
-                        : `${fmt(sumAbs(firmEs))} Ft`}
-                    </b>
-                  </div>
-                  {es.map((e) => {
+                    );
+                    return (
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={!closed}
+                        onClick={() => toggleShut(k)}
+                        onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), toggleShut(k))}
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: '8px 18px',
+                          padding: '10px 16px',
+                          background: late ? C.negBg : C.bg3,
+                          borderBottom: `1px solid ${C.line}`,
+                          borderTop: `1px solid ${C.line}`,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span
+                          style={{
+                            flex: '1 1 200px',
+                            font: `700 13px ${FONT_H}`,
+                            color: late ? C.neg : C.navy,
+                            letterSpacing: '.04em',
+                            textTransform: 'uppercase',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ display: 'inline-block', transition: 'transform .2s', transform: closed ? 'rotate(-90deg)' : 'none', color: C.muted }}>▾</span>
+                          {late ? 'Lejárt' : monthLong(k)}
+                          <span style={{ font: `500 12.5px ${FONT}`, color: C.muted, letterSpacing: 0, textTransform: 'none' }}>{es.length} tétel</span>
+                        </span>
+                        {stat('Ajánlat', offerT, C.offer)}
+                        {stat('Bevétel', inc, C.inc)}
+                        {stat('Kiadás', outT, C.neg, outT ? '−' : '')}
+                        {stat('Cashflow (terv)', cf, cf < 0 ? C.neg : C.navy, cf < 0 ? '−' : '')}
+                        {stat('Cashflow + ajánlat', cf + offerT, cf + offerT < 0 ? C.neg : C.navy, cf + offerT < 0 ? '−' : '')}
+                      </div>
+                    );
+                  })()}
+                  {!shut.has(k) && es.map((e) => {
                     const doc = docByPlan.get(e.id);
                     const nav = navByPlan.get(e.id);
                     const out = isOut(e);
