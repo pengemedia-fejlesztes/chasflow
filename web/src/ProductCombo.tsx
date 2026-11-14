@@ -44,6 +44,8 @@ export function ProductCombo({
   const inv = useInventory();
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
+  // Enter csak akkor választ a listából, ha nyilakkal léptek rá – különben a beírt név marad (nem írjuk felül)
+  const [nav, setNav] = useState(false);
   const blurT = useRef<number | null>(null);
   const nq = normalizeText(value);
   const list = useMemo(() => {
@@ -84,14 +86,16 @@ export function ProductCombo({
           onChange(e.target.value);
           setOpen(true);
           setHi(0);
+          setNav(false);
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => (blurT.current = window.setTimeout(() => setOpen(false), 150))}
         onKeyDown={(e) => {
           if (!open || !list.length) return;
-          if (e.key === 'ArrowDown') (e.preventDefault(), setHi((hi + 1) % list.length));
-          else if (e.key === 'ArrowUp') (e.preventDefault(), setHi((hi - 1 + list.length) % list.length));
-          else if (e.key === 'Enter' && !exact) (e.preventDefault(), e.stopPropagation(), pick(hi));
+          if (e.key === 'ArrowDown') (e.preventDefault(), setNav(true), setHi((hi + 1) % list.length));
+          else if (e.key === 'ArrowUp') (e.preventDefault(), setNav(true), setHi((hi - 1 + list.length) % list.length));
+          else if (e.key === 'Enter' && !exact && nav) (e.preventDefault(), e.stopPropagation(), pick(hi));
+          else if (e.key === 'Enter') setOpen(false);
           else if (e.key === 'Escape') setOpen(false);
         }}
         style={{ width: '100%', boxSizing: 'border-box', ...style }}

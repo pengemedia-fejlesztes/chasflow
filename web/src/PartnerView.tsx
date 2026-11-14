@@ -2,18 +2,21 @@
 // alul lebegő gombsor (új tétel / feladat, hívás, e-mail). A Részleteken a névjegyadatok (e-mail, telefon – egy koppintással
 // hívható / írható), kapcsolattartók, felelősök, cím, számlázási adatok és egyéni mezők; minden sor helyben szerkeszthető.
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { displayGroup } from '../../shared/categories';
+import { displayGroup, normalizeText } from '../../shared/categories';
+import { baseName } from '../../shared/monthname';
+import type { Entry } from '../../shared/types';
 import { emptyProfile, type PartnerContact, type PartnerProfile } from '../../shared/catalog';
 import { fmt, monthLong, ymOf } from '../../shared/model';
 import type { PartnerStat } from '../../shared/partners';
 import { TASK_TYPES } from '../../shared/tasks';
 import { api } from './api';
+import { CalendarSheet } from './DatePicker';
 import { MobilePartnerScreen } from './MobileFlows';
 import { kindOf, PartnerEditor, PaymentTerms, PlannedTasks, SecHead } from './PartnerCard';
-import { PartnerBillingTab, PartnerServices } from './PartnerBilling';
+import { PartnerBillingTab } from './PartnerBilling';
 import { PartnerSheet } from './PartnerSheet';
 import { PartnerTasks, TaskEditor } from './TasksView';
-import { rowKey } from './logic';
+import { REP, rowKey } from './logic';
 import { useStore } from './store';
 import { C, FONT, FONT_H, inputStyle, R } from './ui';
 
@@ -85,16 +88,7 @@ export function PartnerView({
     const t = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
     return t === 'srv' || t === 'inv' ? 'sales' : 'time';
   });
-  const [salesKey, setSalesKey] = useState(0);
-  const openServices = () => {
-    const [path, qs] = location.hash.split('?');
-    const q = new URLSearchParams(qs || '');
-    q.set('t', 'srv');
-    q.set('a', 'new');
-    history.replaceState(null, '', (path || '#/') + '?' + q.toString());
-    setSalesKey((k) => k + 1);
-    setTab('sales');
-  };
+  const salesKey = 0;
   const [edit, setEdit] = useState<EditReq | null>(null);
   const [newTask, setNewTask] = useState(false);
   const [plusMenu, setPlusMenu] = useState(false);
@@ -234,7 +228,7 @@ export function PartnerView({
         {tab === 'time' && (
           <div style={{ padding: mobile ? '0 16px' : 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
             {/* a partnernek értékesített / értékesítendő szolgáltatások, termékek: itt is felvehető, nem csak az Értékesítések fül mélyén */}
-            <PartnerServices p={p} compact={mobile} />
+            <PartnerDeals p={p} onNew={canEdit && leaf ? () => onNewItem(leaf) : undefined} onEdit={canEdit ? onEditItem : undefined} />
             <PartnerTasks partnerKey={p.key} />
             <Timeline p={p} onEdit={canEdit ? onEditItem : undefined} />
           </div>
@@ -293,7 +287,7 @@ export function PartnerView({
               }}
             >
               {leaf && canEdit && <MenuItem onClick={() => (setPlusMenu(false), onNewItem(leaf))}>Új tétel (bevétel / kiadás)</MenuItem>}
-              {canEdit && <MenuItem onClick={() => (setPlusMenu(false), openServices())}>Új szolgáltatás / termék</MenuItem>}
+              {leaf && canEdit && <MenuItem onClick={() => (setPlusMenu(false), onNewItem(leaf))}>Új szolgáltatás / termék eladása</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setNewTask(true))}>Új feladat</MenuItem>}
               {canEdit && <MenuItem onClick={() => (setPlusMenu(false), setTab('sales'), setEdit({ kind: 'contact', index: -1 }))}>Új kapcsolattartó</MenuItem>}
             </div>
@@ -366,7 +360,8 @@ function Details({
   onEditItem: (leaf: string, key?: string) => void;
   onRenamed: (key: string) => void;
 }) {
-  const [more, setMore] = useState(false);
+  // kategória, típus, adószám, felismert nevek: alapból látszik (a partnertörzsből is ide jutunk)
+  const [more, setMore] = useState(true);
   const ed = (r: EditReq) => (canEdit ? () => onEdit(r) : undefined);
   const followers = prof.followers.map((id) => users.find((u) => u.id === id)?.name || `#${id}`);
   const sec = p.sides.in ? 'in' : 'out';
@@ -876,7 +871,8 @@ const dlgBtn: CSSProperties = { height: 44, border: 0, borderRadius: 999, paddin
 type Ev = { date: string; kind: 'inv' | 'pay' | 'task' | 'plan'; title: string; sub?: string; amount?: number; tone?: 'neg' | 'ok' | 'muted' };
 
 function Timeline({ p, onEdit }: { p: PartnerStat; onEdit?: (leaf: string, key?: string) => void }) {
-  const { data, ix } = useStore();
+  const { data, ix, commit } = useStore();
+  const [dateFor, setDateFor] = useState<Entry | null>(null);
   const [n, setN] = useState(40);
   const evs = useMemo(() => {
     const out: Ev[] = [];
@@ -938,11 +934,12 @@ function Timeline({ p, onEdit }: { p: PartnerStat; onEdit?: (leaf: string, key?:
             <EvRow
               key={e.id}
               onClick={onEdit ? () => onEdit(e.leaf_id, rowKey(e)) : undefined}
+              onDate={onEdit ? () => setDateFor(e) : undefined}
               ev={{
                 date: e.date,
                 kind: 'plan',
                 title: e.name || 'Tervezett tétel',
-                sub: (e.date < data.today ? 'lejárt' : e.tentative ? 'ajánlat' : 'éles, tervezett') + (onEdit ? ' · kattints a szerkesztéshez (dátum, összeg, ajánlat / éles)' : ''),
+                sub: (e.date < data.today ? 'lejárt' : e.tentative ? 'ajánlat' : 'éles, tervezett') + (onEdit ? ' · kattints a szerkesztéshez (összeg, ajánlat / éles)' : ''),
                 amount: Math.abs(e.amount),
                 tone: e.date < data.today ? 'neg' : 'muted',
               }}
@@ -971,6 +968,22 @@ function Timeline({ p, onEdit }: { p: PartnerStat; onEdit?: (leaf: string, key?:
           Korábbiak ({evs.length - n})
         </button>
       )}
+      {dateFor && (
+        <CalendarSheet
+          value={dateFor.date}
+          onClose={() => setDateFor(null)}
+          onPick={(v) => {
+            const e = dateFor;
+            setDateFor(null);
+            // ismétlődő tételnél a hónap (melyik hónap díja) megmarad, csak a fizetés napja változik
+            if (v !== e.date)
+              commit(
+                { upsert: [{ ...e, date: v, ...(e.series_id ? { period: e.period || ymOf(e.date) } : {}) }] },
+                `${p.name}: ${e.name || 'tétel'} – új dátum ${v.replace(/-/g, '.')}.`,
+              );
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -982,7 +995,7 @@ const EV_ICON: Record<Ev['kind'], [string, string]> = {
   plan: ['M12 7v5l3 2M12 21a9 9 0 100-18 9 9 0 000 18z', '#EB6834'],
 };
 
-function EvRow({ ev, onClick }: { ev: Ev; onClick?: () => void }) {
+function EvRow({ ev, onClick, onDate }: { ev: Ev; onClick?: () => void; onDate?: () => void }) {
   const [d, col] = EV_ICON[ev.kind];
   return (
     <div
@@ -992,17 +1005,47 @@ function EvRow({ ev, onClick }: { ev: Ev; onClick?: () => void }) {
       className={onClick ? 'hov-row' : undefined}
       onClick={onClick}
       onKeyDown={(k) => onClick && (k.key === 'Enter' || k.key === ' ') && (k.preventDefault(), onClick())}
-      style={{ cursor: onClick ? 'pointer' : 'default', borderRadius: R.md, display: 'grid', gridTemplateColumns: '34px minmax(0,1fr) auto', gap: 12, alignItems: 'start', position: 'relative', paddingBottom: 14 }}>
-      <span style={{ position: 'absolute', left: 16, top: 34, bottom: 0, width: 2, background: C.line3 }} />
-      <span
-        style={{ width: 34, height: 34, borderRadius: 999, background: col + '1f', color: col, display: 'grid', placeItems: 'center', position: 'relative' }}
-      >
-        <Svg d={d} size={18} />
-      </span>
+      style={{ cursor: onClick ? 'pointer' : 'default', borderRadius: R.md, display: 'grid', gridTemplateColumns: (ev.kind === 'plan' ? '58px' : '34px') + ' minmax(0,1fr) auto', gap: 12, alignItems: 'start', position: 'relative', paddingBottom: 14 }}>
+      <span style={{ position: 'absolute', left: ev.kind === 'plan' ? 28 : 16, top: ev.kind === 'plan' ? 40 : 34, bottom: 0, width: 2, background: C.line3 }} />
+      {ev.kind === 'plan' ? (
+        // tervezett tételnél az óra ikon helyén a dátum: kattintásra a naptár nyílik, ott módosítható
+        <button
+          type="button"
+          title={onDate ? 'Dátum módosítása' : undefined}
+          disabled={!onDate}
+          onClick={(x) => (x.stopPropagation(), onDate?.())}
+          onKeyDown={(x) => x.stopPropagation()}
+          style={{
+            width: 58,
+            minHeight: 40,
+            borderRadius: 10,
+            border: `1.5px solid ${ev.tone === 'neg' ? C.neg : onDate ? C.line2 : C.line3}`,
+            background: '#fff',
+            color: ev.tone === 'neg' ? C.neg : C.navy,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: onDate ? 'pointer' : 'default',
+            padding: '3px 0',
+            lineHeight: 1.1,
+          }}
+        >
+          <span style={{ font: `600 11px ${FONT}`, color: C.muted }}>{ev.date.slice(0, 4)}</span>
+          <b style={{ font: `700 14px ${FONT_H}`, fontVariantNumeric: 'tabular-nums' }}>{ev.date.slice(5).replace('-', '.')}.</b>
+        </button>
+      ) : (
+        <span
+          style={{ width: 34, height: 34, borderRadius: 999, background: col + '1f', color: col, display: 'grid', placeItems: 'center', position: 'relative' }}
+        >
+          <Svg d={d} size={18} />
+        </span>
+      )}
       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, paddingTop: 2 }}>
         <b style={{ font: `600 15px ${FONT}`, color: C.ink, overflowWrap: 'anywhere' }}>{ev.title}</b>
         <span style={{ font: `400 13px ${FONT}`, color: ev.tone === 'neg' ? C.neg : C.muted }}>
-          {ev.date.replace(/-/g, '.')}.{ev.sub ? ` · ${ev.sub}` : ''}
+          {ev.kind === 'plan' ? ev.sub : `${ev.date.replace(/-/g, '.')}.${ev.sub ? ` · ${ev.sub}` : ''}`}
         </span>
       </span>
       {ev.amount != null && (
@@ -1050,5 +1093,182 @@ function MobileSales({ p, onNewItem, onEditItem }: { p: PartnerStat; onNewItem: 
         </div>
       )}
     </div>
+  );
+}
+
+// ───────────────────────── Szolgáltatások, termékek (eladások követése) ─────────────────────────
+// Minden eladott / ajánlott szolgáltatás egy sor: a tételei hónaponként terv → számla → fizetve állapottal.
+// Kattintásra a teljes tétel-szerkesztő nyílik (név a törzsből, összeg, ütem, dátumok, ajánlat / éles, havi rács).
+
+const DEAL_PART = /\s*[–-]\s*\d+\. részlet$/;
+
+export function PartnerDeals({
+  p,
+  onNew,
+  onEdit,
+}: {
+  p: PartnerStat;
+  onNew?: () => void;
+  onEdit?: (leaf: string, key?: string) => void;
+}) {
+  const { data, ix } = useStore();
+  const rows = useMemo(() => {
+    const leafIds = new Set(p.leaves.map((l) => l.id));
+    const rep = new Map(data.series.map((x) => [x.id, x.rep]));
+    const billed = new Set([...data.billingo.filter((d) => d.plan_id && !d.cancelled).map((d) => d.plan_id!), ...(data.navInvoices || []).filter((d) => d.plan_id).map((d) => d.plan_id!)]);
+    const m = new Map<
+      string,
+      { name: string; leaf: string; key: string; rep: string; offer: boolean; es: { e: Entry; st: 'paid' | 'inv' | 'plan' | 'offer' }[]; next: string | null; open: number }
+    >();
+    for (const e of data.entries) {
+      if (e.kind !== 'plan' || !leafIds.has(e.leaf_id)) continue;
+      const fromBill = e.source === 'billingo' && /\/\s*\d{4}-\d+/.test(e.name || '');
+      const name = fromBill ? 'Számlák (terv nélkül)' : baseName(e.name || '').replace(DEAL_PART, '').trim() || 'Tétel';
+      const k = fromBill ? 'bill|' + e.leaf_id : e.series_id || e.leaf_id + '|' + normalizeText(name);
+      const st = e.done ? 'paid' : billed.has(e.id) || e.source === 'billingo' ? 'inv' : e.tentative ? 'offer' : 'plan';
+      const g = m.get(k) || {
+        name,
+        leaf: e.leaf_id,
+        key: rowKey(e),
+        rep: e.series_id && rep.get(e.series_id) ? REP[rep.get(e.series_id)!] : DEAL_PART.test(baseName(e.name || '')) ? 'Részletekben' : 'Egyszeri',
+        offer: true,
+        es: [],
+        next: null,
+        open: 0,
+      };
+      g.es.push({ e, st });
+      if (!e.tentative) g.offer = false;
+      if (!e.done) {
+        g.open += Math.abs(e.amount);
+        if (!g.next || e.date < g.next) {
+          g.next = e.date;
+          g.key = rowKey(e);
+        }
+      }
+      m.set(k, g);
+    }
+    for (const g of m.values()) g.es.sort((a, b) => a.e.date.localeCompare(b.e.date));
+    // előre a nyitottak (legközelebbi dátum szerint), utána a lezártak (legutóbbi szerint)
+    return [...m.values()].sort((a, b) =>
+      a.next && b.next ? a.next.localeCompare(b.next) : a.next ? -1 : b.next ? 1 : b.es[b.es.length - 1].e.date.localeCompare(a.es[a.es.length - 1].e.date),
+    );
+  }, [p, data.entries, data.series, data.billingo, data.navInvoices]);
+  const [all, setAll] = useState(false);
+  const shown = all ? rows : rows.filter((r) => r.next).concat(rows.filter((r) => !r.next).slice(0, 3));
+  const DOT: Record<'paid' | 'inv' | 'plan' | 'offer', [string, string, string]> = {
+    paid: [C.blueDark, C.blueDark, 'fizetve'],
+    inv: [C.blue2, C.blue2, 'számla kint'],
+    plan: ['#fff', C.blueDark, 'tervezett'],
+    offer: ['#fff', C.offer, 'ajánlat'],
+  };
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <b style={{ font: `700 19px ${FONT_H}`, color: C.navy, flex: 1 }}>Szolgáltatások, termékek</b>
+        <span style={{ display: 'flex', gap: 12, font: `400 12.5px ${FONT}`, color: C.muted, flexWrap: 'wrap' }}>
+          {(['plan', 'inv', 'paid', 'offer'] as const).map((k) => (
+            <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <i
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 3,
+                  background: DOT[k][0],
+                  border: `1.5px ${k === 'offer' ? 'dashed' : 'solid'} ${DOT[k][1]}`,
+                  display: 'inline-block',
+                }}
+              />
+              {DOT[k][2]}
+            </span>
+          ))}
+        </span>
+        {onNew && (
+          <button type="button" onClick={onNew} style={{ ...dlgBtn, background: C.navy, color: '#fff', padding: '8px 14px' }}>
+            + Szolgáltatás / termék
+          </button>
+        )}
+      </div>
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: R.lg, overflow: 'hidden', background: '#fff' }}>
+        {!rows.length && (
+          <div style={{ padding: 18, font: `400 14px ${FONT}`, color: C.muted, textAlign: 'center' }}>
+            Még nincs eladott vagy ajánlott szolgáltatás. A „+ Szolgáltatás / termék” gombbal vehetsz fel (ajánlatként vagy élesként).
+          </div>
+        )}
+        {shown.map((r) => {
+          const paid = r.es.filter((x) => x.st === 'paid').length;
+          const inv = r.es.filter((x) => x.st === 'inv').length;
+          const sec = ix.sectionOf(r.leaf);
+          return (
+            <div
+              key={r.leaf + r.key + r.name}
+              role={onEdit ? 'button' : undefined}
+              tabIndex={onEdit ? 0 : undefined}
+              className={onEdit ? 'hov-row' : undefined}
+              onClick={onEdit ? () => onEdit(r.leaf, r.key) : undefined}
+              onKeyDown={(k) => onEdit && (k.key === 'Enter' || k.key === ' ') && (k.preventDefault(), onEdit(r.leaf, r.key))}
+              aria-label={`${r.name} megnyitása`}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) auto',
+                gap: 14,
+                alignItems: 'center',
+                padding: '12px 16px',
+                borderTop: `1px solid ${C.line3}`,
+                cursor: onEdit ? 'pointer' : 'default',
+              }}
+            >
+              <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <b style={{ font: `600 15px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</b>
+                  <span
+                    style={{
+                      flex: 'none',
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      font: `600 11.5px ${FONT}`,
+                      background: r.offer ? C.offerBg : r.next ? C.bg2 : C.bg,
+                      color: r.offer ? C.offer : r.next ? C.blueDark : C.muted,
+                    }}
+                  >
+                    {r.offer ? 'ajánlat' : r.next ? 'éles' : 'lezárt'}
+                  </span>
+                </span>
+                <span style={{ font: `400 12.5px ${FONT}`, color: C.muted }}>
+                  {r.rep} · {r.es.length} tétel · {inv ? `${inv} számla kint · ` : ''}
+                  {paid} fizetve{r.next ? ` · következő: ${r.next.replace(/-/g, '.')}.` : ''}
+                </span>
+              </span>
+              <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'center' }} aria-hidden>
+                {r.es.slice(-18).map(({ e, st }) => (
+                  <i
+                    key={e.id}
+                    title={`${e.date.replace(/-/g, '.')}. · ${fmt(Math.abs(e.amount))} Ft · ${DOT[st][2]}`}
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 4,
+                      background: DOT[st][0],
+                      border: `1.5px ${st === 'offer' ? 'dashed' : 'solid'} ${DOT[st][1]}`,
+                      display: 'inline-block',
+                    }}
+                  />
+                ))}
+              </span>
+              <span style={{ textAlign: 'right', display: 'flex', flexDirection: 'column' }}>
+                <b style={{ font: `700 15px ${FONT}`, color: r.offer ? C.offer : C.navy, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {fmt(r.next ? r.open : r.es.reduce((s, x) => s + Math.abs(x.e.amount), 0))} Ft
+                </b>
+                <span style={{ font: `400 12px ${FONT}`, color: C.muted }}>{r.next ? (sec === 'out' ? 'még fizetendő' : 'még befolyik') : 'összesen'}</span>
+              </span>
+            </div>
+          );
+        })}
+        {rows.length > shown.length && (
+          <button type="button" onClick={() => setAll(true)} style={{ ...dlgBtn, width: '100%', borderRadius: 0, background: C.bg, color: C.navy }}>
+            Lezártak is ({rows.length - shown.length})
+          </button>
+        )}
+      </div>
+    </section>
   );
 }

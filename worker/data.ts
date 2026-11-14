@@ -4,7 +4,7 @@ import { baseName, withMonth } from '../shared/monthname';
 import { groupId, groupSortKey, hash, leafId, normalizeImportRow, type ImportRow } from '../shared/categories';
 import { partnerKey } from '../shared/match';
 import { partnerIdOf } from '../shared/partners';
-import { loadCatalog, syncCatalog } from './catalog';
+import { loadCatalog } from './catalog';
 import { loadTasks } from './tasks';
 import { loadAccessMap, twofaMode } from './access';
 import { a8Status } from './aggreg8srv';
@@ -437,8 +437,8 @@ export async function handleData(env: Env, req: Request, path: string, u: User):
     const seriesIds = [...(b.series || []).map((x) => String(x.id)), ...(b.deleteSeries || []).map(String)];
     const seriesBefore = await rowsById(env, 'series', seriesIds);
     const n = await applyBatch(env, b, u.id);
-    // a partnernél felvitt új tétel a termék- és szolgáltatástörzsbe is bekerül
-    if ((b.upsert || []).length) await syncCatalog(env).catch((e) => console.error('catalog sync', e));
+    // (2026-11-14, Laci kérése) a mentés NEM hoz létre automatikusan szolgáltatást / partner-hozzárendelést a terv nevéből:
+    // a kézzel beírt szolgáltatásnevet így semmi nem írja felül; a törzsből választani a „Mit számlázunk?” mezőben lehet
     const after = (b.upsert || []).map((e) => e as unknown as Record<string, unknown>);
     const { items, counts } = describeEntries(before, after, (b.delete || []).map(String));
     const had = new Set(before.map((r) => String(r.id)));

@@ -1665,7 +1665,7 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
         p={p}
         mobile
         onClose={close}
-        onNewItem={(leaf) => setTask({ leaf })}
+        onNewItem={(leaf) => setTask({ leaf, key: 'new' })}
         onEditItem={(leaf, key) => setTask({ leaf, key })}
         onRenamed={(k) => openPartner(k)}
       />
@@ -1676,7 +1676,7 @@ export function PartnerCardHost({ mobile }: { mobile?: boolean }) {
         <PartnerView
           p={p}
           onClose={close}
-          onNewItem={(leaf) => setTask({ leaf })}
+          onNewItem={(leaf) => setTask({ leaf, key: 'new' })}
           onEditItem={(leaf, key) => setTask({ leaf, key })}
           onRenamed={(k) => openPartner(k)}
         />
@@ -1772,6 +1772,8 @@ export function PartnerLink({ leaf, children, style }: { leaf: string; children:
 }
 
 /** Partnertörzs: az összes partner (vevő, szállító) egy helyen – név, típus, alternatív nevek, projektek szerkesztése. */
+const SHOW_PANEL = false as boolean;
+
 export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boolean }) {
   const { ix, data, openPartner, canEdit } = useStore();
   const all = useAllPartners();
@@ -1957,12 +1959,12 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
                 return (
                   <div
                     key={p.key}
-                    onClick={() => (window.matchMedia('(max-width: 900px)').matches ? openPartner(p.key) : setSel(p.key))}
+                    onClick={() => (setSel(p.key), openPartner(p.key))}
                     role="button"
                     tabIndex={0}
                     aria-pressed={on}
                     aria-label={`${p.name} kiválasztása`}
-                    onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setSel(p.key))}
+                    onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), setSel(p.key), openPartner(p.key))}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: COLS,
@@ -2027,7 +2029,8 @@ export function PartnerRegistry({ mobile, page }: { mobile?: boolean; page?: boo
             </div>
           </div>
 
-          {selP && (
+          {/* (2026-11-14) a partner mindenhol ugyanazt az adatlapot nyitja: a régi jobb oldali gyorsszerkesztő nem jelenik meg */}
+          {SHOW_PANEL && selP && (
             <div style={{ ...card, position: 'sticky', top: 16, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 32px)' }}>
               <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid ${C.line}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>

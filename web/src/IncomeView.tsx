@@ -155,6 +155,14 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
               ['out', 'Kiadások'],
             ]}
           />
+          <Seg
+            value={focus === 'offers' ? 'offers' : focus === 'all' ? 'all' : 'other'}
+            onChange={(v) => setFocus(v === 'offers' ? 'offers' : 'all')}
+            options={[
+              ['all', 'Minden tétel'],
+              ['offers', 'Csak ajánlatok'],
+            ]}
+          />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -272,7 +280,25 @@ export function IncomeView({ mobile, onOpen }: { mobile?: boolean; onOpen?: (e: 
                           cursor: onOpen ? 'pointer' : undefined,
                         }}
                       >
-                        <span style={{ font: `700 13.5px ${FONT_H}`, color: lt ? C.neg : C.navy, fontVariantNumeric: 'tabular-nums' }}>{dm(e.date)}</span>
+                        <button
+                          type="button"
+                          title={canEdit ? 'Dátum módosítása' : undefined}
+                          disabled={!canEdit}
+                          onClick={(ev) => (ev.stopPropagation(), setPickFor(e))}
+                          style={{
+                            justifySelf: 'start',
+                            border: `1px solid ${canEdit ? C.line2 : 'transparent'}`,
+                            borderRadius: 8,
+                            background: '#fff',
+                            padding: '3px 6px',
+                            cursor: canEdit ? 'pointer' : 'default',
+                            font: `700 13.5px ${FONT_H}`,
+                            color: lt ? C.neg : C.navy,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {dm(e.date)}
+                        </button>
                         <span
                           style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', font: `400 14px ${FONT}`, color: C.ink }}
                         >

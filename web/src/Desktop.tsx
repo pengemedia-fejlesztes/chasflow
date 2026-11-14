@@ -335,7 +335,7 @@ export function Desktop({ onLogout }: { onLogout: () => void }) {
               goBank={() => setView('bank')}
               goAlerts={() => setView('alerts')}
               goGroup={goGroup}
-              openNew={(leaf) => setModal(leaf ? { leaf } : {})}
+              openNew={(leaf) => setModal(leaf ? { leaf, edit: { key: 'new' } } : {})}
             />
           )}
           {view === 'charts' && <ChartsView />}
@@ -1050,7 +1050,7 @@ function Overview({
                   <span style={{ width: 20 }} />
                 )}
                 <span
-                  onClick={() => (isGroup ? goGroup(r.id) : r.groupId ? goGroup(r.groupId) : undefined)}
+                  onClick={() => (isGroup ? goGroup(r.id) : r.type === 'leaf' ? st.openPartner(r.id) : r.groupId ? goGroup(r.groupId) : undefined)}
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -1072,7 +1072,7 @@ function Overview({
                 {canEdit && r.type !== 'section' && (
                   <button
                     className="add-btn"
-                    title="Új tétel ide"
+                    title={r.type === 'leaf' ? 'Új szolgáltatás / termék ehhez az ügyfélhez' : 'Új tétel ide'}
                     onClick={() => openNew(r.type === 'leaf' ? r.id : ix.leaves.find((l) => l.group_id === r.id && !l.archived)?.id || '')}
                     style={{
                       width: 24,

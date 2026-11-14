@@ -11,7 +11,13 @@ export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => 
   const [q0, setQ] = useState('');
   const q = q0.trim().toLowerCase().replace(/\s+/g, '');
   const cands = data.bankTx
-    .filter((t) => !t.actual_id && (t.status === 'new' || t.status === 'ignored') && Math.sign(t.amount) === Math.sign(plan.amount))
+    .filter(
+      (t) =>
+        Math.sign(t.amount) === Math.sign(plan.amount) &&
+        // új / kihagyott tétel, vagy már könyvelt, de tervhez nem kötött banki tétel (pl. automatikusan rögzített jóváírás)
+        ((!t.actual_id && (t.status === 'new' || t.status === 'ignored')) ||
+          (t.status === 'approved' && !t.plan_id && !!t.actual_id && !String(t.actual_id).startsWith('m_'))),
+    )
     .filter((t) => !q || `${t.partner} ${t.memo} ${Math.abs(t.amount)}`.toLowerCase().replace(/\s+/g, '').includes(q))
     .map((t) => ({
       t,
@@ -22,11 +28,13 @@ export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => 
         (t.plan_id === plan.id ? -1 : 0),
     }))
     .sort((a, b) => a.score - b.score)
-    .slice(0, 40);
+    .slice(0, 300);
   const link = (t: (typeof cands)[number]['t']) =>
     run(
       async () => {
         if (t.status === 'ignored') await api('/api/bank/ignore', { body: { ids: [t.id], undo: true } });
+        // terv nélkül könyvelt tétel: a külön tény visszavonása, majd a tervhez kötve újra jóváhagyjuk
+        if (t.status === 'approved') await api('/api/bank/unapprove', { body: { ids: [t.id] } });
         await api('/api/bank/approve', { body: { items: [{ id: t.id, plan_id: plan.id, leaf_id: plan.leaf_id }] } });
       },
       `${plan.name || ix.leafById[plan.leaf_id]?.label}: összevonva a banki tétellel (${fmt(Math.abs(t.amount))} Ft)`,
@@ -41,9 +49,9 @@ export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => 
         style={{ ...card, width: 'min(620px,100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', gap: 12, padding: '20px 22px' }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span style={{ font: `600 11px ${FONT}`, letterSpacing: '.14em', textTransform: 'uppercase', color: C.blue }}>Bank párosítás</span>
-            <span style={{ font: `700 18px ${FONT_H}`, color: C.navy }}>
+            <span style={{ font: `700 18px ${FONT_H}`, color: C.navy, overflowWrap: 'anywhere' }}>
               {ix.leafById[plan.leaf_id]?.label} · {plan.name}
             </span>
             <span style={{ font: `500 13px ${FONT}`, color: C.muted }}>
@@ -88,7 +96,10 @@ export function BankPickDialog({ plan, onClose }: { plan: Entry; onClose: () => 
                   <b style={{ font: `600 13.5px ${FONT}`, color: C.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {t.partner || '—'}
                   </b>
-                  <span style={{ font: `400 12px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.memo}</span>
+                  <span style={{ font: `400 12px ${FONT}`, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.status === 'approved' ? 'már könyvelve, terv nélkül · ' : ''}
+                    {t.memo}
+                  </span>
                 </span>
                 <b style={{ font: `700 14px ${FONT}`, color: same ? C.blueDark : C.ink, fontVariantNumeric: 'tabular-nums' }}>
                   {t.amount < 0 ? '−' : '+'}

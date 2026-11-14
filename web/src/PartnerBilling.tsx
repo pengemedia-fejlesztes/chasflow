@@ -159,7 +159,8 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
   const prod = usable.find((x) => normalizeText(x.name) === normalizeText(name));
   const productId = prod?.id || '';
   const [qty, setQty] = useState(a ? fmtQty(a.qty) : '1');
-  const [price, setPrice] = useState(digits(a?.price));
+  // az ügyfélnek adott (egyedi) ár látszik a mezőben; ha nincs egyedi, a törzsár – nem egy üres „törzsár” felirat
+  const [price, setPrice] = useState(digits(a ? (a.price ?? products.find((x) => x.id === a.product_id)?.price) : undefined));
   const [billing, setBilling] = useState<Billing | ''>(a?.billing || '');
   const [start, setStart] = useState(a?.start_ym || ym);
   const [end, setEnd] = useState(a?.end_ym || '');
@@ -231,8 +232,8 @@ function AssignForm({ p, a, products, onDone }: { p: PartnerStat; a?: PartnerPro
         <Field label={`Mennyiség (${prod?.unit || 'db'})`}>
           <input value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d,.]/g, ''))} inputMode="decimal" style={sel} />
         </Field>
-        <Field label={`Egyedi nettó ár (üres: ${prod ? money(prod.price, prod.currency) : 'törzsár'})`}>
-          <MoneyInput value={price} onChange={setPrice} placeholder="törzsár" style={sel} />
+        <Field label="Nettó ár az ügyfélnek">
+          <MoneyInput value={price} onChange={setPrice} placeholder={prod ? money(prod.price, prod.currency) : 'nettó ár'} style={sel} />
         </Field>
         <Field label="Számlázás">
           <select value={billing} onChange={(e) => setBilling(e.target.value as Billing | '')} style={sel}>
