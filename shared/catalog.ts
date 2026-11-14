@@ -64,6 +64,10 @@ export interface PartnerProduct {
   start_ym: string;
   end_ym: string | null;
   note: string | null;
+  /** kihagyott számlázási hónapok (YYYY-MM) – a havi rácson kattintással */
+  skip?: string[];
+  /** 1 = a megjegyzés belső, nem kerül a számlára */
+  note_internal?: number;
   updated_at: number;
 }
 
@@ -188,8 +192,9 @@ export function grossOf(net: number, vat: string): number {
 }
 
 /** számlázandó-e a hozzárendelés az adott hónapban (ütem, kezdő és záró hónap alapján) */
-export function billableIn(a: Pick<PartnerProduct, 'start_ym' | 'end_ym'>, billing: Billing, ym: string): boolean {
+export function billableIn(a: Pick<PartnerProduct, 'start_ym' | 'end_ym'> & { skip?: string[] }, billing: Billing, ym: string): boolean {
   if (!/^\d{4}-\d{2}$/.test(a.start_ym) || ym < a.start_ym) return false;
+  if (a.skip?.includes(ym)) return false;
   if (a.end_ym && ym > a.end_ym) return false;
   const step = BILLING_STEP[billing];
   if (!step) return ym === a.start_ym;

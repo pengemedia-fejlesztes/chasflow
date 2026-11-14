@@ -73,6 +73,17 @@ export function ensureCatalog(env: Env): Promise<boolean> {
         await env.DB.prepare("UPDATE products SET call_days = 30 WHERE billing = 'eves'").run();
         await env.DB.prepare("UPDATE products SET call_days = 7 WHERE billing IN ('negyedeves', 'felevi')").run();
       }
+      // partner-szolgáltatás: kihagyott számlázási hónapok (JSON-tömb) és belső (nem a számlára kerülő) megjegyzés
+      const hasSkip = await env.DB.prepare('SELECT skip_ym FROM partner_products LIMIT 1')
+        .all()
+        .then(() => true)
+        .catch(() => false);
+      if (!hasSkip) await env.DB.prepare('ALTER TABLE partner_products ADD COLUMN skip_ym TEXT').run();
+      const hasNi = await env.DB.prepare('SELECT note_internal FROM partner_products LIMIT 1')
+        .all()
+        .then(() => true)
+        .catch(() => false);
+      if (!hasNi) await env.DB.prepare('ALTER TABLE partner_products ADD COLUMN note_internal INTEGER').run();
       return true;
     })().catch((e) => {
       ready = null;
@@ -99,7 +110,7 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
   }
   const [p, a, f] = await env.DB.batch([
     env.DB.prepare('SELECT id, name, kind, unit, price, vat, currency, billing, sku, note, grp, call_days, archived, updated_at FROM products ORDER BY name'),
-    env.DB.prepare('SELECT id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at FROM partner_products ORDER BY start_ym'),
+    env.DB.prepare('SELECT id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, skip_ym, note_internal, updated_at FROM partner_products ORDER BY start_ym'),
     env.DB.prepare('SELECT partner_key, data FROM partner_profiles'),
   ]);
   const profiles: Record<string, PartnerProfile> = {};
@@ -112,7 +123,14 @@ export async function loadCatalog(env: Env): Promise<CatalogBundle> {
   }
   return {
     products: (p.results as any[]).map((r) => ({ ...r, price: Number(r.price), call_days: num(r.call_days), archived: Number(r.archived) })),
-    partnerProducts: (a.results as any[]).map((r) => ({ ...r, qty: Number(r.qty), price: num(r.price) })),
+    partnerProducts: (a.results as any[]).map((r) => ({
+      ...r,
+      qty: Number(r.qty),
+      price: num(r.price),
+      skip: parseSkip(r.skip_ym),
+      note_internal: Number(r.note_internal || 0),
+      skip_ym: undefined,
+    })),
     partnerProfiles: profiles,
   };
 }
@@ -204,6 +222,15 @@ export async function syncCatalog(env: Env): Promise<{ products: number; assigns
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   return { products: np, assigns: na };
+}
+
+function parseSkip(v: unknown): string[] {
+  try {
+    const a = JSON.parse(String(v || '[]'));
+    return Array.isArray(a) ? a.map(String).filter((x) => YM.test(x)) : [];
+  } catch {
+    return [];
+  }
 }
 
 const KINDS = new Set(['szolgaltatas', 'termek']);
@@ -339,13 +366,21 @@ export async function handleCatalog(env: Env, req: Request, path: string, u: Use
             .trim()
             .slice(0, 1000) || null
         : (cur?.note ?? null);
+    const skip =
+      b.skip !== undefined
+        ? JSON.stringify(
+            [...new Set((Array.isArray(b.skip) ? b.skip : []).map(String).filter((x: string) => YM.test(x)))].sort().slice(0, 240),
+          )
+        : (cur?.skip_ym ?? null);
+    const noteInternal = b.note_internal !== undefined ? (b.note_internal ? 1 : 0) : Number(cur?.note_internal || 0);
     const nid = id || randomId('pp');
     await env.DB.prepare(
-      `INSERT INTO partner_products (id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO partner_products (id, partner_key, product_id, qty, price, billing, start_ym, end_ym, note, skip_ym, note_internal, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET partner_key = excluded.partner_key, product_id = excluded.product_id, qty = excluded.qty, price = excluded.price,
-         billing = excluded.billing, start_ym = excluded.start_ym, end_ym = excluded.end_ym, note = excluded.note, updated_at = excluded.updated_at`,
+         billing = excluded.billing, start_ym = excluded.start_ym, end_ym = excluded.end_ym, note = excluded.note, skip_ym = excluded.skip_ym,
+         note_internal = excluded.note_internal, updated_at = excluded.updated_at`,
     )
-      .bind(nid, partner, p.id, qty, price, billing, start, end, note, t)
+      .bind(nid, partner, p.id, qty, price, billing, start, end, note, skip, noteInternal, t)
       .run();
     await logChange(
       env,

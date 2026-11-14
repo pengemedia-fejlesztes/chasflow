@@ -13,7 +13,7 @@ import { api } from './api';
 import { CalendarSheet } from './DatePicker';
 import { MobilePartnerScreen } from './MobileFlows';
 import { kindOf, PartnerEditor, PaymentTerms, PlannedTasks, SecHead } from './PartnerCard';
-import { PartnerBillingTab } from './PartnerBilling';
+import { PartnerBillingTab, PartnerServices } from './PartnerBilling';
 import { PartnerSheet } from './PartnerSheet';
 import { PartnerTasks, TaskEditor } from './TasksView';
 import { REP, rowKey } from './logic';
@@ -228,6 +228,7 @@ export function PartnerView({
         {tab === 'time' && (
           <div style={{ padding: mobile ? '0 16px' : 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
             {/* a partnernek értékesített / értékesítendő szolgáltatások, termékek: itt is felvehető, nem csak az Értékesítések fül mélyén */}
+            <PartnerServices p={p} compact={mobile} />
             <PartnerDeals p={p} onNew={canEdit && leaf ? () => onNewItem(leaf) : undefined} onEdit={canEdit ? onEditItem : undefined} />
             <PartnerTasks partnerKey={p.key} />
             <Timeline p={p} onEdit={canEdit ? onEditItem : undefined} />
@@ -1164,7 +1165,7 @@ export function PartnerDeals({
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <b style={{ font: `700 19px ${FONT_H}`, color: C.navy, flex: 1 }}>Szolgáltatások, termékek</b>
+        <b style={{ font: `700 19px ${FONT_H}`, color: C.navy, flex: 1 }}>Eladások követése · terv → számla → fizetve</b>
         <span style={{ display: 'flex', gap: 12, font: `400 12.5px ${FONT}`, color: C.muted, flexWrap: 'wrap' }}>
           {(['plan', 'inv', 'paid', 'offer'] as const).map((k) => (
             <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -1184,7 +1185,7 @@ export function PartnerDeals({
         </span>
         {onNew && (
           <button type="button" onClick={onNew} style={{ ...dlgBtn, background: C.navy, color: '#fff', padding: '8px 14px' }}>
-            + Szolgáltatás / termék
+            + Új eladás / ajánlat
           </button>
         )}
       </div>
